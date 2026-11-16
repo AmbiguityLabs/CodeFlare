@@ -256,6 +256,13 @@ fun ActivitySidebar(
   onSavePagesEnvVar: (String, String, String, String, Boolean) -> Unit,
   onAddPagesDomain: (String, String) -> Unit,
   onDeletePagesDomain: (String, String) -> Unit,
+  onPickPagesFolder: () -> Unit,
+  onPickPagesZip: () -> Unit,
+  onPickPagesFiles: () -> Unit,
+  onStageWorkspaceForPages: () -> Unit,
+  onTogglePagesZipStripRoot: (Boolean) -> Unit,
+  onClearStagedPagesAssets: () -> Unit,
+  onDeployDirectPages: (String, String?, String?) -> Unit,
   // Git & GitHub callbacks
   onStartGitHubOAuth: (String) -> Unit,
   onCancelGitHubOAuth: () -> Unit,
@@ -465,6 +472,13 @@ fun ActivitySidebar(
             onSaveEnvVar = onSavePagesEnvVar,
             onAddDomain = onAddPagesDomain,
             onDeleteDomain = onDeletePagesDomain,
+            onPickPagesFolder = onPickPagesFolder,
+            onPickPagesZip = onPickPagesZip,
+            onPickPagesFiles = onPickPagesFiles,
+            onStageWorkspaceForPages = onStageWorkspaceForPages,
+            onTogglePagesZipStripRoot = onTogglePagesZipStripRoot,
+            onClearStagedPagesAssets = onClearStagedPagesAssets,
+            onDeployDirectPages = onDeployDirectPages,
           )
         SidebarSection.GITHUB ->
           GitHubAndDiffPanel(

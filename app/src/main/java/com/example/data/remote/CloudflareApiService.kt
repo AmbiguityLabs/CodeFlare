@@ -6,6 +6,7 @@ import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.Header
 import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.PUT
@@ -377,4 +378,36 @@ interface CloudflareApiService {
     @Path("projectName") projectName: String,
     @Path("domainName") domainName: String,
   ): Response<CfResponse<Any?>>
+
+  // Cloudflare Pages Direct Upload
+  @GET("accounts/{accountId}/pages/projects/{projectName}/upload-token")
+  suspend fun getPagesUploadToken(
+    @Path("accountId") accountId: String,
+    @Path("projectName") projectName: String,
+  ): Response<CfResponse<CfPagesUploadTokenResult>>
+
+  @POST("pages/assets/check-missing")
+  suspend fun checkMissingPagesAssets(
+    @Header("Authorization") bearerJwt: String,
+    @Body body: CfPagesCheckMissingRequest,
+  ): Response<CfResponse<List<String>>>
+
+  @POST("pages/assets/upload")
+  suspend fun uploadPagesAssets(
+    @Header("Authorization") bearerJwt: String,
+    @Body body: List<CfPagesUploadPayloadItem>,
+  ): Response<CfResponse<Any?>>
+
+  @POST("pages/assets/upsert-hashes")
+  suspend fun upsertPagesHashes(
+    @Header("Authorization") bearerJwt: String,
+    @Body body: CfPagesUpsertHashesRequest,
+  ): Response<CfResponse<Any?>>
+
+  @POST("accounts/{accountId}/pages/projects/{projectName}/deployments")
+  suspend fun createPagesDirectDeployment(
+    @Path("accountId") accountId: String,
+    @Path("projectName") projectName: String,
+    @Body body: RequestBody,
+  ): Response<CfResponse<CfPagesDeployment>>
 }

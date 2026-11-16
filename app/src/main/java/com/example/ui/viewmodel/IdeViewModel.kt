@@ -11,6 +11,7 @@ import com.example.data.auth.GitHubDeviceCodeResponse
 import com.example.data.auth.GitHubOAuthManager
 import com.example.data.local.DeviceFileHelper
 import com.example.data.local.PickedDeviceFile
+import com.example.data.local.RawPickedAsset
 import com.example.data.remote.CfAccount
 import com.example.data.remote.CfD1Database
 import com.example.data.remote.CfD1QueryResult
@@ -48,6 +49,8 @@ import com.example.data.remote.HttpTestResult
 import com.example.data.remote.LinkedGitRepoState
 import com.example.data.remote.LocalGitCommit
 import com.example.data.remote.MultipartWorkerParser
+import com.example.data.remote.PagesDirectUploadProgress
+import com.example.data.remote.PagesPreparedAsset
 import com.example.data.remote.WorkerFile
 import com.example.data.remote.WorkerWorkspace
 import com.example.data.repository.ActiveTailSession
@@ -169,6 +172,14 @@ data class IdeUiState(
   val pagesBuildLogs: List<CfPagesLogEntry> = emptyList(),
   val pagesDomains: List<CfPagesDomain> = emptyList(),
   val isPagesBusy: Boolean = false,
+  val pagesDirectUploadSourceLabel: String? = null,
+  val pagesIsZipSource: Boolean = false,
+  val pagesStripZipRootFolder: Boolean = true,
+  val pagesStagedUnstrippedZipAssets: List<RawPickedAsset> = emptyList(),
+  val pagesStagedPreparedAssets: List<PagesPreparedAsset> = emptyList(),
+  val pagesDirectUploadProgress: PagesDirectUploadProgress? = null,
+  val isPagesDirectUploading: Boolean = false,
+  val pagesLastDirectDeployment: CfPagesDeployment? = null,
   // GitHub & Git Integration
   val gitHubCreds: StoredGitHubCredentials? = null,
   val gitHubUser: GitHubUser? = null,
@@ -2446,6 +2457,221 @@ export default {
         }
         .onFailure { err ->
           _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Remove domain failed") }
+        }
+    }
+  }
+
+  fun stagePagesFolder(treeUri: Uri) {
+    viewModelScope.launch {
+      _uiState.update { it.copy(isPagesBusy = true, pagesLastDirectDeployment = null) }
+      val appContext = getApplication<Application>()
+      DeviceFileHelper.readDirectoryTree(appContext, treeUri)
+        .onSuccess { rawAssets ->
+          val prepared = repository.preparePagesAssets(rawAssets)
+          val folderName = DeviceFileHelper.resolveDisplayName(appContext, treeUri)
+          _uiState.update {
+            it.copy(
+              isPagesBusy = false,
+              pagesDirectUploadSourceLabel = "Folder: $folderName",
+              pagesIsZipSource = false,
+              pagesStagedUnstrippedZipAssets = emptyList(),
+              pagesStagedPreparedAssets = prepared,
+              pagesDirectUploadProgress = null,
+              statusMessage = "Staged ${prepared.size} files from folder '$folderName'",
+            )
+          }
+        }
+        .onFailure { err ->
+          _uiState.update {
+            it.copy(
+              isPagesBusy = false,
+              statusMessage = err.localizedMessage ?: "Failed to read selected folder",
+            )
+          }
+        }
+    }
+  }
+
+  fun stagePagesZip(zipUri: Uri) {
+    viewModelScope.launch {
+      _uiState.update { it.copy(isPagesBusy = true, pagesLastDirectDeployment = null) }
+      val appContext = getApplication<Application>()
+      DeviceFileHelper.readZipArchive(appContext, zipUri, stripCommonRootFolder = false)
+        .onSuccess { rawUnstripped ->
+          val effective =
+            if (_uiState.value.pagesStripZipRootFolder) {
+              DeviceFileHelper.stripCommonWrapperFolder(rawUnstripped)
+            } else {
+              rawUnstripped
+            }
+          val prepared = repository.preparePagesAssets(effective)
+          val zipName = DeviceFileHelper.resolveDisplayName(appContext, zipUri)
+          _uiState.update {
+            it.copy(
+              isPagesBusy = false,
+              pagesDirectUploadSourceLabel = "ZIP: $zipName",
+              pagesIsZipSource = true,
+              pagesStagedUnstrippedZipAssets = rawUnstripped,
+              pagesStagedPreparedAssets = prepared,
+              pagesDirectUploadProgress = null,
+              statusMessage = "Extracted ${prepared.size} files from '$zipName'",
+            )
+          }
+        }
+        .onFailure { err ->
+          _uiState.update {
+            it.copy(
+              isPagesBusy = false,
+              statusMessage = err.localizedMessage ?: "Failed to read ZIP archive",
+            )
+          }
+        }
+    }
+  }
+
+  fun stagePagesFiles(uris: List<Uri>) {
+    if (uris.isEmpty()) return
+    viewModelScope.launch {
+      _uiState.update { it.copy(isPagesBusy = true, pagesLastDirectDeployment = null) }
+      val appContext = getApplication<Application>()
+      DeviceFileHelper.readBinaryFiles(appContext, uris)
+        .onSuccess { rawAssets ->
+          val prepared = repository.preparePagesAssets(rawAssets)
+          _uiState.update {
+            it.copy(
+              isPagesBusy = false,
+              pagesDirectUploadSourceLabel = "${prepared.size} Selected File(s)",
+              pagesIsZipSource = false,
+              pagesStagedUnstrippedZipAssets = emptyList(),
+              pagesStagedPreparedAssets = prepared,
+              pagesDirectUploadProgress = null,
+              statusMessage = "Staged ${prepared.size} files for Pages Direct Upload",
+            )
+          }
+        }
+        .onFailure { err ->
+          _uiState.update {
+            it.copy(
+              isPagesBusy = false,
+              statusMessage = err.localizedMessage ?: "Failed to read selected files",
+            )
+          }
+        }
+    }
+  }
+
+  fun stageCurrentWorkspaceForPages() {
+    val ws = _uiState.value.workspace ?: return
+    val rawAssets =
+      ws.files
+        .filterNot { it.isVirtualReadOnly }
+        .map { RawPickedAsset(relativePath = it.path, bytes = it.content.toByteArray(Charsets.UTF_8)) }
+    if (rawAssets.isEmpty()) {
+      _uiState.update { it.copy(statusMessage = "No deployable files in current workspace") }
+      return
+    }
+    viewModelScope.launch {
+      _uiState.update { it.copy(isPagesBusy = true, pagesLastDirectDeployment = null) }
+      val prepared = repository.preparePagesAssets(rawAssets)
+      _uiState.update {
+        it.copy(
+          isPagesBusy = false,
+          pagesDirectUploadSourceLabel = "Workspace: ${ws.scriptName}",
+          pagesIsZipSource = false,
+          pagesStagedUnstrippedZipAssets = emptyList(),
+          pagesStagedPreparedAssets = prepared,
+          pagesDirectUploadProgress = null,
+          statusMessage = "Staged ${prepared.size} workspace files for Pages Direct Upload",
+        )
+      }
+    }
+  }
+
+  fun togglePagesZipStripRoot(strip: Boolean) {
+    val unstripped = _uiState.value.pagesStagedUnstrippedZipAssets
+    if (unstripped.isEmpty()) {
+      _uiState.update { it.copy(pagesStripZipRootFolder = strip) }
+      return
+    }
+    viewModelScope.launch {
+      val effective =
+        if (strip) DeviceFileHelper.stripCommonWrapperFolder(unstripped) else unstripped
+      val prepared = repository.preparePagesAssets(effective)
+      _uiState.update {
+        it.copy(
+          pagesStripZipRootFolder = strip,
+          pagesStagedPreparedAssets = prepared,
+        )
+      }
+    }
+  }
+
+  fun clearStagedPagesAssets() {
+    _uiState.update {
+      it.copy(
+        pagesDirectUploadSourceLabel = null,
+        pagesIsZipSource = false,
+        pagesStagedUnstrippedZipAssets = emptyList(),
+        pagesStagedPreparedAssets = emptyList(),
+        pagesDirectUploadProgress = null,
+        pagesLastDirectDeployment = null,
+      )
+    }
+  }
+
+  fun deployStagedPagesAssets(
+    projectName: String,
+    branch: String?,
+    commitMessage: String?,
+  ) {
+    val accountId = _uiState.value.selectedAccount?.id ?: return
+    val prepared = _uiState.value.pagesStagedPreparedAssets
+    if (prepared.isEmpty() || _uiState.value.isPagesDirectUploading) return
+    viewModelScope.launch {
+      _uiState.update {
+        it.copy(
+          isPagesDirectUploading = true,
+          pagesLastDirectDeployment = null,
+          pagesDirectUploadProgress =
+            PagesDirectUploadProgress(
+              phase = "Preparing manifest...",
+              completedFiles = 0,
+              totalFiles = prepared.size,
+              uploadedBytes = 0L,
+              totalBytes = prepared.sumOf { a -> a.bytes.size.toLong() },
+            ),
+        )
+      }
+      repository
+        .directUploadPagesDeployment(
+          accountId = accountId,
+          projectName = projectName,
+          preparedAssets = prepared,
+          branch = branch,
+          commitMessage = commitMessage,
+          onProgress = { progress ->
+            _uiState.update { it.copy(pagesDirectUploadProgress = progress) }
+          },
+        )
+        .onSuccess { deployment ->
+          _uiState.update {
+            it.copy(
+              isPagesDirectUploading = false,
+              pagesDirectUploadProgress = null,
+              pagesLastDirectDeployment = deployment,
+              statusMessage = "Deployed ${prepared.size} assets to ${deployment.url ?: projectName}",
+            )
+          }
+          _uiState.value.selectedPagesProject?.let { selectPagesProject(it) }
+        }
+        .onFailure { err ->
+          _uiState.update {
+            it.copy(
+              isPagesDirectUploading = false,
+              pagesDirectUploadProgress = null,
+              statusMessage = err.localizedMessage ?: "Pages Direct Upload failed",
+            )
+          }
         }
     }
   }

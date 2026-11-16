@@ -1,0 +1,107 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@font-face {
+  font-family: "Plus Jakarta Sans Local";
+  src: url("/fonts/plus_jakarta_sans.ttf") format("truetype");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono Local";
+  src: url("/fonts/jetbrains_mono.ttf") format("truetype");
+  font-display: swap;
+}
+
+@layer base {
+  :root {
+    --chrome-bg: #F3F4EE;
+    --chrome-surface: #ECEDE5;
+    --chrome-pill: #E3E6DA;
+    --tab-active-bg: #FFFFFF;
+    --selected-row-bg: #E0E5D3;
+    --active-pill-bg: #D5E8A8;
+    --active-pill-fg: #283808;
+    --editor-bg: #FCFCFA;
+    --editor-gutter-bg: #F6F7F2;
+    --editor-active-line-bg: #EDF1E4;
+    --border-color: #D9DDD0;
+    --tree-line: #CFD4C5;
+    --text-primary: #1C1E18;
+    --text-secondary: #53584B;
+    --text-muted: #7B8172;
+    --accent-primary: #E06D10;
+    --accent-secondary: #5A7026;
+    --accent-olive-highlight: #3D5212;
+    --accent-info: #0284C7;
+    --status-ok: #15803D;
+    --status-warn: #B45309;
+    --status-error: #DC2626;
+  }
+
+  .dark {
+    --chrome-bg: #1B1C17;
+    --chrome-surface: #21231D;
+    --chrome-pill: #262821;
+    --tab-active-bg: #30332A;
+    --selected-row-bg: #3F4334;
+    --active-pill-bg: #4F6223;
+    --active-pill-fg: #D6F58D;
+    --editor-bg: #1E2028;
+    --editor-gutter-bg: #1E2028;
+    --editor-active-line-bg: #2A2D37;
+    --border-color: #343846;
+    --tree-line: #34372E;
+    --text-primary: #E7E9E2;
+    --text-secondary: #A7ACA0;
+    --text-muted: #72776B;
+    --accent-primary: #F6821F;
+    --accent-secondary: #9DB65E;
+    --accent-olive-highlight: #D6F58D;
+    --accent-info: #38BDF8;
+    --status-ok: #4ADE80;
+    --status-warn: #FBBF24;
+    --status-error: #F87171;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    background-color: var(--chrome-bg);
+    color: var(--text-primary);
+    font-family: "Plus Jakarta Sans", "Plus Jakarta Sans Local", system-ui, -apple-system, sans-serif;
+  }
+
+  code,
+  pre,
+  textarea.code-font,
+  .font-mono {
+    font-family: "JetBrains Mono", "JetBrains Mono Local", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Custom sleek IDE scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 40%, transparent);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-secondary) 55%, transparent);
+}

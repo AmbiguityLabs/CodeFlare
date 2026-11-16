@@ -17,11 +17,19 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Replay
+import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material.icons.outlined.Web
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -29,6 +37,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -43,7 +52,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -70,6 +81,13 @@ fun CloudflarePagesPanel(
   onSaveEnvVar: (projectName: String, environment: String, key: String, value: String, isSecret: Boolean) -> Unit,
   onAddDomain: (String, String) -> Unit,
   onDeleteDomain: (String, String) -> Unit,
+  onPickPagesFolder: () -> Unit,
+  onPickPagesZip: () -> Unit,
+  onPickPagesFiles: () -> Unit,
+  onStageWorkspaceForPages: () -> Unit,
+  onTogglePagesZipStripRoot: (Boolean) -> Unit,
+  onClearStagedPagesAssets: () -> Unit,
+  onDeployDirectPages: (projectName: String, branch: String?, commitMessage: String?) -> Unit,
 ) {
   val palette = LocalIdePalette.current
   var showCreateDialog by remember { mutableStateOf(false) }
@@ -104,7 +122,7 @@ fun CloudflarePagesPanel(
       Text("CLOUDFLARE PAGES", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
       Surface(color = palette.chromePill, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
         Text(
-          text = "Connect your Cloudflare API Token or Global Key to manage Pages sites, deployments, build logs, rollbacks, preview/production env vars, and custom domains.",
+          text = "Connect your Cloudflare API Token or Global Key to manage Pages sites, Direct Upload deployments (folder/ZIP), build logs, rollbacks, preview/production env vars, and custom domains.",
           style = MaterialTheme.typography.bodySmall,
           color = palette.textSecondary,
           modifier = Modifier.padding(14.dp),
@@ -182,6 +200,13 @@ fun CloudflarePagesPanel(
       onSaveEnvVar = { env, k, v, sec -> onSaveEnvVar(selected.name, env, k, v, sec) },
       onAddDomain = { d -> onAddDomain(selected.name, d) },
       onDeleteDomain = { d -> onDeleteDomain(selected.name, d) },
+      onPickPagesFolder = onPickPagesFolder,
+      onPickPagesZip = onPickPagesZip,
+      onPickPagesFiles = onPickPagesFiles,
+      onStageWorkspaceForPages = onStageWorkspaceForPages,
+      onTogglePagesZipStripRoot = onTogglePagesZipStripRoot,
+      onClearStagedPagesAssets = onClearStagedPagesAssets,
+      onDeployDirectPages = { branch, msg -> onDeployDirectPages(selected.name, branch, msg) },
     )
   }
 }
@@ -199,13 +224,26 @@ private fun PagesProjectDetailView(
   onSaveEnvVar: (environment: String, key: String, value: String, isSecret: Boolean) -> Unit,
   onAddDomain: (String) -> Unit,
   onDeleteDomain: (String) -> Unit,
+  onPickPagesFolder: () -> Unit,
+  onPickPagesZip: () -> Unit,
+  onPickPagesFiles: () -> Unit,
+  onStageWorkspaceForPages: () -> Unit,
+  onTogglePagesZipStripRoot: (Boolean) -> Unit,
+  onClearStagedPagesAssets: () -> Unit,
+  onDeployDirectPages: (branch: String?, commitMessage: String?) -> Unit,
 ) {
   val palette = LocalIdePalette.current
+  val clipboardManager = LocalClipboardManager.current
   var envMode by remember { mutableStateOf("production") }
   var envKey by remember { mutableStateOf("") }
   var envVal by remember { mutableStateOf("") }
   var isSecret by remember { mutableStateOf(false) }
   var domainInput by remember { mutableStateOf("") }
+
+  var directTargetEnv by remember { mutableStateOf("production") }
+  var previewBranchName by remember { mutableStateOf("preview") }
+  var commitMessage by remember { mutableStateOf("") }
+  var showAllStagedFiles by remember { mutableStateOf(false) }
 
   Column(
     modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
@@ -224,10 +262,328 @@ private fun PagesProjectDetailView(
       }
     }
 
-    FilledTonalButton(onClick = onTriggerDeploy, modifier = Modifier.fillMaxWidth()) {
-      Icon(Icons.Outlined.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-      Spacer(Modifier.width(6.dp))
-      Text("Trigger Production Deployment")
+    // Direct Upload (Folder / ZIP / Files / Workspace)
+    Surface(
+      color = palette.chromePill,
+      shape = RoundedCornerShape(14.dp),
+      modifier = Modifier.fillMaxWidth().testTag("pages_direct_upload_card"),
+    ) {
+      Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+          Text(
+            text = "DIRECT UPLOAD",
+            style = MaterialTheme.typography.labelSmall,
+            color = palette.activePillFg,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f),
+          )
+          Surface(color = palette.activePillBg, shape = RoundedCornerShape(6.dp)) {
+            Text(
+              text = "BLAKE3 MANIFEST",
+              fontSize = 9.sp,
+              fontWeight = FontWeight.Bold,
+              color = palette.activePillFg,
+              modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            )
+          }
+        }
+
+        Text(
+          text = "Deploy static sites or _worker.js bundles directly from a folder, ZIP archive, files, or open workspace.",
+          style = MaterialTheme.typography.labelSmall,
+          color = palette.textSecondary,
+        )
+
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+          OutlinedButton(
+            onClick = onPickPagesFolder,
+            enabled = !uiState.isPagesDirectUploading,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.weight(1f).testTag("pages_pick_folder_button"),
+          ) {
+            Icon(Icons.Outlined.FolderOpen, contentDescription = null, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(5.dp))
+            Text("Folder", fontSize = 12.sp, maxLines = 1)
+          }
+          OutlinedButton(
+            onClick = onPickPagesZip,
+            enabled = !uiState.isPagesDirectUploading,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.weight(1f).testTag("pages_pick_zip_button"),
+          ) {
+            Icon(Icons.Outlined.Archive, contentDescription = null, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(5.dp))
+            Text("ZIP", fontSize = 12.sp, maxLines = 1)
+          }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+          OutlinedButton(
+            onClick = onPickPagesFiles,
+            enabled = !uiState.isPagesDirectUploading,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.weight(1f).testTag("pages_pick_files_button"),
+          ) {
+            Icon(Icons.Outlined.UploadFile, contentDescription = null, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(5.dp))
+            Text("Files", fontSize = 12.sp, maxLines = 1)
+          }
+          OutlinedButton(
+            onClick = onStageWorkspaceForPages,
+            enabled = uiState.workspace != null && !uiState.isPagesDirectUploading,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.weight(1f).testTag("pages_stage_workspace_button"),
+          ) {
+            Icon(Icons.Outlined.Code, contentDescription = null, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(5.dp))
+            Text("Workspace", fontSize = 12.sp, maxLines = 1)
+          }
+        }
+
+        val stagedAssets = uiState.pagesStagedPreparedAssets
+        if (stagedAssets.isNotEmpty()) {
+          val totalBytes = stagedAssets.sumOf { it.bytes.size.toLong() }
+          val hasIndexHtml = stagedAssets.any { it.normalizedPath.equals("/index.html", ignoreCase = true) }
+          val hasWorkerBundle = stagedAssets.any { it.normalizedPath == "/_worker.js" }
+
+          Surface(
+            color = palette.editorBg,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+              Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                  Text(
+                    text = uiState.pagesDirectUploadSourceLabel ?: "Staged Bundle",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = palette.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                  )
+                  Text(
+                    text = "${stagedAssets.size} files • ${formatReadableBytes(totalBytes)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.textSecondary,
+                  )
+                }
+                if (!uiState.isPagesDirectUploading) {
+                  IconButton(onClick = onClearStagedPagesAssets, modifier = Modifier.size(26.dp)) {
+                    Icon(Icons.Outlined.Close, contentDescription = "Clear staged files", modifier = Modifier.size(15.dp))
+                  }
+                }
+              }
+
+              if (uiState.pagesIsZipSource) {
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                  Text(
+                    text = "Strip single root folder from ZIP",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.textSecondary,
+                  )
+                  Switch(
+                    checked = uiState.pagesStripZipRootFolder,
+                    onCheckedChange = onTogglePagesZipStripRoot,
+                    enabled = !uiState.isPagesDirectUploading,
+                  )
+                }
+              }
+
+              if (!hasIndexHtml || hasWorkerBundle) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                  if (hasWorkerBundle) {
+                    Surface(color = palette.activePillBg, shape = RoundedCornerShape(6.dp)) {
+                      Text(
+                        text = "_worker.js DETECTED",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = palette.activePillFg,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                      )
+                    }
+                  }
+                  if (!hasIndexHtml) {
+                    Text(
+                      text = "No root /index.html found",
+                      style = MaterialTheme.typography.labelSmall,
+                      color = AmberWarn,
+                    )
+                  }
+                }
+              }
+
+              val previewLimit = if (showAllStagedFiles) stagedAssets.size else 5
+              stagedAssets.take(previewLimit).forEach { asset ->
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                  Text(
+                    text = asset.normalizedPath,
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMono),
+                    color = palette.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                  )
+                  Text(
+                    text = asset.hash.take(8),
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMono),
+                    color = palette.activePillFg,
+                  )
+                  Text(
+                    text = formatReadableBytes(asset.bytes.size.toLong()),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.textMuted,
+                  )
+                }
+              }
+
+              if (stagedAssets.size > 5) {
+                TextButton(
+                  onClick = { showAllStagedFiles = !showAllStagedFiles },
+                  modifier = Modifier.align(Alignment.End),
+                ) {
+                  Text(
+                    text = if (showAllStagedFiles) "Show fewer" else "Show all ${stagedAssets.size} files",
+                    fontSize = 11.sp,
+                  )
+                }
+              }
+            }
+          }
+
+          Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+            listOf("production" to "Production (${project.productionBranch})", "preview" to "Preview Branch").forEach { (mode, label) ->
+              val active = directTargetEnv == mode
+              Surface(
+                onClick = { if (!uiState.isPagesDirectUploading) directTargetEnv = mode },
+                shape = RoundedCornerShape(8.dp),
+                color = if (active) palette.activePillBg else palette.editorBg,
+                modifier = Modifier.weight(1f),
+              ) {
+                Text(
+                  text = label,
+                  style = MaterialTheme.typography.labelSmall,
+                  color = if (active) palette.activePillFg else palette.textSecondary,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                  modifier = Modifier.padding(vertical = 7.dp, horizontal = 8.dp),
+                )
+              }
+            }
+          }
+
+          if (directTargetEnv == "preview") {
+            OutlinedTextField(
+              value = previewBranchName,
+              onValueChange = { previewBranchName = it },
+              label = { Text("Preview branch name") },
+              singleLine = true,
+              enabled = !uiState.isPagesDirectUploading,
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier.fillMaxWidth(),
+            )
+          }
+
+          OutlinedTextField(
+            value = commitMessage,
+            onValueChange = { commitMessage = it },
+            label = { Text("Deploy note (optional)") },
+            placeholder = { Text("Direct upload via EdgeCode") },
+            singleLine = true,
+            enabled = !uiState.isPagesDirectUploading,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth(),
+          )
+
+          uiState.pagesDirectUploadProgress?.let { progress ->
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+              LinearProgressIndicator(
+                progress = { progress.fraction },
+                modifier = Modifier.fillMaxWidth(),
+              )
+              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(progress.phase, style = MaterialTheme.typography.labelSmall, color = palette.activePillFg)
+                Text(
+                  "${progress.completedFiles}/${progress.totalFiles}",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = palette.textSecondary,
+                )
+              }
+            }
+          }
+
+          FilledTonalButton(
+            onClick = {
+              val targetBranch =
+                if (directTargetEnv == "production") project.productionBranch
+                else previewBranchName.trim().ifBlank { "preview" }
+              onDeployDirectPages(targetBranch, commitMessage.ifBlank { "Direct upload via EdgeCode" })
+            },
+            enabled = !uiState.isPagesDirectUploading,
+            modifier = Modifier.fillMaxWidth().testTag("pages_direct_deploy_button"),
+          ) {
+            Icon(Icons.Outlined.CloudUpload, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(
+              text =
+                if (uiState.isPagesDirectUploading) "Uploading Assets..."
+                else "Deploy ${stagedAssets.size} Assets",
+            )
+          }
+        }
+
+        uiState.pagesLastDirectDeployment?.let { lastDep ->
+          val liveUrl = lastDep.url ?: "https://${project.subdomain ?: "${project.name}.pages.dev"}"
+          Surface(
+            color = palette.editorBg,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = EmeraldLive, modifier = Modifier.size(16.dp))
+              Spacer(Modifier.width(8.dp))
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                  text = "Direct Upload Live (${lastDep.environment})",
+                  style = MaterialTheme.typography.labelMedium,
+                  color = EmeraldLive,
+                )
+                Text(
+                  text = liveUrl,
+                  style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMono),
+                  color = palette.textPrimary,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+              }
+              IconButton(
+                onClick = { clipboardManager.setText(AnnotatedString(liveUrl)) },
+                modifier = Modifier.size(28.dp),
+              ) {
+                Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy deployment URL", modifier = Modifier.size(15.dp))
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (project.source != null) {
+      FilledTonalButton(onClick = onTriggerDeploy, modifier = Modifier.fillMaxWidth()) {
+        Icon(Icons.Outlined.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(6.dp))
+        Text("Trigger Git Production Build")
+      }
     }
 
     // Deployments
@@ -250,6 +606,15 @@ private fun PagesProjectDetailView(
               modifier = Modifier.weight(1f),
             )
             Text(stageStatus, style = MaterialTheme.typography.labelSmall, color = statusColor, fontWeight = FontWeight.Bold)
+          }
+          dep.url?.let { depUrl ->
+            Text(
+              text = depUrl,
+              style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMono),
+              color = palette.activePillFg,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
           }
           dep.deploymentTrigger?.metadata?.commitMessage?.let { msg ->
             Text(msg, style = MaterialTheme.typography.bodySmall, color = palette.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -364,5 +729,13 @@ private fun PagesProjectDetailView(
         enabled = domainInput.isNotBlank(),
       ) { Text("Add") }
     }
+  }
+}
+
+private fun formatReadableBytes(bytes: Long): String {
+  return when {
+    bytes < 1024L -> "$bytes B"
+    bytes < 1024L * 1024L -> String.format("%.1f KB", bytes / 1024.0)
+    else -> String.format("%.2f MB", bytes / (1024.0 * 1024.0))
   }
 }

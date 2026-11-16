@@ -395,6 +395,34 @@ data class CfPagesBuildLogsResult(
 )
 
 @JsonClass(generateAdapter = true)
+data class CfPagesUploadTokenResult(
+  val jwt: String = "",
+)
+
+@JsonClass(generateAdapter = true)
+data class CfPagesCheckMissingRequest(
+  val hashes: List<String>,
+)
+
+@JsonClass(generateAdapter = true)
+data class CfPagesAssetMetadata(
+  val contentType: String,
+)
+
+@JsonClass(generateAdapter = true)
+data class CfPagesUploadPayloadItem(
+  val key: String,
+  val value: String,
+  val metadata: CfPagesAssetMetadata,
+  val base64: Boolean = true,
+)
+
+@JsonClass(generateAdapter = true)
+data class CfPagesUpsertHashesRequest(
+  val hashes: List<String>,
+)
+
+@JsonClass(generateAdapter = true)
 data class CfOAuthTokenResponse(
   @Json(name = "access_token") val accessToken: String = "",
   @Json(name = "refresh_token") val refreshToken: String? = null,

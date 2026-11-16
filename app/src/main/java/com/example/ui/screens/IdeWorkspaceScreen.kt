@@ -144,6 +144,27 @@ fun IdeWorkspaceScreen(
       }
     }
 
+  val pagesFolderLauncher =
+    rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
+      if (treeUri != null) {
+        viewModel.stagePagesFolder(treeUri)
+      }
+    }
+
+  val pagesZipLauncher =
+    rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { zipUri ->
+      if (zipUri != null) {
+        viewModel.stagePagesZip(zipUri)
+      }
+    }
+
+  val pagesFilesLauncher =
+    rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+      if (uris.isNotEmpty()) {
+        viewModel.stagePagesFiles(uris)
+      }
+    }
+
   val triggerSingleUpload = { singleFileUploadLauncher.launch(arrayOf("*/*")) }
   val triggerBatchUpload = { batchFileUploadLauncher.launch(arrayOf("*/*")) }
   val triggerImportAndRun = { importAndRunLauncher.launch(arrayOf("*/*")) }
@@ -386,6 +407,13 @@ fun IdeWorkspaceScreen(
         onSavePagesEnvVar = viewModel::savePagesEnvVar,
         onAddPagesDomain = viewModel::addPagesDomain,
         onDeletePagesDomain = viewModel::deletePagesDomain,
+        onPickPagesFolder = { pagesFolderLauncher.launch(null) },
+        onPickPagesZip = { pagesZipLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*")) },
+        onPickPagesFiles = { pagesFilesLauncher.launch(arrayOf("*/*")) },
+        onStageWorkspaceForPages = viewModel::stageCurrentWorkspaceForPages,
+        onTogglePagesZipStripRoot = viewModel::togglePagesZipStripRoot,
+        onClearStagedPagesAssets = viewModel::clearStagedPagesAssets,
+        onDeployDirectPages = viewModel::deployStagedPagesAssets,
         onStartGitHubOAuth = { clientId ->
           viewModel.startGitHubDeviceOAuth(clientIdOverride = clientId, enterIdeOnSuccess = false) { verificationUrl ->
             runCatching {

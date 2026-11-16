@@ -1,5 +1,6 @@
 package com.example.data.repository
 
+import com.example.data.local.RawPickedAsset
 import com.example.data.remote.CfAccount
 import com.example.data.remote.CfCronSchedule
 import com.example.data.remote.CfCronSchedulePut
@@ -14,13 +15,17 @@ import com.example.data.remote.CfDurableObjectNamespace
 import com.example.data.remote.CfKvKey
 import com.example.data.remote.CfKvNamespace
 import com.example.data.remote.CfKvNamespaceRequest
+import com.example.data.remote.CfPagesAssetMetadata
 import com.example.data.remote.CfPagesBuildLogsResult
+import com.example.data.remote.CfPagesCheckMissingRequest
 import com.example.data.remote.CfPagesDeployment
 import com.example.data.remote.CfPagesDomain
 import com.example.data.remote.CfPagesDomainCreateRequest
 import com.example.data.remote.CfPagesEnvVarValue
 import com.example.data.remote.CfPagesProject
 import com.example.data.remote.CfPagesProjectCreateRequest
+import com.example.data.remote.CfPagesUploadPayloadItem
+import com.example.data.remote.CfPagesUpsertHashesRequest
 import com.example.data.remote.CfQueue
 import com.example.data.remote.CfR2Bucket
 import com.example.data.remote.CfR2CreateRequest
@@ -39,6 +44,9 @@ import com.example.data.remote.CfZoneRouteCreate
 import com.example.data.remote.CloudflareClientFactory
 import com.example.data.remote.HttpTestResult
 import com.example.data.remote.MultipartWorkerParser
+import com.example.data.remote.PagesDirectUploadHasher
+import com.example.data.remote.PagesDirectUploadProgress
+import com.example.data.remote.PagesPreparedAsset
 import com.example.data.remote.WorkerFile
 import com.example.data.remote.WorkerWorkspace
 import com.example.data.security.AuthMethod
@@ -1098,6 +1106,198 @@ class CloudflareRepository(
         if (!resp.isSuccessful || resp.body()?.success != true) {
           error(extractCfError(resp) ?: "Failed to remove Pages domain")
         }
+      }
+    }
+
+  suspend fun preparePagesAssets(rawAssets: List<RawPickedAsset>): List<PagesPreparedAsset> =
+    withContext(Dispatchers.Default) {
+      val deduped = linkedMapOf<String, PagesPreparedAsset>()
+      for (raw in rawAssets) {
+        val prepared = PagesDirectUploadHasher.prepareAsset(raw.relativePath, raw.bytes) ?: continue
+        deduped[prepared.normalizedPath] = prepared
+      }
+      deduped.values.toList()
+    }
+
+  suspend fun directUploadPagesDeployment(
+    accountId: String,
+    projectName: String,
+    preparedAssets: List<PagesPreparedAsset>,
+    branch: String?,
+    commitMessage: String?,
+    onProgress: (PagesDirectUploadProgress) -> Unit = {},
+  ): Result<CfPagesDeployment> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        require(preparedAssets.isNotEmpty()) { "Select at least one file or folder to deploy" }
+
+        val workerEntry = preparedAssets.firstOrNull { it.normalizedPath == "/_worker.js" }
+        val staticAssets = preparedAssets.filterNot { it.normalizedPath == "/_worker.js" }
+        val totalAssetCount = staticAssets.size
+        val totalAssetBytes = staticAssets.sumOf { it.bytes.size.toLong() }
+
+        onProgress(
+          PagesDirectUploadProgress(
+            phase = "Requesting upload token...",
+            completedFiles = 0,
+            totalFiles = totalAssetCount,
+            uploadedBytes = 0L,
+            totalBytes = totalAssetBytes,
+          )
+        )
+
+        val tokenResp = api.getPagesUploadToken(accountId, projectName)
+        if (!tokenResp.isSuccessful || tokenResp.body()?.success != true) {
+          error(extractCfError(tokenResp) ?: "Failed to obtain Pages upload token (HTTP ${tokenResp.code()})")
+        }
+        val jwt = tokenResp.body()?.result?.jwt?.takeIf { it.isNotBlank() }
+          ?: error("Cloudflare returned empty Pages upload token")
+        val bearerJwt = "Bearer $jwt"
+
+        if (staticAssets.isNotEmpty()) {
+          val uniqueByHash = linkedMapOf<String, PagesPreparedAsset>()
+          staticAssets.forEach { asset -> uniqueByHash.putIfAbsent(asset.hash, asset) }
+          val allHashes = uniqueByHash.keys.toList()
+
+          onProgress(
+            PagesDirectUploadProgress(
+              phase = "Checking Cloudflare edge cache (${allHashes.size} assets)...",
+              completedFiles = 0,
+              totalFiles = totalAssetCount,
+              uploadedBytes = 0L,
+              totalBytes = totalAssetBytes,
+            )
+          )
+
+          val missingResp = api.checkMissingPagesAssets(bearerJwt, CfPagesCheckMissingRequest(allHashes))
+          if (!missingResp.isSuccessful || missingResp.body()?.success != true) {
+            error(extractCfError(missingResp) ?: "Failed to check missing Pages assets")
+          }
+          val missingSet = missingResp.body()?.result.orEmpty().toSet()
+          val toUpload = uniqueByHash.values.filter { it.hash in missingSet }
+
+          val cachedBytes =
+            staticAssets.filter { it.hash !in missingSet }.sumOf { it.bytes.size.toLong() }
+          var uploadedBytesSoFar = cachedBytes
+          var uploadedFilesSoFar = staticAssets.count { it.hash !in missingSet }
+
+          if (toUpload.isNotEmpty()) {
+            // Chunk into <= 12 MiB base64 payload and <= 150 files per batch
+            val maxBatchBase64Bytes = 12 * 1024 * 1024
+            val maxBatchItems = 150
+            val batches = mutableListOf<List<PagesPreparedAsset>>()
+            var currentBatch = mutableListOf<PagesPreparedAsset>()
+            var currentBatchBytes = 0
+
+            for (asset in toUpload) {
+              val itemSize = asset.base64Content.length
+              if (
+                currentBatch.isNotEmpty() &&
+                  (currentBatchBytes + itemSize > maxBatchBase64Bytes || currentBatch.size >= maxBatchItems)
+              ) {
+                batches.add(currentBatch)
+                currentBatch = mutableListOf()
+                currentBatchBytes = 0
+              }
+              currentBatch.add(asset)
+              currentBatchBytes += itemSize
+            }
+            if (currentBatch.isNotEmpty()) {
+              batches.add(currentBatch)
+            }
+
+            batches.forEachIndexed { idx, batch ->
+              onProgress(
+                PagesDirectUploadProgress(
+                  phase = "Uploading batch ${idx + 1}/${batches.size} (${batch.size} files)...",
+                  completedFiles = uploadedFilesSoFar,
+                  totalFiles = totalAssetCount,
+                  uploadedBytes = uploadedBytesSoFar,
+                  totalBytes = totalAssetBytes,
+                )
+              )
+              val payload =
+                batch.map { asset ->
+                  CfPagesUploadPayloadItem(
+                    key = asset.hash,
+                    value = asset.base64Content,
+                    metadata = CfPagesAssetMetadata(contentType = asset.contentType),
+                    base64 = true,
+                  )
+                }
+              val uploadResp = api.uploadPagesAssets(bearerJwt, payload)
+              if (!uploadResp.isSuccessful || uploadResp.body()?.success != true) {
+                error(extractCfError(uploadResp) ?: "Pages asset batch upload failed (HTTP ${uploadResp.code()})")
+              }
+              val batchHashSet = batch.mapTo(hashSetOf()) { it.hash }
+              uploadedBytesSoFar += staticAssets.filter { it.hash in batchHashSet }.sumOf { it.bytes.size.toLong() }
+              uploadedFilesSoFar += staticAssets.count { it.hash in batchHashSet }
+            }
+          }
+
+          onProgress(
+            PagesDirectUploadProgress(
+              phase = "Registering asset hashes...",
+              completedFiles = totalAssetCount,
+              totalFiles = totalAssetCount,
+              uploadedBytes = totalAssetBytes,
+              totalBytes = totalAssetBytes,
+            )
+          )
+
+          val upsertResp = api.upsertPagesHashes(bearerJwt, CfPagesUpsertHashesRequest(allHashes))
+          if (!upsertResp.isSuccessful || upsertResp.body()?.success != true) {
+            error(extractCfError(upsertResp) ?: "Failed to upsert Pages asset hashes")
+          }
+        }
+
+        onProgress(
+          PagesDirectUploadProgress(
+            phase = "Finalizing deployment manifest...",
+            completedFiles = totalAssetCount,
+            totalFiles = totalAssetCount,
+            uploadedBytes = totalAssetBytes,
+            totalBytes = totalAssetBytes,
+          )
+        )
+
+        val manifestMap = linkedMapOf<String, String>()
+        staticAssets.forEach { asset ->
+          manifestMap[asset.normalizedPath] = asset.hash
+        }
+        val manifestAdapter =
+          clientFactory.moshi.adapter<Map<String, String>>(
+            Types.newParameterizedType(Map::class.java, String::class.java, String::class.java)
+          )
+        val manifestJson = manifestAdapter.toJson(manifestMap)
+
+        val multipartBuilder =
+          okhttp3.MultipartBody.Builder()
+            .setType(okhttp3.MultipartBody.FORM)
+            .addFormDataPart("manifest", manifestJson)
+
+        val cleanBranch = branch?.trim().orEmpty()
+        if (cleanBranch.isNotBlank()) {
+          multipartBuilder.addFormDataPart("branch", cleanBranch)
+        }
+        val cleanMsg = commitMessage?.trim().orEmpty()
+        if (cleanMsg.isNotBlank()) {
+          multipartBuilder.addFormDataPart("commit_message", cleanMsg)
+        }
+        if (workerEntry != null) {
+          multipartBuilder.addFormDataPart(
+            "_worker.js",
+            "_worker.js",
+            workerEntry.bytes.toRequestBody("application/javascript+module".toMediaType()),
+          )
+        }
+
+        val deployResp =
+          api.createPagesDirectDeployment(accountId, projectName, multipartBuilder.build())
+        if (!deployResp.isSuccessful || deployResp.body()?.success != true) {
+          error(extractCfError(deployResp) ?: "Pages Direct Upload deployment failed (HTTP ${deployResp.code()})")
+        }
+        deployResp.body()?.result ?: error("Empty Pages deployment result")
       }
     }
 

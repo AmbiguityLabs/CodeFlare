@@ -31,9 +31,10 @@ class CloudflareClientFactory(private val prefsStore: AuthPreferencesStore) {
   private val authInterceptor = Interceptor { chain ->
     val creds = runBlocking { prefsStore.getCurrentCredentials() }
     val original = chain.request()
+    val hasExplicitAuth = original.header("Authorization") != null
     val builder = original.newBuilder().header("Accept", "application/json")
 
-    if (creds != null) {
+    if (!hasExplicitAuth && creds != null) {
       when (creds.method) {
         AuthMethod.OAUTH_PKCE,
         AuthMethod.API_TOKEN -> {
