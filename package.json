@@ -1,0 +1,10 @@
+{
+  "name": "edgecode",
+  "version": "1.0.0",
+  "private": true,
+  "description": "EdgeCode Android app (Gradle project). Placeholder package.json so npm install succeeds.",
+  "scripts": {
+    "build": "echo 'Android project: build with Gradle (./gradlew assembleDebug)'"
+  },
+  "dependencies": {}
+}
