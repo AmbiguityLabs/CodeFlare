@@ -1,0 +1,30 @@
+<resources>
+    <string name="app_name">EdgeCode</string>
+    <string name="tagline">Cloudflare Workers Mobile IDE</string>
+    <string name="auth_title">Authorize Cloudflare</string>
+    <string name="auth_subtitle">Connect natively via Cloudflare OAuth2 PKCE or scoped API Token. Credentials stay hardware-encrypted in Android Keystore.</string>
+    <string name="auth_oauth_btn">Sign in with Cloudflare OAuth</string>
+    <string name="auth_oauth_waiting">Waiting for Cloudflare browser callback on localhost:8976…</string>
+    <string name="auth_cancel">Cancel</string>
+    <string name="auth_tab_oauth">OAuth 2.0</string>
+    <string name="auth_tab_token">API Token</string>
+    <string name="auth_tab_global">Global Key</string>
+    <string name="auth_token_label">Cloudflare API Token</string>
+    <string name="auth_token_hint">Paste scoped Workers Edit token</string>
+    <string name="auth_generate_token">Generate Scoped Token on Cloudflare</string>
+    <string name="auth_verify_connect">Verify &amp; Open Workspace</string>
+    <string name="auth_email_label">Cloudflare Account Email</string>
+    <string name="auth_global_key_label">Global API Key</string>
+    <string name="cd_auth_hero">Cloudflare global edge network illustration</string>
+    <string name="cd_empty_workspace">EdgeCode floating code workspace illustration</string>
+    <string name="cd_toggle_sidebar">Toggle Activity Sidebar</string>
+    <string name="cd_deploy_worker">Deploy Worker to Cloudflare Edge</string>
+    <string name="cd_command_palette">Open Command Palette</string>
+    <string name="cd_test_worker">Run Live HTTP Test</string>
+    <string name="cd_close_tab">Close file tab</string>
+    <string name="cd_new_worker">Create new Worker</string>
+    <string name="cd_new_file">Add new module file</string>
+    <string name="cd_refresh_workers">Refresh Workers from Cloudflare</string>
+    <string name="cd_find_replace">Find and Replace</string>
+    <string name="cd_format_code">Format code</string>
+</resources>
