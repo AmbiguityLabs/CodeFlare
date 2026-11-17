@@ -5,6 +5,15 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -37,6 +46,7 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.Http
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
@@ -47,6 +57,8 @@ import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.UploadFile
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
@@ -75,6 +87,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -109,6 +122,9 @@ import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.edgeGlassDock
+import com.example.ui.theme.edgeGlassSurface
+import com.example.ui.theme.rememberGlassBorderStroke
 import com.example.ui.viewmodel.BottomPanelTab
 import com.example.ui.viewmodel.IdeUiState
 import com.example.ui.viewmodel.IdeViewModel
@@ -466,19 +482,28 @@ fun IdeWorkspaceScreen(
         PaletteCommand("Open IDE Log", "Inspect internal IDE deployment & API event log") {
           viewModel.toggleBottomPanel(BottomPanelTab.CONSOLE)
         },
-        PaletteCommand("Export / Deploy Worker to Cloudflare", "Publish all local RAM edits, bindings & deletions live") {
+        PaletteCommand(
+          title =
+            if (uiState.isBottomDockHidden && uiState.isEditorBottomBarsHidden) "Show All Bottom Menus"
+            else "Hide All Bottom Menus",
+          subtitle = "Collapse or restore bottom dock and editor toolbars",
+        ) {
+          val shouldHide = !(uiState.isBottomDockHidden && uiState.isEditorBottomBarsHidden)
+          viewModel.toggleAllBottomMenus(shouldHide)
+        },
+        PaletteCommand("Export / Deploy Worker to Cloudflare", "Publish all local edits, bindings & deletions live") {
           viewModel.deployActiveWorker()
         },
-        PaletteCommand("Re-Import Worker from Cloudflare", "Discard local RAM edits and pull fresh Worker code") {
+        PaletteCommand("Re-Import Worker from Cloudflare", "Discard local edits and pull fresh Worker code") {
           viewModel.reimportActiveWorkerFromCloudflare()
         },
-        PaletteCommand("Revert Workspace to Baseline", "Restore workspace files in RAM back to imported baseline") {
+        PaletteCommand("Revert Workspace to Baseline", "Restore workspace files back to imported baseline") {
           viewModel.revertWorkspaceToImportedBaseline()
         },
-        PaletteCommand("Export RAM Workspace Bundle (.json)", "Save workspace files and metadata as local JSON") {
+        PaletteCommand("Export Workspace Bundle (.json)", "Save organized workspace files and metadata as JSON") {
           if (uiState.workspace != null) triggerExportWorkspaceBundle()
         },
-        PaletteCommand("Import Workspace Bundle (.json)", "Load saved workspace JSON bundle into RAM DB") {
+        PaletteCommand("Import Workspace Bundle (.json)", "Load saved workspace JSON bundle into Project Dir") {
           triggerImportWorkspaceBundle()
         },
         PaletteCommand("Upload Single File", "Pick one local script/asset file into this project") {
@@ -616,7 +641,7 @@ fun IdeWorkspaceScreen(
                 text =
                   when {
                     dirtyCount > 0 -> "$fileCount files · $dirtyCount edited"
-                    uiState.isLocalScratchpad -> "$fileCount files · Local RAM"
+                    uiState.isLocalScratchpad -> "$fileCount files · Local Dir"
                     else -> "$fileCount files · Synced"
                   },
                 fontFamily = JetBrainsMono,
@@ -628,16 +653,21 @@ fun IdeWorkspaceScreen(
             }
 
             if (!isExpanded && uiState.workspace != null) {
-              IconButton(
+              Surface(
                 onClick = { scope.launch { drawerState.open() } },
+                shape = CircleShape,
+                color = palette.glassSurface,
+                border = rememberGlassBorderStroke(1.dp),
                 modifier = Modifier.size(36.dp).testTag("workspace_quick_files_button"),
               ) {
-                Icon(
-                  imageVector = Icons.Outlined.FolderOpen,
-                  contentDescription = "Open Project Files",
-                  tint = palette.textSecondary,
-                  modifier = Modifier.size(18.dp),
-                )
+                Box(contentAlignment = Alignment.Center) {
+                  Icon(
+                    imageVector = Icons.Outlined.FolderOpen,
+                    contentDescription = "Open Project Files",
+                    tint = palette.textSecondary,
+                    modifier = Modifier.size(18.dp),
+                  )
+                }
               }
             }
 
@@ -645,8 +675,9 @@ fun IdeWorkspaceScreen(
               if (uiState.isLocalScratchpad) {
                 Surface(
                   onClick = viewModel::exitScratchpadToAuth,
-                  shape = RoundedCornerShape(10.dp),
+                  shape = RoundedCornerShape(12.dp),
                   color = palette.activePillBg,
+                  border = rememberGlassBorderStroke(1.dp),
                   modifier = Modifier.testTag("connect_cloudflare_button"),
                 ) {
                   Text(
@@ -660,8 +691,9 @@ fun IdeWorkspaceScreen(
               } else {
                 Surface(
                   onClick = { if (!uiState.isDeploying) viewModel.deployActiveWorker() },
-                  shape = RoundedCornerShape(10.dp),
-                  color = if (uiState.hasUnsavedChanges) palette.activePillBg else palette.chromePill,
+                  shape = RoundedCornerShape(12.dp),
+                  color = if (uiState.hasUnsavedChanges) palette.activePillBg else palette.glassElevated,
+                  border = rememberGlassBorderStroke(1.dp),
                   modifier = Modifier.testTag("deploy_worker_button"),
                 ) {
                   Row(
@@ -723,6 +755,22 @@ fun IdeWorkspaceScreen(
                   onClick = {
                     overflowMenuOpen = false
                     showCommandPalette = true
+                  },
+                )
+                val allHidden = uiState.isBottomDockHidden && uiState.isEditorBottomBarsHidden
+                DropdownMenuItem(
+                  text = {
+                    Text(if (allHidden) "Show All Bottom Menus" else "Hide All Bottom Menus")
+                  },
+                  leadingIcon = {
+                    Icon(
+                      imageVector = if (allHidden) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
+                      contentDescription = null,
+                    )
+                  },
+                  onClick = {
+                    overflowMenuOpen = false
+                    viewModel.toggleAllBottomMenus(!allHidden)
                   },
                 )
                 DropdownMenuItem(
@@ -806,153 +854,212 @@ fun IdeWorkspaceScreen(
             }
 
             Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-              when (uiState.projectMode) {
-                ProjectMode.CODE -> {
-                  CodeEditorPane(
-                    uiState = uiState,
-                    onSelectTab = { path -> viewModel.openFileTab(path, recordHistory = true) },
-                    onCloseTab = viewModel::closeFileTab,
-                    onSelectAdjacentTab = viewModel::selectAdjacentTab,
-                    onCloseOtherTabs = viewModel::closeOtherTabs,
-                    onCloseSavedTabs = viewModel::closeSavedTabs,
-                    onCloseAllTabs = viewModel::closeAllTabs,
-                    onSetEntryModule = viewModel::setEntryModule,
-                    onRevertFile = viewModel::revertFile,
-                    onNavigateTabBack = viewModel::navigateTabBack,
-                    onNavigateTabForward = viewModel::navigateTabForward,
-                    onOpenWorkerPreview = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
-                    onCreateNewFile = { newFileDialogPrefix = "" },
-                    onCodeChange = viewModel::syncTypedEditorValue,
-                    onInsertText = viewModel::insertTextAtCursor,
-                    onInsertTab = viewModel::insertTab,
-                    onUndo = viewModel::undo,
-                    onRedo = viewModel::redo,
-                    onFormat = viewModel::formatActiveFile,
-                    onToggleComment = viewModel::toggleLineComment,
-                    onToggleFindBar = { viewModel.toggleFindBar() },
-                    onFindQueryChange = viewModel::setFindQuery,
-                    onReplaceQueryChange = viewModel::setReplaceQuery,
-                    onFindNext = viewModel::findNextMatch,
-                    onReplaceAll = viewModel::replaceAllMatches,
-                    onOpenProblems = { viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS) },
-                    onOpenExplorer = {
-                      if (!isExpanded) scope.launch { drawerState.open() }
-                    },
-                    onShowNewWorkerDialog = { showNewWorkerDialog = true },
-                    onDismissDraftBanner = viewModel::dismissDraftBanner,
-                    onDiscardRestoredDraft = viewModel::discardRestoredDraft,
-                    onJumpToLine = viewModel::jumpToLine,
-                    onSyncWranglerToWorkspace = viewModel::syncWranglerFileToWorkspace,
-                    onZoomPercentChange = viewModel::setEditorZoomPercent,
-                    onJumpToLocation = viewModel::jumpToLine,
-                    modifier = Modifier.fillMaxSize(),
-                  )
-                }
+              AnimatedContent(
+                targetState = uiState.projectMode,
+                transitionSpec = {
+                  fadeIn(tween(160)) togetherWith fadeOut(tween(120))
+                },
+                modifier = Modifier.fillMaxSize(),
+                label = "workspace_mode_anim",
+              ) { mode ->
+                when (mode) {
+                  ProjectMode.CODE -> {
+                    CodeEditorPane(
+                      uiState = uiState,
+                      onSelectTab = { path -> viewModel.openFileTab(path, recordHistory = true) },
+                      onCloseTab = viewModel::closeFileTab,
+                      onSelectAdjacentTab = viewModel::selectAdjacentTab,
+                      onCloseOtherTabs = viewModel::closeOtherTabs,
+                      onCloseSavedTabs = viewModel::closeSavedTabs,
+                      onCloseAllTabs = viewModel::closeAllTabs,
+                      onSetEntryModule = viewModel::setEntryModule,
+                      onRevertFile = viewModel::revertFile,
+                      onNavigateTabBack = viewModel::navigateTabBack,
+                      onNavigateTabForward = viewModel::navigateTabForward,
+                      onOpenWorkerPreview = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
+                      onCreateNewFile = { newFileDialogPrefix = "" },
+                      onCodeChange = viewModel::syncTypedEditorValue,
+                      onInsertText = viewModel::insertTextAtCursor,
+                      onInsertTab = viewModel::insertTab,
+                      onUndo = viewModel::undo,
+                      onRedo = viewModel::redo,
+                      onFormat = viewModel::formatActiveFile,
+                      onToggleComment = viewModel::toggleLineComment,
+                      onToggleFindBar = { viewModel.toggleFindBar() },
+                      onFindQueryChange = viewModel::setFindQuery,
+                      onReplaceQueryChange = viewModel::setReplaceQuery,
+                      onFindNext = viewModel::findNextMatch,
+                      onReplaceAll = viewModel::replaceAllMatches,
+                      onOpenProblems = { viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS) },
+                      onOpenExplorer = {
+                        if (!isExpanded) scope.launch { drawerState.open() }
+                      },
+                      onShowNewWorkerDialog = { showNewWorkerDialog = true },
+                      onDismissDraftBanner = viewModel::dismissDraftBanner,
+                      onDiscardRestoredDraft = viewModel::discardRestoredDraft,
+                      onJumpToLine = viewModel::jumpToLine,
+                      onSyncWranglerToWorkspace = viewModel::syncWranglerFileToWorkspace,
+                      onZoomPercentChange = viewModel::setEditorZoomPercent,
+                      onJumpToLocation = viewModel::jumpToLine,
+                      onHideEditorBottomBars = { viewModel.setEditorBottomBarsHidden(true) },
+                      modifier = Modifier.fillMaxSize(),
+                    )
+                  }
 
-                ProjectMode.TEST -> {
-                  ProjectTestModeWorkspace(
-                    uiState = uiState,
-                    viewModel = viewModel,
-                  )
-                }
+                  ProjectMode.TEST -> {
+                    ProjectTestModeWorkspace(
+                      uiState = uiState,
+                      viewModel = viewModel,
+                    )
+                  }
 
-                ProjectMode.CONFIG -> {
-                  CloudflareInfraPanel(
-                    uiState = uiState,
-                    onRefreshInfra = viewModel::loadCloudflareInfra,
-                    onToggleWorkersDev = viewModel::toggleWorkersDev,
-                    onUpdateCompat = viewModel::updateCompatibilitySettings,
-                    onAddCronSchedule = viewModel::addCronSchedule,
-                    onRemoveCronSchedule = viewModel::removeCronSchedule,
-                    onAttachZoneRoute = viewModel::attachZoneRoute,
-                    onDeleteZoneRoute = viewModel::deleteZoneRoute,
-                    onAttachWorkerDomain = viewModel::attachWorkerCustomDomain,
-                    onRemoveWorkerDomain = viewModel::removeWorkerCustomDomain,
-                    onRollbackVersion = viewModel::rollbackToVersion,
-                    onRefreshWorkerVersions = viewModel::loadWorkerVersions,
-                    onDeployGradualSplit = viewModel::deployGradualWorkerSplit,
-                    onAddEnvVar = viewModel::addEnvVar,
-                    onAddSecret = viewModel::addSecret,
-                    onBindResource = viewModel::bindResourceToWorker,
-                    onDeleteBinding = viewModel::deleteBindingOrSecret,
-                    onCreateKvNamespace = viewModel::createKvNamespace,
-                    onDeleteKvNamespace = viewModel::deleteKvNamespace,
-                    onSelectKvNamespace = viewModel::selectKvNamespace,
-                    onInspectKvKey = viewModel::inspectKvKey,
-                    onPutKvEntry = viewModel::putKvEntry,
-                    onBulkImportKv = viewModel::bulkImportKvJson,
-                    onExportKvJson = viewModel::exportSelectedKvJson,
-                    onDeleteKvKey = viewModel::deleteKvKey,
-                    onCreateD1Database = viewModel::createD1Database,
-                    onDeleteD1Database = viewModel::deleteD1Database,
-                    onSelectD1Database = viewModel::selectD1Database,
-                    onRunD1Sql = viewModel::runD1SqlQuery,
-                    onCreateR2Bucket = viewModel::createR2Bucket,
-                    onDeleteR2Bucket = viewModel::deleteR2Bucket,
-                    onCreateQueue = viewModel::createQueue,
-                    onDeleteQueue = viewModel::deleteQueue,
-                    onNotifyStatus = viewModel::showStatus,
-                  )
-                }
+                  ProjectMode.CONFIG -> {
+                    CloudflareInfraPanel(
+                      uiState = uiState,
+                      onRefreshInfra = viewModel::loadCloudflareInfra,
+                      onToggleWorkersDev = viewModel::toggleWorkersDev,
+                      onUpdateCompat = viewModel::updateCompatibilitySettings,
+                      onAddCronSchedule = viewModel::addCronSchedule,
+                      onRemoveCronSchedule = viewModel::removeCronSchedule,
+                      onAttachZoneRoute = viewModel::attachZoneRoute,
+                      onDeleteZoneRoute = viewModel::deleteZoneRoute,
+                      onAttachWorkerDomain = viewModel::attachWorkerCustomDomain,
+                      onRemoveWorkerDomain = viewModel::removeWorkerCustomDomain,
+                      onRollbackVersion = viewModel::rollbackToVersion,
+                      onRefreshWorkerVersions = viewModel::loadWorkerVersions,
+                      onDeployGradualSplit = viewModel::deployGradualWorkerSplit,
+                      onAddEnvVar = viewModel::addEnvVar,
+                      onAddSecret = viewModel::addSecret,
+                      onBindResource = viewModel::bindResourceToWorker,
+                      onDeleteBinding = viewModel::deleteBindingOrSecret,
+                      onCreateKvNamespace = viewModel::createKvNamespace,
+                      onDeleteKvNamespace = viewModel::deleteKvNamespace,
+                      onSelectKvNamespace = viewModel::selectKvNamespace,
+                      onInspectKvKey = viewModel::inspectKvKey,
+                      onPutKvEntry = viewModel::putKvEntry,
+                      onBulkImportKv = viewModel::bulkImportKvJson,
+                      onExportKvJson = viewModel::exportSelectedKvJson,
+                      onDeleteKvKey = viewModel::deleteKvKey,
+                      onCreateD1Database = viewModel::createD1Database,
+                      onDeleteD1Database = viewModel::deleteD1Database,
+                      onSelectD1Database = viewModel::selectD1Database,
+                      onRunD1Sql = viewModel::runD1SqlQuery,
+                      onCreateR2Bucket = viewModel::createR2Bucket,
+                      onDeleteR2Bucket = viewModel::deleteR2Bucket,
+                      onCreateQueue = viewModel::createQueue,
+                      onDeleteQueue = viewModel::deleteQueue,
+                      onNotifyStatus = viewModel::showStatus,
+                    )
+                  }
 
-                ProjectMode.CONSOLE -> {
-                  ProjectConsoleModeWorkspace(
-                    uiState = uiState,
-                    viewModel = viewModel,
-                  )
+                  ProjectMode.CONSOLE -> {
+                    ProjectConsoleModeWorkspace(
+                      uiState = uiState,
+                      viewModel = viewModel,
+                    )
+                  }
                 }
               }
             }
           }
 
-          // Sleek 4-Destination Bottom Dock (hidden in Fullscreen Preview)
-          if (!isFullScreenPreview) {
-          EdgeBottomDock(
-            items =
-              listOf(
-                EdgeBottomDockItem(
-                  label = "Code",
-                  icon = Icons.Outlined.Code,
-                  selected = uiState.projectMode == ProjectMode.CODE,
-                  testTag = "project_nav_code",
-                  onClick = { viewModel.setProjectMode(ProjectMode.CODE) },
+          // Sleek Hideable 4-Destination Bottom Dock (hidden in Fullscreen Preview or when collapsed)
+          AnimatedVisibility(
+            visible = !isFullScreenPreview && !uiState.isBottomDockHidden,
+            enter = slideInVertically(tween(200)) { it } + fadeIn(tween(180)),
+            exit = slideOutVertically(tween(160)) { it } + fadeOut(tween(140)),
+          ) {
+            EdgeBottomDock(
+              onHideDock = { viewModel.setBottomDockHidden(true) },
+              hideDockTestTag = "hide_workspace_bottom_dock_button",
+              items =
+                listOf(
+                  EdgeBottomDockItem(
+                    label = "Code",
+                    icon = Icons.Outlined.Code,
+                    selected = uiState.projectMode == ProjectMode.CODE,
+                    testTag = "project_nav_code",
+                    onClick = { viewModel.setProjectMode(ProjectMode.CODE) },
+                  ),
+                  EdgeBottomDockItem(
+                    label = "Test",
+                    icon = Icons.Outlined.PlayArrow,
+                    selected = uiState.projectMode == ProjectMode.TEST,
+                    testTag = "project_nav_test",
+                    onClick = { viewModel.setProjectMode(ProjectMode.TEST) },
+                  ),
+                  EdgeBottomDockItem(
+                    label = "Config",
+                    icon = Icons.Outlined.Tune,
+                    selected = uiState.projectMode == ProjectMode.CONFIG,
+                    testTag = "project_nav_config",
+                    onClick = { viewModel.setProjectMode(ProjectMode.CONFIG) },
+                  ),
+                  EdgeBottomDockItem(
+                    label = "Console",
+                    icon = Icons.Outlined.Terminal,
+                    selected = uiState.projectMode == ProjectMode.CONSOLE,
+                    testTag = "project_nav_console",
+                    badgeText =
+                      when {
+                        uiState.isTailRunning -> "LIVE"
+                        uiState.diagnostics.isNotEmpty() -> "${uiState.diagnostics.size}"
+                        else -> null
+                      },
+                    badgeColor = if (uiState.isTailRunning) EmeraldLive else AmberWarn,
+                    onClick = { viewModel.setProjectMode(ProjectMode.CONSOLE) },
+                  ),
                 ),
-                EdgeBottomDockItem(
-                  label = "Test",
-                  icon = Icons.Outlined.PlayArrow,
-                  selected = uiState.projectMode == ProjectMode.TEST,
-                  testTag = "project_nav_test",
-                  onClick = { viewModel.setProjectMode(ProjectMode.TEST) },
-                ),
-                EdgeBottomDockItem(
-                  label = "Config",
-                  icon = Icons.Outlined.Tune,
-                  selected = uiState.projectMode == ProjectMode.CONFIG,
-                  testTag = "project_nav_config",
-                  onClick = { viewModel.setProjectMode(ProjectMode.CONFIG) },
-                ),
-                EdgeBottomDockItem(
-                  label = "Console",
-                  icon = Icons.Outlined.Terminal,
-                  selected = uiState.projectMode == ProjectMode.CONSOLE,
-                  testTag = "project_nav_console",
-                  badgeText =
-                    when {
-                      uiState.isTailRunning -> "LIVE"
-                      uiState.diagnostics.isNotEmpty() -> "${uiState.diagnostics.size}"
-                      else -> null
-                    },
-                  badgeColor = if (uiState.isTailRunning) EmeraldLive else AmberWarn,
-                  onClick = { viewModel.setProjectMode(ProjectMode.CONSOLE) },
-                ),
+            )
+          }
+        }
+
+        AnimatedVisibility(
+          visible =
+            !isFullScreenPreview &&
+              (uiState.isBottomDockHidden ||
+                (uiState.projectMode == ProjectMode.CODE && uiState.isEditorBottomBarsHidden)),
+          enter = fadeIn(tween(180)) + slideInVertically(tween(180)) { it / 2 },
+          exit = fadeOut(tween(140)) + slideOutVertically(tween(140)) { it / 2 },
+          modifier =
+            Modifier
+              .align(Alignment.BottomEnd)
+              .padding(
+                end = 14.dp,
+                bottom = if (uiState.isBottomDockHidden) 14.dp else 72.dp,
               ),
-          )
+        ) {
+          Row(
+            modifier =
+              Modifier
+                .edgeGlassSurface(RoundedCornerShape(999.dp), elevated = true)
+                .clickable { viewModel.toggleAllBottomMenus(false) }
+                .padding(horizontal = 13.dp, vertical = 8.dp)
+                .testTag("show_workspace_bottom_menus_button"),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+          ) {
+            Icon(
+              imageVector = Icons.Outlined.KeyboardArrowUp,
+              contentDescription = "Show bottom menus",
+              tint = palette.activePillFg,
+              modifier = Modifier.size(17.dp),
+            )
+            Text(
+              text = if (uiState.isBottomDockHidden) "Menu" else "Toolbar",
+              style = MaterialTheme.typography.labelMedium,
+              fontWeight = FontWeight.SemiBold,
+              color = palette.textPrimary,
+            )
           }
         }
 
         SnackbarHost(
           hostState = snackbarHostState,
-          modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp),
+          modifier =
+            Modifier
+              .align(Alignment.BottomCenter)
+              .padding(bottom = if (uiState.isBottomDockHidden) 18.dp else 72.dp),
         )
       }
     }
@@ -996,7 +1103,7 @@ private fun ProjectTestModeWorkspace(
         modifier =
           Modifier
             .fillMaxWidth()
-            .background(palette.chromeSurface)
+            .edgeGlassDock(shape = RectangleShape)
             .padding(horizontal = 10.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1148,7 +1255,7 @@ private fun ProjectConsoleModeWorkspace(
       modifier =
         Modifier
           .fillMaxWidth()
-          .background(palette.chromeSurface)
+          .edgeGlassDock(shape = RectangleShape)
           .padding(horizontal = 10.dp, vertical = 6.dp),
       horizontalArrangement = Arrangement.spacedBy(5.dp),
       verticalAlignment = Alignment.CenterVertically,
@@ -1235,17 +1342,24 @@ private fun ModeSegmentChip(
   badgeColor: Color? = null,
 ) {
   val palette = LocalIdePalette.current
-  val fg = if (selected) palette.activePillFg else palette.textSecondary
+  val fg by animateColorAsState(
+    targetValue = if (selected) palette.activePillFg else palette.textSecondary,
+    animationSpec = tween(160),
+    label = "mode_chip_fg",
+  )
+  val bg by animateColorAsState(
+    targetValue = if (selected) palette.activePillBg else palette.glassSurface,
+    animationSpec = tween(160),
+    label = "mode_chip_bg",
+  )
 
   Surface(
     onClick = onClick,
-    shape = RoundedCornerShape(8.dp),
-    color = if (selected) palette.activePillBg else palette.chromeBg,
+    shape = RoundedCornerShape(10.dp),
+    color = bg,
     border =
-      BorderStroke(
-        1.dp,
-        if (selected) palette.activePillFg.copy(alpha = 0.3f) else palette.border.copy(alpha = 0.45f),
-      ),
+      if (selected) BorderStroke(1.dp, palette.activePillFg.copy(alpha = 0.35f))
+      else rememberGlassBorderStroke(1.dp),
     modifier = modifier.height(30.dp).testTag(tag),
   ) {
     Row(

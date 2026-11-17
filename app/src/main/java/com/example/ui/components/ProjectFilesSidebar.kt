@@ -1,5 +1,11 @@
 package com.example.ui.components
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -83,6 +89,8 @@ import com.example.ui.theme.FolderGreen
 import com.example.ui.theme.FolderYellow
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.edgeGlassSurface
+import com.example.ui.theme.rememberGlassBorderStroke
 import com.example.ui.viewmodel.IdeUiState
 
 private enum class TreeSortMode { NAME, TYPE }
@@ -136,6 +144,7 @@ fun ProjectFilesSidebar(
   var treeOverflowMenuOpen by remember { mutableStateOf(false) }
   var sortMode by remember { mutableStateOf(TreeSortMode.NAME) }
   val expandedFolders = remember { mutableStateMapOf<String, Boolean>() }
+  var folderTreeVersion by remember { mutableIntStateOf(0) }
 
   pendingDeleteModule?.let { moduleToDelete ->
     AlertDialog(
@@ -167,7 +176,7 @@ fun ProjectFilesSidebar(
         .fillMaxSize()
         .background(palette.chromeBg),
   ) {
-    // Top Segmented Pill Switcher + Collapse Button (matching Reference 1)
+    // Top Segmented Pill Switcher + Collapse Button
     Row(
       modifier =
         Modifier
@@ -177,9 +186,9 @@ fun ProjectFilesSidebar(
       horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
       Surface(
-        color = palette.chromeSurface,
+        color = palette.glassSurface,
         shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
+        border = rememberGlassBorderStroke(1.dp),
         modifier = Modifier.weight(1f).height(44.dp),
       ) {
         Row(
@@ -228,18 +237,26 @@ fun ProjectFilesSidebar(
       }
     }
 
-    when (activeSubTab) {
-      0 -> {
+    AnimatedContent(
+      targetState = activeSubTab,
+      transitionSpec = {
+        fadeIn(tween(150)) togetherWith fadeOut(tween(120))
+      },
+      modifier = Modifier.weight(1f).fillMaxWidth(),
+      label = "sidebar_tab_anim",
+    ) { subTab ->
+      when (subTab) {
+      0 -> Column(modifier = Modifier.fillMaxSize()) {
         val ws = uiState.workspace
         val treeRows =
-          remember(ws, expandedFolders.toMap(), sortMode) {
+          remember(ws?.scriptName, ws?.files, ws?.directories, folderTreeVersion, sortMode) {
             ws?.let {
               buildProjectTreeEntries(it.scriptName, it.files, it.directories, expandedFolders, sortMode)
             }.orEmpty()
           }
-        val editableFileCount = remember(ws) { ws?.files?.count { !it.isVirtualReadOnly } ?: 0 }
+        val editableFileCount = remember(ws?.files) { ws?.files?.count { !it.isVirtualReadOnly } ?: 0 }
 
-        // Project Pill + Compact Icon Actions Row (matching Reference 1)
+        // Project Pill + Compact Icon Actions Row
         Row(
           modifier =
             Modifier
@@ -249,9 +266,9 @@ fun ProjectFilesSidebar(
           horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
           Surface(
-            color = palette.chromePill,
+            color = palette.glassElevated,
             shape = RoundedCornerShape(999.dp),
-            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.55f)),
+            border = rememberGlassBorderStroke(1.dp),
             modifier = Modifier.weight(1f, fill = false),
           ) {
             Row(
@@ -343,10 +360,10 @@ fun ProjectFilesSidebar(
                 properties = PopupProperties(focusable = true),
               ) {
                 Surface(
-                  color = palette.chromePill,
+                  color = palette.glassElevated,
                   shape = RoundedCornerShape(20.dp),
                   shadowElevation = 10.dp,
-                  border = BorderStroke(1.dp, palette.border.copy(alpha = 0.7f)),
+                  border = rememberGlassBorderStroke(1.dp),
                   modifier = Modifier.widthIn(min = 210.dp, max = 250.dp),
                 ) {
                   Column(modifier = Modifier.padding(vertical = 8.dp)) {
@@ -361,6 +378,7 @@ fun ProjectFilesSidebar(
                     ProjectPopupMenuRow(Icons.Outlined.UnfoldMore, "Expand all") {
                       treeOverflowMenuOpen = false
                       expandedFolders.keys.toList().forEach { k -> expandedFolders[k] = true }
+                      folderTreeVersion++
                     }
                     ProjectPopupMenuRow(Icons.Outlined.UnfoldLess, "Collapse all") {
                       treeOverflowMenuOpen = false
@@ -373,6 +391,7 @@ fun ProjectFilesSidebar(
                       ws?.directories.orEmpty().forEach { d ->
                         expandedFolders["folder_$d"] = false
                       }
+                      folderTreeVersion++
                     }
                     HorizontalDivider(
                       color = palette.border.copy(alpha = 0.5f),
@@ -430,7 +449,10 @@ fun ProjectFilesSidebar(
                       if (entry.folderPath.isBlank()) "New in ${ws.scriptName}"
                       else "New in ${entry.folderPath}",
                     file = null,
-                    onClick = { expandedFolders[entry.id] = !isExpanded },
+                    onClick = {
+                      expandedFolders[entry.id] = !isExpanded
+                      folderTreeVersion++
+                    },
                     onNewFileInFolder = { onShowNewFileDialog(entry.folderPath) },
                     onNewDirInFolder = { onShowNewDirectoryDialog(entry.folderPath) },
                     onRenameClick = {},
@@ -482,7 +504,7 @@ fun ProjectFilesSidebar(
             horizontalArrangement = Arrangement.SpaceBetween,
           ) {
             Text(
-              text = "${uiState.ramDbStats.dirtyFilesCount} unsaved edit(s) in RAM",
+              text = "${uiState.ramDbStats.dirtyFilesCount} unsaved edit(s)",
               style = MaterialTheme.typography.labelSmall,
               color = AmberWarn,
             )
@@ -496,7 +518,7 @@ fun ProjectFilesSidebar(
       }
 
       1 -> {
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+        Box(modifier = Modifier.fillMaxSize()) {
           GlobalSearchPanel(
             uiState = uiState,
             onQueryChange = onSearchQueryChange,
@@ -510,7 +532,7 @@ fun ProjectFilesSidebar(
       }
 
       2 -> {
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+        Box(modifier = Modifier.fillMaxSize()) {
           SnippetsPanel(
             hasActiveFile = uiState.activeFile?.isVirtualReadOnly == false,
             onInsertSnippet = { snippet ->
@@ -519,6 +541,7 @@ fun ProjectFilesSidebar(
             },
           )
         }
+      }
       }
     }
   }
@@ -534,12 +557,22 @@ private fun SidebarSegmentChip(
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
+  val chipBg by animateColorAsState(
+    targetValue = if (selected) palette.activePillBg else Color.Transparent,
+    animationSpec = tween(160),
+    label = "sidebar_chip_bg",
+  )
+  val chipFg by animateColorAsState(
+    targetValue = if (selected) palette.activePillFg else palette.textSecondary,
+    animationSpec = tween(160),
+    label = "sidebar_chip_fg",
+  )
   Row(
     modifier =
       modifier
         .fillMaxHeight()
         .clip(RoundedCornerShape(14.dp))
-        .background(if (selected) palette.activePillBg else Color.Transparent)
+        .background(chipBg)
         .clickable(onClick = onClick)
         .testTag(tag),
     verticalAlignment = Alignment.CenterVertically,
@@ -548,7 +581,7 @@ private fun SidebarSegmentChip(
     Icon(
       imageVector = icon,
       contentDescription = label,
-      tint = if (selected) palette.activePillFg else palette.textSecondary,
+      tint = chipFg,
       modifier = Modifier.size(16.dp),
     )
     Spacer(Modifier.width(4.dp))
@@ -556,7 +589,7 @@ private fun SidebarSegmentChip(
       text = label,
       fontSize = 11.sp,
       fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-      color = if (selected) palette.activePillFg else palette.textSecondary,
+      color = chipFg,
       maxLines = 1,
     )
   }
@@ -583,7 +616,11 @@ private fun ProjectTreeRowItem(
   onDeleteFileClick: () -> Unit,
 ) {
   val palette = LocalIdePalette.current
-  val rowBg = if (isSelected) palette.selectedRowBg else Color.Transparent
+  val rowBg by animateColorAsState(
+    targetValue = if (isSelected) palette.selectedRowBg else Color.Transparent,
+    animationSpec = tween(140),
+    label = "tree_row_bg",
+  )
   var showContextPopup by remember { mutableStateOf(false) }
 
   Box {
@@ -700,10 +737,10 @@ private fun ProjectTreeRowItem(
         properties = PopupProperties(focusable = true),
       ) {
         Surface(
-          color = palette.chromePill,
+          color = palette.glassElevated,
           shape = RoundedCornerShape(16.dp),
           shadowElevation = 8.dp,
-          border = BorderStroke(1.dp, palette.border.copy(alpha = 0.55f)),
+          border = rememberGlassBorderStroke(1.dp),
           modifier = Modifier.widthIn(min = 200.dp, max = 250.dp),
         ) {
           Column(modifier = Modifier.padding(vertical = 8.dp)) {

@@ -5,6 +5,14 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -42,6 +50,7 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
@@ -73,6 +82,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -93,6 +103,8 @@ import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.edgeGlassSurface
+import com.example.ui.theme.rememberGlassBorderStroke
 import com.example.ui.viewmodel.HomeTab
 import com.example.ui.viewmodel.IdeUiState
 import com.example.ui.viewmodel.IdeViewModel
@@ -219,8 +231,8 @@ fun HomeScreen(
   pendingDeleteLocalKey?.let { (key, title) ->
     AlertDialog(
       onDismissRequest = { pendingDeleteLocalKey = null },
-      title = { Text("Remove Project from RAM?") },
-      text = { Text("Remove '$title' from on-device RAM? Any unexported edits will be discarded.") },
+      title = { Text("Delete Project?") },
+      text = { Text("Delete '$title' from your EdgeCode project directory? Any unpushed edits will be removed.") },
       confirmButton = {
         TextButton(
           onClick = {
@@ -229,7 +241,7 @@ fun HomeScreen(
           },
           colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
         ) {
-          Text("Remove")
+          Text("Delete")
         }
       },
       dismissButton = {
@@ -423,8 +435,8 @@ fun HomeScreen(
                 Surface(
                   onClick = { accountMenuOpen = true },
                   shape = RoundedCornerShape(999.dp),
-                  color = palette.chromeSurface,
-                  border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
+                  color = palette.glassSurface,
+                  border = rememberGlassBorderStroke(1.dp),
                 ) {
                   Row(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
@@ -472,7 +484,7 @@ fun HomeScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
               ) {
                 Text(
-                  text = "Local RAM",
+                  text = "Local Dir",
                   style = MaterialTheme.typography.labelSmall,
                   color = palette.textMuted,
                 )
@@ -504,12 +516,12 @@ fun HomeScreen(
             }
           }
 
-          // Circular M3 Expressive Header Action Buttons matching reference
+          // Circular M3 Expressive Header Action Buttons with moderate glass border
           Surface(
             onClick = { viewModel.setShowHomeGitHubHub(true) },
             shape = CircleShape,
-            color = palette.chromePill,
-            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.65f)),
+            color = palette.glassElevated,
+            border = rememberGlassBorderStroke(1.dp),
             modifier = Modifier.size(44.dp).testTag("home_github_hub_button"),
           ) {
             Box(contentAlignment = Alignment.Center) {
@@ -536,8 +548,8 @@ fun HomeScreen(
           Surface(
             onClick = { viewModel.setShowHomeSettings(true) },
             shape = CircleShape,
-            color = palette.chromePill,
-            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.65f)),
+            color = palette.glassElevated,
+            border = rememberGlassBorderStroke(1.dp),
             modifier = Modifier.size(44.dp).testTag("home_settings_button"),
           ) {
             Box(contentAlignment = Alignment.Center) {
@@ -565,133 +577,198 @@ fun HomeScreen(
         if (uiState.workers.isNotEmpty()) uiState.workers.size else uiState.ramWorkspaces.size
       val infraTotal =
         uiState.kvNamespaces.size + uiState.d1Databases.size + uiState.r2Buckets.size + uiState.queues.size
-      EdgeBottomDock(
-        modifier = Modifier.background(palette.chromeSurface).navigationBarsPadding(),
-        items =
-          listOf(
-            EdgeBottomDockItem(
-              label = "Projects",
-              icon = Icons.Outlined.Code,
-              selected = uiState.homeTab == HomeTab.PROJECTS,
-              testTag = "home_tab_projects",
-              badgeText = projectTotal.takeIf { it > 0 }?.toString(),
-              onClick = { viewModel.setHomeTab(HomeTab.PROJECTS) },
+      AnimatedVisibility(
+        visible = !uiState.isBottomDockHidden,
+        enter = slideInVertically(tween(200)) { it } + fadeIn(tween(180)),
+        exit = slideOutVertically(tween(160)) { it } + fadeOut(tween(140)),
+      ) {
+        EdgeBottomDock(
+          modifier = Modifier.navigationBarsPadding(),
+          onHideDock = { viewModel.setBottomDockHidden(true) },
+          hideDockTestTag = "hide_home_bottom_dock_button",
+          items =
+            listOf(
+              EdgeBottomDockItem(
+                label = "Projects",
+                icon = Icons.Outlined.Code,
+                selected = uiState.homeTab == HomeTab.PROJECTS,
+                testTag = "home_tab_projects",
+                badgeText = projectTotal.takeIf { it > 0 }?.toString(),
+                onClick = { viewModel.setHomeTab(HomeTab.PROJECTS) },
+              ),
+              EdgeBottomDockItem(
+                label = "Pages",
+                icon = Icons.Outlined.Web,
+                selected = uiState.homeTab == HomeTab.PAGES,
+                testTag = "home_tab_pages",
+                badgeText = uiState.pagesProjects.size.takeIf { it > 0 }?.toString(),
+                onClick = { viewModel.setHomeTab(HomeTab.PAGES) },
+              ),
+              EdgeBottomDockItem(
+                label = "Infra",
+                icon = Icons.Outlined.Storage,
+                selected = uiState.homeTab == HomeTab.INFRA,
+                testTag = "home_tab_infra",
+                badgeText = infraTotal.takeIf { it > 0 }?.toString(),
+                onClick = { viewModel.setHomeTab(HomeTab.INFRA) },
+              ),
             ),
-            EdgeBottomDockItem(
-              label = "Pages",
-              icon = Icons.Outlined.Web,
-              selected = uiState.homeTab == HomeTab.PAGES,
-              testTag = "home_tab_pages",
-              badgeText = uiState.pagesProjects.size.takeIf { it > 0 }?.toString(),
-              onClick = { viewModel.setHomeTab(HomeTab.PAGES) },
-            ),
-            EdgeBottomDockItem(
-              label = "Infra",
-              icon = Icons.Outlined.Storage,
-              selected = uiState.homeTab == HomeTab.INFRA,
-              testTag = "home_tab_infra",
-              badgeText = infraTotal.takeIf { it > 0 }?.toString(),
-              onClick = { viewModel.setHomeTab(HomeTab.INFRA) },
-            ),
-          ),
-      )
+        )
+      }
     },
   ) { innerPadding ->
+    val ambientBrush =
+      remember(palette.isDark) {
+        Brush.verticalGradient(
+          colors =
+            listOf(
+              palette.chromeBg,
+              palette.chromeSurface.copy(alpha = if (palette.isDark) 0.42f else 0.55f),
+              palette.chromeBg,
+            ),
+        )
+      }
     Box(
       modifier =
         Modifier
           .fillMaxSize()
+          .background(ambientBrush)
           .padding(innerPadding)
           .imePadding(),
     ) {
-      when (uiState.homeTab) {
-        HomeTab.PROJECTS ->
-          HomeProjectsTabContent(
-            uiState = uiState,
-            searchQuery = projectSearch,
-            onSearchChange = { projectSearch = it },
-            onNewProject = { showNewProjectDialog = true },
-            onImportBundle = {
-              importWorkspaceBundleLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
-            },
-            onOpenSettings = { viewModel.setShowHomeSettings(true) },
-            onOpenGitHubHub = { viewModel.setShowHomeGitHubHub(true) },
-            onOpenRamWorkspace = viewModel::openRamWorkspace,
-            onRequestDeleteRamWorkspace = { rec ->
-              pendingDeleteLocalKey = rec.key to rec.workingWorkspace.scriptName
-            },
-            onRefreshWorkers = viewModel::refreshWorkers,
-            onOpenWorker = { script -> viewModel.openWorker(script) },
-            onRequestDeleteWorker = { script -> pendingDeleteCloudWorker = script.id },
-          )
+      AnimatedContent(
+        targetState = uiState.homeTab,
+        transitionSpec = {
+          fadeIn(tween(180)) togetherWith fadeOut(tween(130))
+        },
+        modifier = Modifier.fillMaxSize(),
+        label = "home_tab_content",
+      ) { tab ->
+        when (tab) {
+          HomeTab.PROJECTS ->
+            HomeProjectsTabContent(
+              uiState = uiState,
+              searchQuery = projectSearch,
+              onSearchChange = { projectSearch = it },
+              onNewProject = { showNewProjectDialog = true },
+              onImportBundle = {
+                importWorkspaceBundleLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+              },
+              onOpenSettings = { viewModel.setShowHomeSettings(true) },
+              onOpenGitHubHub = { viewModel.setShowHomeGitHubHub(true) },
+              onOpenRamWorkspace = viewModel::openRamWorkspace,
+              onRequestDeleteRamWorkspace = { rec ->
+                pendingDeleteLocalKey = rec.key to rec.workingWorkspace.scriptName
+              },
+              onRefreshWorkers = viewModel::refreshWorkers,
+              onOpenWorker = { script -> viewModel.openWorker(script) },
+              onRequestDeleteWorker = { script -> pendingDeleteCloudWorker = script.id },
+            )
 
-        HomeTab.PAGES ->
-          CloudflarePagesPanel(
-            uiState = uiState,
-            onRefreshProjects = viewModel::loadPagesProjects,
-            onSelectProject = viewModel::selectPagesProject,
-            onCreateProject = viewModel::createPagesProject,
-            onDeleteProject = viewModel::deletePagesProject,
-            onTriggerDeploy = viewModel::triggerPagesDeployment,
-            onRetryDeploy = viewModel::retryPagesDeployment,
-            onRollbackDeploy = viewModel::rollbackPagesDeployment,
-            onFetchLogs = viewModel::fetchPagesLogs,
-            onSaveEnvVar = viewModel::savePagesEnvVar,
-            onUpdateBuildConfig = viewModel::updatePagesBuildConfig,
-            onUpdateBindings = viewModel::updatePagesBindings,
-            onCreatePagesSpecialFile = viewModel::createPagesSpecialFile,
-            onAddDomain = viewModel::addPagesDomain,
-            onDeleteDomain = viewModel::deletePagesDomain,
-            onPickPagesFolder = { pagesFolderLauncher.launch(null) },
-            onPickPagesZip = {
-              pagesZipLauncher.launch(
-                arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*"),
-              )
-            },
-            onPickPagesFiles = { pagesFilesLauncher.launch(arrayOf("*/*")) },
-            onStageWorkspaceForPages = viewModel::stageCurrentWorkspaceForPages,
-            onTogglePagesZipStripRoot = viewModel::togglePagesZipStripRoot,
-            onClearStagedPagesAssets = viewModel::clearStagedPagesAssets,
-            onDeployDirectPages = viewModel::deployStagedPagesAssets,
-          )
+          HomeTab.PAGES ->
+            CloudflarePagesPanel(
+              uiState = uiState,
+              onRefreshProjects = viewModel::loadPagesProjects,
+              onSelectProject = viewModel::selectPagesProject,
+              onCreateProject = viewModel::createPagesProject,
+              onDeleteProject = viewModel::deletePagesProject,
+              onTriggerDeploy = viewModel::triggerPagesDeployment,
+              onRetryDeploy = viewModel::retryPagesDeployment,
+              onRollbackDeploy = viewModel::rollbackPagesDeployment,
+              onFetchLogs = viewModel::fetchPagesLogs,
+              onSaveEnvVar = viewModel::savePagesEnvVar,
+              onUpdateBuildConfig = viewModel::updatePagesBuildConfig,
+              onUpdateBindings = viewModel::updatePagesBindings,
+              onCreatePagesSpecialFile = viewModel::createPagesSpecialFile,
+              onAddDomain = viewModel::addPagesDomain,
+              onDeleteDomain = viewModel::deletePagesDomain,
+              onPickPagesFolder = { pagesFolderLauncher.launch(null) },
+              onPickPagesZip = {
+                pagesZipLauncher.launch(
+                  arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*"),
+                )
+              },
+              onPickPagesFiles = { pagesFilesLauncher.launch(arrayOf("*/*")) },
+              onStageWorkspaceForPages = viewModel::stageCurrentWorkspaceForPages,
+              onTogglePagesZipStripRoot = viewModel::togglePagesZipStripRoot,
+              onClearStagedPagesAssets = viewModel::clearStagedPagesAssets,
+              onDeployDirectPages = viewModel::deployStagedPagesAssets,
+            )
 
-        HomeTab.INFRA ->
-          CloudflareInfraPanel(
-            uiState = uiState,
-            onRefreshInfra = viewModel::loadCloudflareInfra,
-            onToggleWorkersDev = viewModel::toggleWorkersDev,
-            onUpdateCompat = viewModel::updateCompatibilitySettings,
-            onAddCronSchedule = viewModel::addCronSchedule,
-            onRemoveCronSchedule = viewModel::removeCronSchedule,
-            onAttachZoneRoute = viewModel::attachZoneRoute,
-            onDeleteZoneRoute = viewModel::deleteZoneRoute,
-            onAttachWorkerDomain = viewModel::attachWorkerCustomDomain,
-            onRemoveWorkerDomain = viewModel::removeWorkerCustomDomain,
-            onRollbackVersion = viewModel::rollbackToVersion,
-            onRefreshWorkerVersions = viewModel::loadWorkerVersions,
-            onDeployGradualSplit = viewModel::deployGradualWorkerSplit,
-            onAddEnvVar = viewModel::addEnvVar,
-            onAddSecret = viewModel::addSecret,
-            onBindResource = viewModel::bindResourceToWorker,
-            onDeleteBinding = viewModel::deleteBindingOrSecret,
-            onCreateKvNamespace = viewModel::createKvNamespace,
-            onDeleteKvNamespace = viewModel::deleteKvNamespace,
-            onSelectKvNamespace = viewModel::selectKvNamespace,
-            onInspectKvKey = viewModel::inspectKvKey,
-            onPutKvEntry = viewModel::putKvEntry,
-            onBulkImportKv = viewModel::bulkImportKvJson,
-            onExportKvJson = viewModel::exportSelectedKvJson,
-            onDeleteKvKey = viewModel::deleteKvKey,
-            onCreateD1Database = viewModel::createD1Database,
-            onDeleteD1Database = viewModel::deleteD1Database,
-            onSelectD1Database = viewModel::selectD1Database,
-            onRunD1Sql = viewModel::runD1SqlQuery,
-            onCreateR2Bucket = viewModel::createR2Bucket,
-            onDeleteR2Bucket = viewModel::deleteR2Bucket,
-            onCreateQueue = viewModel::createQueue,
-            onDeleteQueue = viewModel::deleteQueue,
-            onNotifyStatus = viewModel::showStatus,
+          HomeTab.INFRA ->
+            CloudflareInfraPanel(
+              uiState = uiState,
+              onRefreshInfra = viewModel::loadCloudflareInfra,
+              onToggleWorkersDev = viewModel::toggleWorkersDev,
+              onUpdateCompat = viewModel::updateCompatibilitySettings,
+              onAddCronSchedule = viewModel::addCronSchedule,
+              onRemoveCronSchedule = viewModel::removeCronSchedule,
+              onAttachZoneRoute = viewModel::attachZoneRoute,
+              onDeleteZoneRoute = viewModel::deleteZoneRoute,
+              onAttachWorkerDomain = viewModel::attachWorkerCustomDomain,
+              onRemoveWorkerDomain = viewModel::removeWorkerCustomDomain,
+              onRollbackVersion = viewModel::rollbackToVersion,
+              onRefreshWorkerVersions = viewModel::loadWorkerVersions,
+              onDeployGradualSplit = viewModel::deployGradualWorkerSplit,
+              onAddEnvVar = viewModel::addEnvVar,
+              onAddSecret = viewModel::addSecret,
+              onBindResource = viewModel::bindResourceToWorker,
+              onDeleteBinding = viewModel::deleteBindingOrSecret,
+              onCreateKvNamespace = viewModel::createKvNamespace,
+              onDeleteKvNamespace = viewModel::deleteKvNamespace,
+              onSelectKvNamespace = viewModel::selectKvNamespace,
+              onInspectKvKey = viewModel::inspectKvKey,
+              onPutKvEntry = viewModel::putKvEntry,
+              onBulkImportKv = viewModel::bulkImportKvJson,
+              onExportKvJson = viewModel::exportSelectedKvJson,
+              onDeleteKvKey = viewModel::deleteKvKey,
+              onCreateD1Database = viewModel::createD1Database,
+              onDeleteD1Database = viewModel::deleteD1Database,
+              onSelectD1Database = viewModel::selectD1Database,
+              onRunD1Sql = viewModel::runD1SqlQuery,
+              onCreateR2Bucket = viewModel::createR2Bucket,
+              onDeleteR2Bucket = viewModel::deleteR2Bucket,
+              onCreateQueue = viewModel::createQueue,
+              onDeleteQueue = viewModel::deleteQueue,
+              onNotifyStatus = viewModel::showStatus,
+            )
+        }
+      }
+
+      AnimatedVisibility(
+        visible = uiState.isBottomDockHidden,
+        enter = fadeIn(tween(180)) + slideInVertically(tween(180)) { it / 2 },
+        exit = fadeOut(tween(140)) + slideOutVertically(tween(140)) { it / 2 },
+        modifier =
+          Modifier
+            .align(Alignment.BottomEnd)
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(end = 16.dp, bottom = 14.dp),
+      ) {
+        Row(
+          modifier =
+            Modifier
+              .edgeGlassSurface(RoundedCornerShape(999.dp), elevated = true)
+              .clickable { viewModel.setBottomDockHidden(false) }
+              .padding(horizontal = 14.dp, vertical = 9.dp)
+              .testTag("show_home_bottom_dock_button"),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          Icon(
+            imageVector = Icons.Outlined.KeyboardArrowUp,
+            contentDescription = "Show bottom menu",
+            tint = palette.activePillFg,
+            modifier = Modifier.size(18.dp),
           )
+          Text(
+            text = "Menu",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = palette.textPrimary,
+          )
+        }
       }
     }
   }
@@ -771,8 +848,8 @@ private fun HomeProjectsTabContent(
         Surface(
           onClick = onImportBundle,
           shape = RoundedCornerShape(20.dp),
-          color = palette.chromePill,
-          border = BorderStroke(1.dp, palette.border.copy(alpha = 0.7f)),
+          color = palette.glassElevated,
+          border = rememberGlassBorderStroke(1.dp),
           modifier = Modifier.size(60.dp).testTag("home_import_bundle_button"),
         ) {
           Box(contentAlignment = Alignment.Center) {
@@ -832,7 +909,7 @@ private fun HomeProjectsTabContent(
       )
     }
 
-    // On-device RAM / Local Projects Pill Header
+    // Auto-managed Dedicated Project Directory Pill Header
     item(key = "ram_header") {
       Row(
         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -843,9 +920,12 @@ private fun HomeProjectsTabContent(
           title = "Projects",
           count = ramWorkspaces.size,
         )
-        if (uiState.ramDbStats.estimatedRamKb > 0) {
+        if (uiState.projectStorageSummary.totalDiskKb > 0 || uiState.ramDbStats.estimatedRamKb > 0) {
+          val kb =
+            uiState.projectStorageSummary.totalDiskKb.takeIf { it > 0 }
+              ?: uiState.ramDbStats.estimatedRamKb
           Text(
-            text = "${uiState.ramDbStats.estimatedRamKb} KB RAM",
+            text = "EdgeCodeProjects · $kb KB",
             fontFamily = JetBrainsMono,
             fontSize = 11.sp,
             color = palette.textMuted,
@@ -857,9 +937,9 @@ private fun HomeProjectsTabContent(
     if (ramWorkspaces.isEmpty()) {
       item(key = "ram_empty") {
         Surface(
-          color = palette.chromeSurface,
-          shape = RoundedCornerShape(22.dp),
-          border = BorderStroke(1.dp, palette.border.copy(alpha = 0.65f)),
+          color = palette.glassSurface,
+          shape = RoundedCornerShape(20.dp),
+          border = rememberGlassBorderStroke(1.dp),
           modifier = Modifier.fillMaxWidth(),
         ) {
           Row(
@@ -868,7 +948,7 @@ private fun HomeProjectsTabContent(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
           ) {
             Text(
-              text = "No local projects — tap + New project to start.",
+              text = "No saved projects yet — tap + New project to create one.",
               style = MaterialTheme.typography.bodySmall,
               color = palette.textSecondary,
               modifier = Modifier.weight(1f),
@@ -882,6 +962,7 @@ private fun HomeProjectsTabContent(
           record = rec,
           onOpen = { onOpenRamWorkspace(rec.key) },
           onDelete = { onRequestDeleteRamWorkspace(rec) },
+          modifier = Modifier.animateItem(),
         )
       }
     }
@@ -957,8 +1038,8 @@ private fun HomeProjectsTabContent(
           Surface(
             onClick = { if (!uiState.isLoadingWorkers) onRefreshWorkers() },
             shape = CircleShape,
-            color = palette.chromeSurface,
-            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
+            color = palette.glassElevated,
+            border = rememberGlassBorderStroke(1.dp),
             modifier = Modifier.size(34.dp).testTag("home_refresh_workers_button"),
           ) {
             Box(contentAlignment = Alignment.Center) {
@@ -976,9 +1057,9 @@ private fun HomeProjectsTabContent(
       if (cloudWorkers.isEmpty() && !uiState.isLoadingWorkers) {
         item(key = "cf_empty") {
           Surface(
-            color = palette.chromeSurface,
-            shape = RoundedCornerShape(22.dp),
-            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.65f)),
+            color = palette.glassSurface,
+            shape = RoundedCornerShape(20.dp),
+            border = rememberGlassBorderStroke(1.dp),
             modifier = Modifier.fillMaxWidth(),
           ) {
             Column(
@@ -1009,6 +1090,7 @@ private fun HomeProjectsTabContent(
             cachedRecord = cached,
             onOpen = { onOpenWorker(script) },
             onDelete = { onRequestDeleteWorker(script) },
+            modifier = Modifier.animateItem(),
           )
         }
       }
@@ -1069,9 +1151,9 @@ private fun CompactQuickChip(
   val palette = LocalIdePalette.current
   Surface(
     onClick = onClick,
-    color = palette.chromeSurface,
+    color = palette.glassSurface,
     shape = RoundedCornerShape(16.dp),
-    border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
+    border = rememberGlassBorderStroke(1.dp),
     modifier = modifier.height(48.dp),
   ) {
     Row(
@@ -1123,6 +1205,7 @@ private fun RamProjectCard(
   record: RamWorkspaceRecord,
   onOpen: () -> Unit,
   onDelete: () -> Unit,
+  modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
   val ws = record.workingWorkspace
@@ -1132,14 +1215,12 @@ private fun RamProjectCard(
 
   Surface(
     onClick = onOpen,
-    color = palette.chromeSurface,
+    color = palette.glassSurface,
     shape = RoundedCornerShape(20.dp),
     border =
-      BorderStroke(
-        width = 1.dp,
-        color = if (dirty) AmberWarn.copy(alpha = 0.55f) else palette.border.copy(alpha = 0.65f),
-      ),
-    modifier = Modifier.fillMaxWidth().testTag("home_ram_card_${ws.scriptName}"),
+      if (dirty) BorderStroke(1.dp, AmberWarn.copy(alpha = 0.55f))
+      else rememberGlassBorderStroke(1.dp),
+    modifier = modifier.fillMaxWidth().testTag("home_ram_card_${ws.scriptName}"),
   ) {
     Row(
       modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp),
@@ -1180,7 +1261,7 @@ private fun RamProjectCard(
               when {
                 dirty -> "Edited"
                 isLocal -> "Local"
-                else -> "RAM"
+                else -> "Saved"
               },
             color =
               when {
@@ -1228,16 +1309,17 @@ private fun CloudWorkerCard(
   cachedRecord: RamWorkspaceRecord?,
   onOpen: () -> Unit,
   onDelete: () -> Unit,
+  modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
   val hasRamEdits = cachedRecord?.hasPendingChanges == true
 
   Surface(
     onClick = onOpen,
-    color = palette.chromeSurface,
+    color = palette.glassSurface,
     shape = RoundedCornerShape(20.dp),
-    border = BorderStroke(1.dp, palette.border.copy(alpha = 0.65f)),
-    modifier = Modifier.fillMaxWidth().testTag("home_worker_card_${script.id}"),
+    border = rememberGlassBorderStroke(1.dp),
+    modifier = modifier.fillMaxWidth().testTag("home_worker_card_${script.id}"),
   ) {
     Row(
       modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp),
@@ -1245,7 +1327,7 @@ private fun CloudWorkerCard(
       horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
       Surface(
-        color = if (cachedRecord != null) palette.activePillBg else palette.chromePill,
+        color = if (cachedRecord != null) palette.activePillBg else palette.glassElevated,
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier.size(46.dp),
       ) {
@@ -1276,12 +1358,12 @@ private fun CloudWorkerCard(
           if (hasRamEdits) {
             StatusTag(label = "Edited", color = AmberWarn)
           } else if (cachedRecord != null) {
-            StatusTag(label = "Cached", color = EmeraldLive)
+            StatusTag(label = "Synced", color = EmeraldLive)
           }
         }
         Text(
           text =
-            cachedRecord?.let { "${it.workingWorkspace.files.count { f -> !f.isVirtualReadOnly }} files in RAM" }
+            cachedRecord?.let { "${it.workingWorkspace.files.count { f -> !f.isVirtualReadOnly }} files saved" }
               ?: script.modifiedOn?.take(10)?.let { "Updated $it · Tap to open" }
               ?: "Cloudflare Worker · Tap to open",
           fontFamily = JetBrainsMono,

@@ -41,8 +41,10 @@ data class ShellExecutionResult(
 class LinuxTerminalEngine(
   private val context: Context,
   private val repository: CloudflareRepository,
+  rootDirOverride: File? = null,
 ) {
-  private val rootWorkspacesDir = File(context.filesDir, "edgecode_workspaces").apply { mkdirs() }
+  private val rootWorkspacesDir =
+    (rootDirOverride ?: File(context.filesDir, "edgecode_workspaces")).apply { mkdirs() }
   private var currentDir: File = rootWorkspacesDir
   private var lastSyncedScript: String? = null
 
@@ -78,10 +80,10 @@ class LinuxTerminalEngine(
     ws.workersDevUrl?.let { sessionEnv["BASE_URL"] = it } ?: sessionEnv.remove("BASE_URL")
 
     val activePaths = ws.files.filterNot { it.isVirtualReadOnly }.map { it.path }.toSet()
-    // Remove stale non-virtual files removed via GUI (preserve .git/)
+    // Remove stale non-virtual files removed via GUI (preserve .git/ and .edgecode/)
     wsDir.walkTopDown().filter { it.isFile }.forEach { f ->
       val rel = f.relativeTo(wsDir).path.replace('\\', '/')
-      if (!rel.startsWith(".git/") && rel !in activePaths) {
+      if (!rel.startsWith(".git/") && !rel.startsWith(".edgecode/") && rel !in activePaths) {
         f.delete()
       }
     }
@@ -108,7 +110,7 @@ class LinuxTerminalEngine(
         .filter { it.isFile }
         .mapNotNull { file ->
           val rel = file.relativeTo(wsDir).path.replace('\\', '/')
-          if (rel.startsWith(".git/")) return@mapNotNull null
+          if (rel.startsWith(".git/") || rel.startsWith(".edgecode/")) return@mapNotNull null
           val content = runCatching { file.readText(Charsets.UTF_8) }.getOrNull() ?: return@mapNotNull null
           val prev = existingByPath[rel]
           prev?.copy(content = content)

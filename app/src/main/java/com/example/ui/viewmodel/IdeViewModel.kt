@@ -16,6 +16,8 @@ import com.example.data.local.DeviceFileHelper
 import com.example.data.local.DraftPersistenceManager
 import com.example.data.local.PersistedApiTesterState
 import com.example.data.local.PickedDeviceFile
+import com.example.data.local.ProjectDirectoryManager
+import com.example.data.local.ProjectStorageSummary
 import com.example.data.local.RamAccountInfraCache
 import com.example.data.local.RamDatabaseStats
 import com.example.data.local.RamWorkspaceDatabase
@@ -215,8 +217,11 @@ data class IdeUiState(
   val workerTestHistory: List<WorkerTestRunRecord> = emptyList(),
   val ramDbStats: RamDatabaseStats = RamDatabaseStats(),
   val ramWorkspaces: List<RamWorkspaceRecord> = emptyList(),
+  val projectStorageSummary: ProjectStorageSummary = ProjectStorageSummary(),
   val homeTab: HomeTab = HomeTab.PROJECTS,
   val projectMode: ProjectMode = ProjectMode.CODE,
+  val isBottomDockHidden: Boolean = false,
+  val isEditorBottomBarsHidden: Boolean = false,
   val showHomeGitHubHub: Boolean = false,
   val showHomeSettings: Boolean = false,
   val isTestingCfCredentials: Boolean = false,
@@ -382,7 +387,8 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   private val clientFactory = CloudflareClientFactory(prefsStore)
   private val repository = CloudflareRepository(prefsStore, clientFactory)
   private val gitHubRepository = GitHubRepository(prefsStore, clientFactory.moshi)
-  private val terminalEngine = LinuxTerminalEngine(application, repository)
+  private val projectDirManager = ProjectDirectoryManager(application)
+  private val terminalEngine = LinuxTerminalEngine(application, repository, projectDirManager.projectsDir)
   private val draftManager = DraftPersistenceManager(application)
   private val autoSaveStore = AutoSaveDraftStore(application)
   private val autoSaveIoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -404,6 +410,7 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   private var activeTailSession: ActiveTailSession? = null
   private val undoStacks = mutableMapOf<String, ArrayDeque<TextFieldValue>>()
   private val redoStacks = mutableMapOf<String, ArrayDeque<TextFieldValue>>()
+  private val fileDiagnosticsCache = ConcurrentHashMap<String, List<DiagnosticItem>>()
   private val lastPersistedDraftDigests = ConcurrentHashMap<String, Int>()
   private val pendingCloudDrafts = ConcurrentHashMap<String, AutoSavedWorkspaceDraft>()
   private var pendingRestoreSessionPointer: AutoSaveSessionPointer? = null
@@ -478,41 +485,58 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     viewModelScope.launch {
-      val (restoredDrafts, lastPointer) =
+      val (diskWorkspaces, initialSummary, restoredDrafts, lastPointer) =
         withContext(Dispatchers.IO) {
+          val diskList = projectDirManager.loadAllWorkspaces()
           val drafts = autoSaveStore.loadAllDrafts()
           val pointer = autoSaveStore.loadLastSessionPointer()
-          drafts to pointer
+          val summary = projectDirManager.computeStorageSummary()
+          Quadruple(diskList, summary, drafts, pointer)
         }
+      diskWorkspaces.forEach { rec ->
+        ramDb.restoreRecord(rec, setActive = false)
+      }
       pendingRestoreSessionPointer = lastPointer
       restoredDrafts.forEach { draft ->
         lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
         if (draft.isLocalScratchpad || draft.workspaceKey.startsWith("local_")) {
-          val ws = draft.toWorkspace()
-          ramDb.importWorkspace(
-            key = draft.workspaceKey,
-            workspace = ws,
-            defaultTabs = draft.openTabs,
-            defaultActivePath = draft.activeFilePath,
-            isNewUnexported = false,
-          )
-          val selections = draft.toFieldValues()
-          if (selections.isNotEmpty()) {
-            ramDb.updateWorkspace(draft.workspaceKey) { rec ->
-              rec.copy(fieldValues = selections)
-            }
+          val existingOnDisk = ramDb.getWorkspace(draft.workspaceKey)
+          if (existingOnDisk == null || draft.savedAtEpochMs > existingOnDisk.importedAtEpochMs) {
+            val ws =
+              if (existingOnDisk != null) {
+                AutoSaveDraftStore.mergeDraftIntoWorkspace(existingOnDisk.workingWorkspace, draft).first
+              } else {
+                draft.toWorkspace()
+              }
+            val record =
+              ramDb.importWorkspace(
+                key = draft.workspaceKey,
+                workspace = ws,
+                defaultTabs = draft.openTabs,
+                defaultActivePath = draft.activeFilePath,
+                isNewUnexported = existingOnDisk?.isNewUnexportedWorker ?: false,
+              )
+            val selections = draft.toFieldValues()
+            val finalRecord =
+              if (selections.isNotEmpty()) {
+                ramDb.updateWorkspace(draft.workspaceKey) { rec ->
+                  rec.copy(fieldValues = selections)
+                } ?: record
+              } else {
+                record
+              }
+            autoSaveIoScope.launch { projectDirManager.saveWorkspaceRecord(finalRecord) }
           }
         } else {
           pendingCloudDrafts[draft.workspaceKey] = draft
         }
       }
-      if (restoredDrafts.isNotEmpty()) {
-        _uiState.update {
-          it.copy(
-            ramWorkspaces = ramDb.listWorkspaces(),
-            ramDbStats = ramDb.computeStats(null),
-          )
-        }
+      _uiState.update {
+        it.copy(
+          ramWorkspaces = ramDb.listWorkspaces(),
+          ramDbStats = ramDb.computeStats(null),
+          projectStorageSummary = initialSummary,
+        )
       }
 
       val creds = prefsStore.credentialsFlow.first()
@@ -524,6 +548,8 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
           val localDraft = restoredDrafts.firstOrNull { it.workspaceKey == lastPointer.workspaceKey }
           if (localDraft != null && ramDb.hasWorkspace(localDraft.workspaceKey)) {
             restoreLocalDraftIntoEditor(localDraft)
+          } else if (ramDb.hasWorkspace(lastPointer.workspaceKey)) {
+            openRamWorkspace(lastPointer.workspaceKey)
           }
         }
         bootstrapAccountAndWorkers(creds)
@@ -534,6 +560,8 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
           val localDraft = restoredDrafts.firstOrNull { it.workspaceKey == lastPointer.workspaceKey }
           if (localDraft != null && ramDb.hasWorkspace(localDraft.workspaceKey)) {
             restoreLocalDraftIntoEditor(localDraft)
+          } else if (ramDb.hasWorkspace(lastPointer.workspaceKey)) {
+            openRamWorkspace(lastPointer.workspaceKey)
           }
         }
       }
@@ -732,7 +760,7 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
     if (existingRecord != null) {
       ramDb.setActiveWorkspaceKey(ramKey)
       val ws = existingRecord.workingWorkspace
-      val diags = ws.files.flatMap { CodeAnalyzer.analyzeFile(it) }
+      val diags = rebuildDiagnosticsFull(ws.files)
       terminalEngine.syncWorkspaceToDisk(ws)
       _uiState.update {
         it.copy(
@@ -752,7 +780,7 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
         )
       }
       appendTerminalWelcome(ws)
-      appendLog("INFO", "Restored Local Scratchpad from RAM database")
+      appendLog("INFO", "Restored Local Project from '${projectDirManager.displayRootPath()}'")
       recordActiveSessionPointer()
       syncPeriodicAutoSaveLoop()
       return
@@ -845,8 +873,9 @@ export default {
         defaultActivePath = "src/index.js",
         isNewUnexported = false,
       )
-    val diags = ws.files.flatMap { CodeAnalyzer.analyzeFile(it) }
+    val diags = rebuildDiagnosticsFull(ws.files)
     terminalEngine.syncWorkspaceToDisk(ws)
+    persistWorkspaceToProjectDirAsync(ramKey)
     _uiState.update {
       it.copy(
         isLocalScratchpad = true,
@@ -865,7 +894,7 @@ export default {
       )
     }
     appendTerminalWelcome(ws)
-    appendLog("INFO", "Initialized Local Scratchpad in RAM database (no remote calls)")
+    appendLog("INFO", "Initialized project in '${projectDirManager.displayRootPath()}'")
     recordActiveSessionPointer()
     syncPeriodicAutoSaveLoop()
   }
@@ -973,13 +1002,16 @@ export default {
         workersDevEnabled = false,
         accountSubdomain = "",
       )
-    return ramDb.importWorkspace(
-      key = ramKey,
-      workspace = ws,
-      defaultTabs = listOf("src/index.js", "src/utils/cors.js"),
-      defaultActivePath = "src/index.js",
-      isNewUnexported = false,
-    )
+    val record =
+      ramDb.importWorkspace(
+        key = ramKey,
+        workspace = ws,
+        defaultTabs = listOf("src/index.js", "src/utils/cors.js"),
+        defaultActivePath = "src/index.js",
+        isNewUnexported = false,
+      )
+    persistWorkspaceToProjectDirAsync(ramKey)
+    return record
   }
 
   fun openRamWorkspace(key: String) {
@@ -989,7 +1021,7 @@ export default {
     syncActiveStateToRamDb()
     ramDb.setActiveWorkspaceKey(key)
     val ws = record.workingWorkspace
-    val diags = ws.files.flatMap { CodeAnalyzer.analyzeFile(it) }
+    val diags = rebuildDiagnosticsFull(ws.files)
     terminalEngine.syncWorkspaceToDisk(ws)
     val isLocal = key.startsWith("local_")
     val baselineMap =
@@ -1022,7 +1054,7 @@ export default {
       )
     }
     appendTerminalWelcome(ws)
-    appendLog("INFO", "Opened project '${ws.scriptName}' from RAM")
+    appendLog("INFO", "Opened '${ws.scriptName}' from ${projectDirManager.displayRootPath()}")
     recordActiveSessionPointer()
     syncPeriodicAutoSaveLoop()
   }
@@ -1032,7 +1064,12 @@ export default {
     ramDb.removeWorkspace(key)
     lastPersistedDraftDigests.remove(key)
     pendingCloudDrafts.remove(key)
-    autoSaveIoScope.launch { autoSaveStore.clearWorkspaceDraft(key) }
+    autoSaveIoScope.launch {
+      autoSaveStore.clearWorkspaceDraft(key)
+      projectDirManager.deleteWorkspaceDirectory(key)
+      val summary = projectDirManager.computeStorageSummary()
+      _uiState.update { it.copy(projectStorageSummary = summary) }
+    }
     _uiState.update { state ->
       val wasActive = activeKey == key
       state.copy(
@@ -1041,7 +1078,7 @@ export default {
         activeFilePath = if (wasActive) null else state.activeFilePath,
         ramDbStats = ramDb.computeStats(if (wasActive) null else activeKey),
         ramWorkspaces = ramDb.listWorkspaces(),
-        statusMessage = "Removed local project from RAM",
+        statusMessage = "Removed project from directory",
       )
     }
   }
@@ -1050,7 +1087,9 @@ export default {
     stopTailIfRunning()
     flushAutoSaveNow(clearSessionPointer = true)
     periodicAutoSaveJob?.cancel()
+    val closingKey = activeWorkspaceKey()
     syncActiveStateToRamDb()
+    closingKey?.let { persistWorkspaceToProjectDirAsync(it, refreshSummary = true) }
     ramDb.setActiveWorkspaceKey(null)
     _uiState.update {
       it.copy(
@@ -1223,7 +1262,7 @@ export default {
     if (!forceRefreshFromCloudflare && cachedRecord != null) {
       ramDb.setActiveWorkspaceKey(ramKey)
       val ws = cachedRecord.workingWorkspace
-      val diags = ws.files.flatMap { CodeAnalyzer.analyzeFile(it) }
+      val diags = rebuildDiagnosticsFull(ws.files)
       terminalEngine.syncWorkspaceToDisk(ws)
       val baselineMap =
         cachedRecord.importedSnapshot.files
@@ -1244,7 +1283,7 @@ export default {
           editorRevision = it.editorRevision + 1L,
           diagnostics = diags,
           isOpeningWorker = false,
-          statusMessage = "Opened '${ws.scriptName}' from RAM",
+          statusMessage = "Opened '${ws.scriptName}' from local project folder",
           restoredDraftBanner = null,
           activeWorkspaceHasPendingConfig = cachedRecord.hasPendingChanges,
           ramDbStats = ramDb.computeStats(ramKey),
@@ -1255,14 +1294,14 @@ export default {
           terminalPromptPath = terminalEngine.currentPromptPath(ws),
         )
       }
-      appendLog("INFO", "Switched to '${ws.scriptName}' from on-device RAM DB")
+      appendLog("INFO", "Switched to '${ws.scriptName}' from local project directory")
       recordActiveSessionPointer()
       syncPeriodicAutoSaveLoop()
       return
     }
 
     viewModelScope.launch {
-      _uiState.update { it.copy(isOpeningWorker = true, statusMessage = "Importing ${script.id} into RAM…") }
+      _uiState.update { it.copy(isOpeningWorker = true, statusMessage = "Syncing ${script.id} to project directory…") }
       repository
         .openWorkerWorkspace(accountId, script)
         .onSuccess { fetchedWs ->
@@ -1321,8 +1360,9 @@ export default {
             }
 
           val ws = activeRecord.workingWorkspace
-          val diags = ws.files.flatMap { CodeAnalyzer.analyzeFile(it) }
+          val diags = rebuildDiagnosticsFull(ws.files)
           terminalEngine.syncWorkspaceToDisk(ws)
+          persistWorkspaceToProjectDirAsync(ramKey)
           val baselineMap =
             fetchedWs.files
               .filterNot { it.isVirtualReadOnly || it.path == "wrangler.jsonc" }
@@ -1347,7 +1387,7 @@ export default {
               editorRevision = it.editorRevision + 1L,
               diagnostics = diags,
               isOpeningWorker = false,
-              statusMessage = "Imported '${ws.scriptName}' (${ws.files.size} files)",
+              statusMessage = "Synced '${ws.scriptName}' (${ws.files.size} files) to project folder",
               restoredDraftBanner = banner,
               activeWorkspaceHasPendingConfig = activeRecord.hasPendingChanges,
               ramDbStats = ramDb.computeStats(ramKey),
@@ -1367,7 +1407,7 @@ export default {
             )
           }
           appendTerminalWelcome(ws)
-          appendLog("INFO", "Imported Worker '${ws.scriptName}' (${ws.files.size} files) into RAM DB")
+          appendLog("INFO", "Synced Worker '${ws.scriptName}' (${ws.files.size} files) into project folder")
           recordActiveSessionPointer()
           syncPeriodicAutoSaveLoop()
         }
@@ -1395,8 +1435,10 @@ export default {
     val reverted = ramDb.revertWorkspaceToImportedBaseline(key) ?: return
     val ws = reverted.workingWorkspace
     terminalEngine.syncWorkspaceToDisk(ws)
+    persistWorkspaceToProjectDirAsync(key)
     lastPersistedDraftDigests.remove(key)
     autoSaveIoScope.launch { autoSaveStore.clearWorkspaceDraft(key) }
+    val diags = rebuildDiagnosticsFull(ws.files)
     _uiState.update { state ->
       state.copy(
         workspace = ws,
@@ -1406,13 +1448,13 @@ export default {
         tabNavIndex = reverted.tabNavIndex,
         editorFieldValues = reverted.fieldValues,
         editorRevision = state.editorRevision + 1L,
-        diagnostics = ws.files.flatMap { CodeAnalyzer.analyzeFile(it) },
+        diagnostics = diags,
         activeWorkspaceHasPendingConfig = reverted.hasPendingChanges,
         ramDbStats = ramDb.computeStats(key),
-        statusMessage = "Reverted '${ws.scriptName}' to imported RAM snapshot",
+        statusMessage = "Reverted '${ws.scriptName}' to clean baseline",
       )
     }
-    appendLog("INFO", "Reverted '${ws.scriptName}' to clean imported RAM snapshot")
+    appendLog("INFO", "Reverted '${ws.scriptName}' to clean baseline")
   }
 
   fun createNewWorker(name: String, template: WorkerTemplate) {
@@ -1446,7 +1488,10 @@ export default {
         accountSubdomain = accountId?.let { ramDb.getInfraCache(it)?.subdomain }.orEmpty(),
         hasModuleSetChanged = !isScratchpad,
       )
-    val ws = regenerateWranglerFileInWorkspace(baseWs)
+    val ws =
+      regenerateWranglerFileInWorkspace(baseWs).let { built ->
+        built.copy(files = ProjectDirectoryManager.organizeWorkspaceFiles(built.files))
+      }
     val key = ramDb.workspaceKey(accountId, cleanName)
     val record =
       ramDb.importWorkspace(
@@ -1457,6 +1502,8 @@ export default {
         isNewUnexported = !isScratchpad,
       )
     terminalEngine.syncWorkspaceToDisk(ws)
+    persistWorkspaceToProjectDirAsync(key)
+    val diags = rebuildDiagnosticsFull(ws.files)
     _uiState.update { state ->
       val updatedWorkers =
         if (!isScratchpad && state.workers.none { it.id == cleanName }) {
@@ -1475,18 +1522,18 @@ export default {
         tabNavHistory = record.tabNavHistory,
         tabNavIndex = record.tabNavIndex,
         editorFieldValues = record.fieldValues,
-        diagnostics = ws.files.flatMap { CodeAnalyzer.analyzeFile(it) },
+        diagnostics = diags,
         previewUrl = resolveDefaultPreviewUrl(ws),
         activeWorkspaceHasPendingConfig = record.hasPendingChanges,
         ramDbStats = ramDb.computeStats(key),
         statusMessage =
-          if (isScratchpad) "Created '$cleanName' in RAM"
-          else "Scaffolded '$cleanName' in RAM — edit locally and tap Export/Deploy to publish",
+          if (isScratchpad) "Created '$cleanName' in ${projectDirManager.displayRootPath()}"
+          else "Scaffolded '$cleanName' locally — tap Deploy to publish",
         terminalPromptPath = terminalEngine.currentPromptPath(ws),
       )
     }
     appendTerminalWelcome(ws)
-    appendLog("INFO", "Created '$cleanName' in on-device RAM DB (no network push until Export/Deploy)")
+    appendLog("INFO", "Created '$cleanName' in ${projectDirManager.displayRootPath()}")
     recordActiveSessionPointer()
     scheduleDraftSave()
     syncPeriodicAutoSaveLoop()
@@ -1506,10 +1553,10 @@ export default {
         _uiState.update { it.copy(statusMessage = "Could not read selected file(s)") }
         return@launch
       }
-      val normalizedPrefix = folderPrefix.trim().trim('/').let { if (it.isEmpty()) "" else "$it/" }
       val workerFiles =
         picked.mapIndexed { idx, f ->
-          val path = "$normalizedPrefix${f.fileName}"
+          val path = ProjectDirectoryManager.normalizeRelativePath(f.fileName, fallbackFolder = folderPrefix)
+            .ifBlank { f.fileName }
           val isEntry =
             idx == 0 && (path.endsWith(".js", true) || path.endsWith(".mjs", true)) ||
               f.fileName.equals("index.js", true) ||
@@ -1524,7 +1571,10 @@ export default {
         }
       val resolvedEntry =
         workerFiles.firstOrNull { it.isEntryPoint }?.path ?: workerFiles.first().path
-      val finalFiles = workerFiles.map { it.copy(isEntryPoint = it.path == resolvedEntry) }
+      val finalFiles =
+        ProjectDirectoryManager.organizeWorkspaceFiles(
+          workerFiles.map { it.copy(isEntryPoint = it.path == resolvedEntry) },
+        )
       val isScratchpad = _uiState.value.isLocalScratchpad || _uiState.value.selectedAccount == null
       val accountId = if (isScratchpad) null else _uiState.value.selectedAccount?.id
       val cleanName = name.trim().lowercase().replace(Regex("[^a-z0-9-]"), "-").ifBlank { "uploaded-worker" }
@@ -1544,7 +1594,10 @@ export default {
           accountSubdomain = accountId?.let { ramDb.getInfraCache(it)?.subdomain }.orEmpty(),
           hasModuleSetChanged = !isScratchpad,
         )
-      val ws = regenerateWranglerFileInWorkspace(baseWs)
+      val ws =
+        regenerateWranglerFileInWorkspace(baseWs).let { built ->
+          built.copy(files = ProjectDirectoryManager.organizeWorkspaceFiles(built.files))
+        }
       val key = ramDb.workspaceKey(accountId, cleanName)
       val record =
         ramDb.importWorkspace(
@@ -1555,6 +1608,13 @@ export default {
           isNewUnexported = !isScratchpad,
         )
       terminalEngine.syncWorkspaceToDisk(ws)
+      autoSaveIoScope.launch {
+        projectDirManager.recordOrganizedImport(cleanName, finalFiles)
+        projectDirManager.saveWorkspaceRecord(record)
+        val summary = projectDirManager.computeStorageSummary()
+        _uiState.update { it.copy(projectStorageSummary = summary) }
+      }
+      val diags = rebuildDiagnosticsFull(ws.files)
       _uiState.update { state ->
         val updatedWorkers =
           if (!isScratchpad && state.workers.none { it.id == cleanName }) {
@@ -1573,18 +1633,16 @@ export default {
           tabNavHistory = record.tabNavHistory,
           tabNavIndex = record.tabNavIndex,
           editorFieldValues = record.fieldValues,
-          diagnostics = ws.files.flatMap { CodeAnalyzer.analyzeFile(it) },
+          diagnostics = diags,
           previewUrl = resolveDefaultPreviewUrl(ws),
           activeWorkspaceHasPendingConfig = record.hasPendingChanges,
           ramDbStats = ramDb.computeStats(key),
-          statusMessage =
-            if (isScratchpad) "Imported ${finalFiles.size} file(s) into '$cleanName' (RAM)"
-            else "Imported ${finalFiles.size} file(s) into RAM — edit & tap Export/Deploy to publish",
+          statusMessage = "Organized & imported ${finalFiles.size} file(s) into '$cleanName'",
           terminalPromptPath = terminalEngine.currentPromptPath(ws),
         )
       }
       appendTerminalWelcome(ws)
-      appendLog("INFO", "Imported ${finalFiles.size} device file(s) into RAM workspace '$cleanName'")
+      appendLog("INFO", "Organized & imported ${finalFiles.size} file(s) into '$cleanName'")
       recordActiveSessionPointer()
       scheduleDraftSave()
       syncPeriodicAutoSaveLoop()
@@ -1593,7 +1651,7 @@ export default {
 
   /**
    * Direct single or batch upload from device storage into the currently open Worker!
-   * Merges new files or overwrites matching paths, optionally deploys immediately to Cloudflare.
+   * Normalizes paths, organizes files cleanly inside the project directory, and optionally deploys.
    */
   fun uploadFilesToActiveWorker(
     uris: List<Uri>,
@@ -1609,20 +1667,21 @@ export default {
         return@launch
       }
 
-      val prefix = folderPrefix.trim().trim('/').let { if (it.isEmpty()) "" else "$it/" }
       val currentEditable = ws.files.filterNot { it.isVirtualReadOnly }.toMutableList()
       val virtualFiles = ws.files.filter { it.isVirtualReadOnly }
       val addedOrUpdatedPaths = mutableListOf<String>()
+      val importedBatchFiles = mutableListOf<WorkerFile>()
 
       for (item in picked) {
-        val targetPath = "$prefix${item.fileName}"
+        val targetPath =
+          ProjectDirectoryManager.normalizeRelativePath(item.fileName, fallbackFolder = folderPrefix)
+            .ifBlank { item.fileName }
         addedOrUpdatedPaths.add(targetPath)
         val existingIdx = currentEditable.indexOfFirst { it.path == targetPath }
-        if (existingIdx >= 0) {
-          val old = currentEditable[existingIdx]
-          currentEditable[existingIdx] = old.copy(content = item.content)
-        } else {
-          currentEditable.add(
+        val wf =
+          if (existingIdx >= 0) {
+            currentEditable[existingIdx].copy(content = item.content)
+          } else {
             WorkerFile(
               path = targetPath,
               content = item.content,
@@ -1630,20 +1689,21 @@ export default {
               contentType = MultipartWorkerParser.inferModuleMimeType(targetPath),
               isEntryPoint = false,
             )
-          )
-        }
+          }
+        if (existingIdx >= 0) currentEditable[existingIdx] = wf else currentEditable.add(wf)
+        importedBatchFiles.add(wf)
       }
 
-      val nextFiles = currentEditable + virtualFiles
+      val nextFiles = ProjectDirectoryManager.organizeWorkspaceFiles(currentEditable + virtualFiles)
       val nextFieldValues =
         _uiState.value.editorFieldValues.toMutableMap().apply {
-          picked.forEach { item ->
-            val p = "$prefix${item.fileName}"
-            put(p, TextFieldValue(item.content))
+          importedBatchFiles.forEach { wf ->
+            put(wf.path, TextFieldValue(wf.content))
           }
         }
       val nextTabs = (_uiState.value.openTabPaths + addedOrUpdatedPaths).distinct()
       val nextActive = addedOrUpdatedPaths.firstOrNull() ?: _uiState.value.activeFilePath
+      val diags = rebuildDiagnosticsFull(nextFiles)
 
       _uiState.update { state ->
         val updatedWs =
@@ -1657,27 +1717,34 @@ export default {
           openTabPaths = nextTabs,
           activeFilePath = nextActive,
           editorFieldValues = nextFieldValues,
-          diagnostics = nextFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+          diagnostics = diags,
           statusMessage =
             if (autoDeploy) "Uploaded ${picked.size} file(s), deploying…"
-            else "Imported ${picked.size} file(s) into RAM DB",
+            else "Organized & imported ${picked.size} file(s)",
         )
       }
       activeWorkspaceKey()?.let { key ->
         val latest = _uiState.value
         latest.workspace?.let { curWs ->
-          ramDb.updateWorkspace(key) { rec ->
-            rec.copy(
-              workingWorkspace = curWs,
-              openTabPaths = latest.openTabPaths,
-              activeFilePath = latest.activeFilePath,
-              fieldValues = latest.editorFieldValues,
-            )
-          }
+          val updatedRecord =
+            ramDb.updateWorkspace(key) { rec ->
+              rec.copy(
+                workingWorkspace = curWs,
+                openTabPaths = latest.openTabPaths,
+                activeFilePath = latest.activeFilePath,
+                fieldValues = latest.editorFieldValues,
+              )
+            }
           _uiState.update { it.copy(ramDbStats = ramDb.computeStats(key)) }
+          autoSaveIoScope.launch {
+            projectDirManager.recordOrganizedImport(curWs.scriptName, importedBatchFiles)
+            if (updatedRecord != null) projectDirManager.saveWorkspaceRecord(updatedRecord)
+            val summary = projectDirManager.computeStorageSummary()
+            _uiState.update { it.copy(projectStorageSummary = summary) }
+          }
         }
       }
-      appendLog("INFO", "Imported ${picked.size} file(s) from device: ${addedOrUpdatedPaths.joinToString(", ")}")
+      appendLog("INFO", "Imported & organized ${picked.size} file(s): ${addedOrUpdatedPaths.joinToString(", ")}")
       scheduleDraftSave()
 
       if (autoDeploy && !_uiState.value.isLocalScratchpad) {
@@ -1688,10 +1755,16 @@ export default {
 
   fun exportActiveFileToUri(uri: Uri) {
     val active = _uiState.value.activeFile ?: return
+    val projectName = _uiState.value.workspace?.scriptName ?: "worker"
     viewModelScope.launch {
       DeviceFileHelper.writeTextToUri(getApplication(), uri, active.content)
         .onSuccess {
-          _uiState.update { it.copy(statusMessage = "Exported ${active.fileName}") }
+          autoSaveIoScope.launch {
+            projectDirManager.recordOrganizedExportFile(projectName, active.path, active.content)
+            val summary = projectDirManager.computeStorageSummary()
+            _uiState.update { it.copy(projectStorageSummary = summary) }
+          }
+          _uiState.update { it.copy(statusMessage = "Exported ${active.fileName} (saved in exports/$projectName)") }
         }
         .onFailure { err ->
           _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Export failed") }
@@ -1702,7 +1775,7 @@ export default {
   fun exportWorkspaceBundleToUri(uri: Uri) {
     val key = activeWorkspaceKey()
     if (key == null) {
-      _uiState.update { it.copy(statusMessage = "Open a workspace in RAM first") }
+      _uiState.update { it.copy(statusMessage = "Open a workspace first") }
       return
     }
     ramDb.exportWorkspaceBundleJson(key)
@@ -1711,8 +1784,13 @@ export default {
           DeviceFileHelper.writeTextToUri(getApplication(), uri, json)
             .onSuccess {
               val name = _uiState.value.workspace?.scriptName ?: "worker"
-              _uiState.update { it.copy(statusMessage = "Exported '$name' RAM bundle to storage") }
-              appendLog("INFO", "Exported RAM bundle JSON for '$name'")
+              autoSaveIoScope.launch {
+                projectDirManager.recordOrganizedExportBundle(name, json)
+                val summary = projectDirManager.computeStorageSummary()
+                _uiState.update { it.copy(projectStorageSummary = summary) }
+              }
+              _uiState.update { it.copy(statusMessage = "Exported '$name' bundle to storage & exports/") }
+              appendLog("INFO", "Exported organized bundle JSON for '$name'")
             }
             .onFailure { err ->
               _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Bundle export failed") }
@@ -1737,7 +1815,10 @@ export default {
         .onSuccess { importedWs ->
           val isScratchpad = _uiState.value.isLocalScratchpad || _uiState.value.selectedAccount == null
           val accId = if (isScratchpad) null else _uiState.value.selectedAccount?.id
-          val ws = regenerateWranglerFileInWorkspace(importedWs)
+          val ws =
+            regenerateWranglerFileInWorkspace(importedWs).let { built ->
+              built.copy(files = ProjectDirectoryManager.organizeWorkspaceFiles(built.files))
+            }
           val key = ramDb.workspaceKey(accId, ws.scriptName)
           val record =
             ramDb.importWorkspace(
@@ -1748,6 +1829,13 @@ export default {
               isNewUnexported = true,
             )
           terminalEngine.syncWorkspaceToDisk(ws)
+          autoSaveIoScope.launch {
+            projectDirManager.recordOrganizedImport(ws.scriptName, ws.files, bundleJson = first.content)
+            projectDirManager.saveWorkspaceRecord(record)
+            val summary = projectDirManager.computeStorageSummary()
+            _uiState.update { it.copy(projectStorageSummary = summary) }
+          }
+          val diags = rebuildDiagnosticsFull(ws.files)
           _uiState.update { state ->
             val updatedWorkers =
               if (!isScratchpad && state.workers.none { it.id == ws.scriptName }) {
@@ -1766,14 +1854,15 @@ export default {
               tabNavHistory = record.tabNavHistory,
               tabNavIndex = record.tabNavIndex,
               editorFieldValues = record.fieldValues,
-              diagnostics = ws.files.flatMap { CodeAnalyzer.analyzeFile(it) },
+              diagnostics = diags,
               activeWorkspaceHasPendingConfig = record.hasPendingChanges,
               ramDbStats = ramDb.computeStats(key),
-              statusMessage = "Imported '${ws.scriptName}' bundle (${ws.files.size} files) into RAM DB",
+              statusMessage = "Imported & organized '${ws.scriptName}' (${ws.files.size} files)",
               terminalPromptPath = terminalEngine.currentPromptPath(ws),
             )
           }
-          appendLog("INFO", "Imported workspace bundle '${ws.scriptName}' into RAM DB")
+          appendLog("INFO", "Imported & organized bundle '${ws.scriptName}' into project directory")
+          recordActiveSessionPointer()
         }
         .onFailure { err ->
           _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Invalid EdgeCode bundle JSON") }
@@ -1789,6 +1878,11 @@ export default {
         .deleteWorker(accountId, scriptName)
         .onSuccess {
           ramDb.removeWorkspace(ramKey)
+          autoSaveIoScope.launch {
+            projectDirManager.deleteWorkspaceDirectory(ramKey)
+            val summary = projectDirManager.computeStorageSummary()
+            _uiState.update { it.copy(projectStorageSummary = summary) }
+          }
           appendLog("INFO", "Deleted Worker '$scriptName'")
           _uiState.update { state ->
             val cleared = state.workspace?.scriptName == scriptName
@@ -1984,9 +2078,11 @@ export default {
         diagnosticsJob =
           viewModelScope.launch {
             delay(180L)
+            val editedFile = filesSnapshot.firstOrNull { it.path == path }
             val diags =
               withContext(Dispatchers.Default) {
-                filesSnapshot.flatMap { CodeAnalyzer.analyzeFile(it) }
+                if (editedFile != null) reanalyzeSingleFile(editedFile, filesSnapshot)
+                else rebuildDiagnosticsFull(filesSnapshot)
               }
             _uiState.update { state ->
               if (state.workspace?.files == filesSnapshot) state.copy(diagnostics = diags)
@@ -1998,10 +2094,9 @@ export default {
         ramStatsJob?.cancel()
         ramStatsJob =
           viewModelScope.launch {
-            delay(550L)
+            delay(650L)
             val stats = withContext(Dispatchers.Default) { ramDb.computeStats(ramKey) }
-            val list = withContext(Dispatchers.Default) { ramDb.listWorkspaces() }
-            _uiState.update { it.copy(ramDbStats = stats, ramWorkspaces = list) }
+            _uiState.update { it.copy(ramDbStats = stats) }
           }
       }
       scheduleDraftSave()
@@ -2079,7 +2174,11 @@ export default {
       diagnosticsJob?.cancel()
       diagnosticsJob =
         viewModelScope.launch {
-          val diags = withContext(Dispatchers.Default) { snap.flatMap { CodeAnalyzer.analyzeFile(it) } }
+          val edited = snap.firstOrNull { it.path == path }
+          val diags =
+            withContext(Dispatchers.Default) {
+              if (edited != null) reanalyzeSingleFile(edited, snap) else rebuildDiagnosticsFull(snap)
+            }
           val stats = if (ramKey != null) withContext(Dispatchers.Default) { ramDb.computeStats(ramKey) } else null
           _uiState.update { state ->
             if (state.workspace?.files == snap) {
@@ -2150,12 +2249,13 @@ export default {
 
   fun createModuleDirectory(dirPathRaw: String) {
     val ws = _uiState.value.workspace ?: return
-    val clean = dirPathRaw.trim().trim('/')
+    val clean = ProjectDirectoryManager.normalizeRelativePath(dirPathRaw)
     if (clean.isBlank()) return
     val ramKey = activeWorkspaceKey()
     val nextWs = ws.copy(directories = ws.directories + clean)
     if (ramKey != null) {
       ramDb.updateWorkspace(ramKey) { rec -> rec.copy(workingWorkspace = nextWs) }
+      persistWorkspaceToProjectDirAsync(ramKey)
     }
     _uiState.update { state ->
       state.copy(
@@ -2167,7 +2267,7 @@ export default {
   }
 
   fun addModuleFile(fileName: String) {
-    val clean = fileName.trim().removePrefix("/")
+    val clean = ProjectDirectoryManager.normalizeRelativePath(fileName)
     if (clean.isBlank()) return
     val starter =
       when {
@@ -2212,6 +2312,8 @@ export default {
       val isScratch = _uiState.value.credentials == null
       val key = ramDb.workspaceKey(if (isScratch) null else _uiState.value.selectedAccount?.id, ws.scriptName)
       val record = ramDb.importWorkspace(key = key, workspace = ws, defaultTabs = listOf(clean), defaultActivePath = clean, isNewUnexported = true)
+      persistWorkspaceToProjectDirAsync(key)
+      val diags = rebuildDiagnosticsFull(ws.files)
       _uiState.update {
         it.copy(
           isLocalScratchpad = isScratch,
@@ -2221,10 +2323,10 @@ export default {
           tabNavHistory = record.tabNavHistory,
           tabNavIndex = record.tabNavIndex,
           editorFieldValues = record.fieldValues,
-          diagnostics = CodeAnalyzer.analyzeFile(file),
+          diagnostics = diags,
           activeWorkspaceHasPendingConfig = record.hasPendingChanges,
           ramDbStats = ramDb.computeStats(key),
-          statusMessage = "Created '$clean' in RAM",
+          statusMessage = "Created '$clean'",
         )
       }
       return
@@ -2246,7 +2348,9 @@ export default {
     val parentDir = if (clean.contains('/')) clean.substringBeforeLast('/') else ""
     val nextDirs = if (parentDir.isNotBlank()) existingWs.directories + parentDir else existingWs.directories
     val updatedFiles =
-      (existingWs.files.filterNot { it.isVirtualReadOnly } + newFile + existingWs.files.filter { it.isVirtualReadOnly })
+      ProjectDirectoryManager.organizeWorkspaceFiles(
+        existingWs.files.filterNot { it.isVirtualReadOnly } + newFile + existingWs.files.filter { it.isVirtualReadOnly },
+      )
     val nextWs =
       existingWs.copy(
         files = updatedFiles,
@@ -2255,6 +2359,7 @@ export default {
         hasModuleSetChanged = true,
       )
     val ramKey = activeWorkspaceKey()
+    val diags = reanalyzeSingleFile(newFile, updatedFiles)
     _uiState.update { state ->
       val nextFields = state.editorFieldValues + (clean to TextFieldValue(starter))
       if (ramKey != null) {
@@ -2267,10 +2372,11 @@ export default {
         openTabPaths = state.openTabPaths + clean,
         activeFilePath = clean,
         editorFieldValues = nextFields,
-        diagnostics = updatedFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+        diagnostics = diags,
         ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else state.ramDbStats,
       )
     }
+    if (ramKey != null) persistWorkspaceToProjectDirAsync(ramKey)
     openFileTab(clean, recordHistory = true)
   }
 
@@ -2521,6 +2627,8 @@ export default {
         hasModuleSetChanged = true,
       )
     val ramKey = activeWorkspaceKey()
+    fileDiagnosticsCache.remove(filePath)
+    val diags = rebuildDiagnosticsFull(updatedFiles)
 
     _uiState.update { state ->
       val nextFields = state.editorFieldValues - filePath
@@ -2539,28 +2647,31 @@ export default {
         openTabPaths = nextTabs,
         activeFilePath = nextActive,
         editorFieldValues = nextFields,
-        diagnostics = updatedFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+        diagnostics = diags,
         ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else state.ramDbStats,
-        statusMessage = "Removed '$filePath' in RAM (tap Export/Deploy to sync)",
+        statusMessage = "Removed '$filePath'",
       )
     }
-    appendLog("INFO", "Removed module '$filePath' from '${ws.scriptName}' in RAM DB")
+    if (ramKey != null) persistWorkspaceToProjectDirAsync(ramKey)
+    appendLog("INFO", "Removed module '$filePath' from '${ws.scriptName}'")
     scheduleDraftSave()
   }
 
   fun renameModuleFile(oldPath: String, newPathRaw: String) {
     val ws = _uiState.value.workspace ?: return
-    val newPath = newPathRaw.trim().removePrefix("/")
+    val newPath = ProjectDirectoryManager.normalizeRelativePath(newPathRaw)
     if (newPath.isBlank() || newPath == oldPath || ws.files.any { it.path == newPath }) return
     val target = ws.files.firstOrNull { it.path == oldPath } ?: return
     if (target.isVirtualReadOnly) return
 
     val updatedFiles =
-      ws.files.map { f ->
-        if (f.path == oldPath) {
-          f.copy(path = newPath, contentType = MultipartWorkerParser.inferModuleMimeType(newPath))
-        } else f
-      }
+      ProjectDirectoryManager.organizeWorkspaceFiles(
+        ws.files.map { f ->
+          if (f.path == oldPath) {
+            f.copy(path = newPath, contentType = MultipartWorkerParser.inferModuleMimeType(newPath))
+          } else f
+        },
+      )
     val nextEntry = if (ws.entryModulePath == oldPath) newPath else ws.entryModulePath
     val nextTabs = _uiState.value.openTabPaths.map { if (it == oldPath) newPath else it }
     val nextActive = if (_uiState.value.activeFilePath == oldPath) newPath else _uiState.value.activeFilePath
@@ -2577,15 +2688,17 @@ export default {
           fieldValues = nextFieldValues,
         )
       }
+      persistWorkspaceToProjectDirAsync(ramKey)
     }
 
+    val diags = rebuildDiagnosticsFull(updatedFiles)
     _uiState.update { state ->
       state.copy(
         workspace = nextWs,
         openTabPaths = nextTabs,
         activeFilePath = nextActive,
         editorFieldValues = nextFieldValues,
-        diagnostics = updatedFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+        diagnostics = diags,
         ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else state.ramDbStats,
         statusMessage = "Renamed '$oldPath' -> '$newPath'",
       )
@@ -2597,7 +2710,7 @@ export default {
     val ws = _uiState.value.workspace ?: return
     val target = ws.files.firstOrNull { it.path == filePath } ?: return
     if (target.isVirtualReadOnly) return
-    val updatedFiles = ws.files.map { it.copy(isEntryPoint = it.path == filePath) }
+    val updatedFiles = ProjectDirectoryManager.organizeWorkspaceFiles(ws.files.map { it.copy(isEntryPoint = it.path == filePath) })
     val nextWs =
       ws.copy(
         files = updatedFiles,
@@ -2623,9 +2736,10 @@ export default {
         editorRevision = state.editorRevision + 1L,
         activeWorkspaceHasPendingConfig = true,
         ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else state.ramDbStats,
-        statusMessage = "Entry point set to '$filePath' in RAM",
+        statusMessage = "Entry point set to '$filePath'",
       )
     }
+    if (ramKey != null) persistWorkspaceToProjectDirAsync(ramKey)
   }
 
   fun revertFile(filePath: String) {
@@ -2633,12 +2747,14 @@ export default {
     if (key != null) {
       val updated = ramDb.revertFileToImportedBaseline(key, filePath) ?: return
       val ws = updated.workingWorkspace
+      persistWorkspaceToProjectDirAsync(key)
+      val diags = rebuildDiagnosticsFull(ws.files)
       _uiState.update { state ->
         state.copy(
           workspace = ws,
           editorFieldValues = updated.fieldValues,
           editorRevision = state.editorRevision + 1L,
-          diagnostics = ws.files.flatMap { CodeAnalyzer.analyzeFile(it) },
+          diagnostics = diags,
           activeWorkspaceHasPendingConfig = updated.hasPendingChanges,
           ramDbStats = ramDb.computeStats(key),
           statusMessage = "Reverted $filePath to imported baseline",
@@ -2715,6 +2831,7 @@ export default {
               hasModuleSetChanged = false,
             )
           ramDb.markExported(ramKey, updatedWs)
+          persistWorkspaceToProjectDirAsync(ramKey)
           lastPersistedDraftDigests.remove(ramKey)
           pendingCloudDrafts.remove(ramKey)
           autoSaveIoScope.launch { autoSaveStore.clearWorkspaceDraft(ramKey) }
@@ -2838,6 +2955,7 @@ export default {
     val ramKey = activeWorkspaceKey()
     if (ramKey != null) {
       ramDb.updateWorkspace(ramKey) { rec -> rec.copy(workingWorkspace = nextWs, fieldValues = nextFields) }
+      persistWorkspaceToProjectDirAsync(ramKey)
     }
     _uiState.update { state ->
       state.copy(
@@ -2902,6 +3020,7 @@ export default {
       ramDb.updateWorkspace(ramKey) { rec ->
         rec.copy(workingWorkspace = updatedWs, fieldValues = nextFields, hasPendingConfigSync = true)
       }
+      persistWorkspaceToProjectDirAsync(ramKey)
     }
     _uiState.update { state ->
       state.copy(
@@ -2930,6 +3049,7 @@ export default {
       ramDb.updateWorkspace(ramKey) { rec ->
         rec.copy(workingWorkspace = updatedWs, fieldValues = nextFields, hasPendingConfigSync = true)
       }
+      persistWorkspaceToProjectDirAsync(ramKey)
     }
     _uiState.update { state ->
       state.copy(
@@ -2957,6 +3077,7 @@ export default {
       ramDb.updateWorkspace(ramKey) { rec ->
         rec.copy(workingWorkspace = updatedWs, fieldValues = nextFields, hasPendingConfigSync = true)
       }
+      persistWorkspaceToProjectDirAsync(ramKey)
     }
     _uiState.update { state ->
       state.copy(
@@ -2990,6 +3111,7 @@ export default {
           hasPendingConfigSync = true,
         )
       }
+      persistWorkspaceToProjectDirAsync(ramKey)
     }
     _uiState.update { state ->
       state.copy(
@@ -3024,6 +3146,7 @@ export default {
           hasPendingConfigSync = true,
         )
       }
+      persistWorkspaceToProjectDirAsync(ramKey)
     }
     _uiState.update { state ->
       state.copy(
@@ -3048,6 +3171,7 @@ export default {
       ramDb.updateWorkspace(ramKey) { rec ->
         rec.copy(workingWorkspace = updatedWs, fieldValues = nextFields, hasPendingConfigSync = true)
       }
+      persistWorkspaceToProjectDirAsync(ramKey)
     }
     _uiState.update { state ->
       state.copy(
@@ -3071,6 +3195,7 @@ export default {
       ramDb.updateWorkspace(ramKey) { rec ->
         rec.copy(workingWorkspace = updatedWs, fieldValues = nextFields, hasPendingConfigSync = true)
       }
+      persistWorkspaceToProjectDirAsync(ramKey)
     }
     _uiState.update { state ->
       state.copy(
@@ -3166,6 +3291,7 @@ export default {
       ramDb.updateWorkspace(ramKey) { rec ->
         rec.copy(workingWorkspace = nextWs, hasPendingConfigSync = true)
       }
+      persistWorkspaceToProjectDirAsync(ramKey)
     }
     _uiState.update { state ->
       state.copy(
@@ -6049,6 +6175,7 @@ jobs:
 
   fun flushAutoSaveNow(clearSessionPointer: Boolean = false) {
     val state = _uiState.value
+    val activeKey = activeWorkspaceKey(state)
     val snapshot = buildActiveAutoSaveSnapshot(state)
     autoSaveIoScope.launch {
       if (snapshot != null) {
@@ -6058,6 +6185,11 @@ jobs:
           autoSaveStore.saveWorkspaceDraft(draft)
           lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
           _uiState.update { it.copy(lastAutoSavedEpochMs = draft.savedAtEpochMs) }
+        }
+        if (activeKey != null) {
+          ramDb.getWorkspace(activeKey)?.let { projectDirManager.saveWorkspaceRecord(it) }
+          val summary = projectDirManager.computeStorageSummary()
+          _uiState.update { it.copy(projectStorageSummary = summary) }
         }
         if (clearSessionPointer) {
           autoSaveStore.clearLastActiveSession()
@@ -6073,15 +6205,22 @@ jobs:
   private fun scheduleDraftSave() {
     syncActiveStateToRamDb()
     val settings = _uiState.value.editorSettings
-    if (!settings.autoSaveEnabled) return
     draftSaveJob?.cancel()
     draftSaveJob =
       viewModelScope.launch {
-        delay(1_500L)
+        delay(1_400L)
         val state = _uiState.value
-        if (!state.editorSettings.autoSaveEnabled || state.workspace == null) return@launch
-        val snapshot = withContext(Dispatchers.Default) { buildActiveAutoSaveSnapshot(state) } ?: return@launch
-        persistSnapshotIfChanged(snapshot.first, snapshot.second, forceSessionPointer = false)
+        val activeKey = activeWorkspaceKey(state)
+        if (state.workspace == null) return@launch
+        if (activeKey != null) {
+          ramDb.getWorkspace(activeKey)?.let { rec ->
+            withContext(Dispatchers.IO) { projectDirManager.saveWorkspaceRecord(rec) }
+          }
+        }
+        if (settings.autoSaveEnabled) {
+          val snapshot = withContext(Dispatchers.Default) { buildActiveAutoSaveSnapshot(state) } ?: return@launch
+          persistSnapshotIfChanged(snapshot.first, snapshot.second, forceSessionPointer = false)
+        }
       }
   }
 
@@ -6188,7 +6327,7 @@ jobs:
     val record = ramDb.getWorkspace(draft.workspaceKey) ?: return
     ramDb.setActiveWorkspaceKey(draft.workspaceKey)
     val ws = record.workingWorkspace
-    val diags = ws.files.flatMap { CodeAnalyzer.analyzeFile(it) }
+    val diags = rebuildDiagnosticsFull(ws.files)
     terminalEngine.syncWorkspaceToDisk(ws)
     val hasDirty = ws.files.any { it.isDirty }
     val banner =
@@ -6218,7 +6357,7 @@ jobs:
       )
     }
     appendTerminalWelcome(ws)
-    appendLog("INFO", "Restored local workspace '${ws.scriptName}' from DataStore auto-save")
+    appendLog("INFO", "Restored '${ws.scriptName}' from project directory & auto-save")
     syncPeriodicAutoSaveLoop()
   }
 
@@ -6421,6 +6560,71 @@ jobs:
           }
           appendLog("ERROR", msg)
         }
+    }
+  }
+
+  fun setBottomDockHidden(hidden: Boolean) {
+    _uiState.update { it.copy(isBottomDockHidden = hidden) }
+  }
+
+  fun toggleBottomDockHidden() {
+    _uiState.update { it.copy(isBottomDockHidden = !it.isBottomDockHidden) }
+  }
+
+  fun setEditorBottomBarsHidden(hidden: Boolean) {
+    _uiState.update { it.copy(isEditorBottomBarsHidden = hidden) }
+  }
+
+  fun toggleEditorBottomBarsHidden() {
+    _uiState.update { it.copy(isEditorBottomBarsHidden = !it.isEditorBottomBarsHidden) }
+  }
+
+  fun toggleAllBottomMenus(hide: Boolean) {
+    _uiState.update {
+      it.copy(
+        isBottomDockHidden = hide,
+        isEditorBottomBarsHidden = hide,
+      )
+    }
+  }
+
+  private fun rebuildDiagnosticsFull(files: List<WorkerFile>): List<DiagnosticItem> {
+    fileDiagnosticsCache.clear()
+    val result = ArrayList<DiagnosticItem>()
+    for (file in files) {
+      val list = CodeAnalyzer.analyzeFile(file)
+      fileDiagnosticsCache[file.path] = list
+      result.addAll(list)
+    }
+    return result
+  }
+
+  private fun reanalyzeSingleFile(
+    editedFile: WorkerFile,
+    allFiles: List<WorkerFile>,
+  ): List<DiagnosticItem> {
+    fileDiagnosticsCache[editedFile.path] = CodeAnalyzer.analyzeFile(editedFile)
+    val result = ArrayList<DiagnosticItem>()
+    for (file in allFiles) {
+      val cached = fileDiagnosticsCache[file.path] ?: CodeAnalyzer.analyzeFile(file).also {
+        fileDiagnosticsCache[file.path] = it
+      }
+      result.addAll(cached)
+    }
+    return result
+  }
+
+  private fun persistWorkspaceToProjectDirAsync(
+    workspaceKey: String,
+    refreshSummary: Boolean = true,
+  ) {
+    val snapshot = ramDb.getWorkspace(workspaceKey) ?: return
+    autoSaveIoScope.launch {
+      projectDirManager.saveWorkspaceRecord(snapshot)
+      if (refreshSummary) {
+        val summary = projectDirManager.computeStorageSummary()
+        _uiState.update { it.copy(projectStorageSummary = summary) }
+      }
     }
   }
 

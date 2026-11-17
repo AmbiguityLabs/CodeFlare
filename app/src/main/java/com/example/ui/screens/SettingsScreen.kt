@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -38,6 +40,7 @@ import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.RocketLaunch
@@ -92,6 +95,7 @@ import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.RoseError
+import com.example.ui.theme.rememberGlassBorderStroke
 import com.example.ui.viewmodel.IdeUiState
 
 @Composable
@@ -145,7 +149,7 @@ fun SettingsScreen(
       title = { Text("Disconnect Cloudflare?") },
       text = {
         Text(
-          "This clears your encrypted Cloudflare API credentials and local RAM workspace cache on this device.",
+          "This clears your encrypted Cloudflare API credentials and active session cache on this device.",
         )
       },
       confirmButton = {
@@ -187,8 +191,8 @@ fun SettingsScreen(
       Surface(
         onClick = onBack,
         shape = CircleShape,
-        color = palette.chromePill,
-        border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
+        color = palette.glassElevated,
+        border = rememberGlassBorderStroke(1.dp),
         modifier = Modifier.size(40.dp).testTag("settings_back_button"),
       ) {
         Box(contentAlignment = Alignment.Center) {
@@ -223,7 +227,7 @@ fun SettingsScreen(
         when {
           creds != null -> "CONNECTED"
           uiState.isGitHubIdeOnlyMode -> "GITHUB IDE"
-          else -> "LOCAL RAM"
+          else -> "LOCAL DIR"
         }
       val statusColor = if (creds != null) EmeraldLive else AmberWarn
       Surface(
@@ -1025,7 +1029,69 @@ fun SettingsScreen(
           }
         }
 
-        // 4. OPTIONAL GITHUB & SESSION CONTROLS
+        // 4. DEDICATED PROJECT DIRECTORY & ORGANIZED STORAGE
+        val storage = uiState.projectStorageSummary
+        SettingsSectionCard(
+          title = "Project Directory & Storage",
+          subtitle = "Auto-selected workspace, imports & exports",
+          icon = Icons.Outlined.Folder,
+          modifier = Modifier.testTag("settings_storage_section"),
+        ) {
+          Surface(
+            color = palette.editorBg,
+            shape = RoundedCornerShape(10.dp),
+            border = rememberGlassBorderStroke(1.dp),
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Column(
+              modifier = Modifier.padding(12.dp),
+              verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Text(
+                text = "AUTO-SELECTED DIRECTORY",
+                fontFamily = JetBrainsMono,
+                fontSize = 9.5.sp,
+                color = palette.textMuted,
+              )
+              Text(
+                text = storage.rootDisplayPath.ifBlank { "EdgeCodeProjects/ (projects · imports · exports)" },
+                fontFamily = JetBrainsMono,
+                fontSize = 11.sp,
+                color = palette.activePillFg,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+              )
+              HorizontalDivider(color = palette.border.copy(alpha = 0.35f))
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+              ) {
+                StorageStatBox(
+                  label = "Projects",
+                  value = storage.projectCount.toString(),
+                  modifier = Modifier.weight(1f),
+                )
+                StorageStatBox(
+                  label = "Imports",
+                  value = storage.importedFilesCount.toString(),
+                  modifier = Modifier.weight(1f),
+                )
+                StorageStatBox(
+                  label = "Exports",
+                  value = storage.exportedFilesCount.toString(),
+                  modifier = Modifier.weight(1f),
+                )
+                StorageStatBox(
+                  label = "Disk",
+                  value = "${storage.totalDiskKb} KB",
+                  modifier = Modifier.weight(1f),
+                )
+              }
+            }
+          }
+        }
+
+        // 5. OPTIONAL GITHUB & SESSION CONTROLS
         SettingsSectionCard(
           title = "Integrations & Session",
           subtitle = "GitHub sync & sign-out",
@@ -1110,10 +1176,10 @@ private fun SettingsSectionCard(
 ) {
   val palette = LocalIdePalette.current
   Surface(
-    color = palette.chromeSurface,
+    color = palette.glassSurface,
     shape = RoundedCornerShape(20.dp),
-    border = BorderStroke(1.dp, palette.border.copy(alpha = 0.65f)),
-    modifier = modifier.fillMaxWidth(),
+    border = rememberGlassBorderStroke(1.dp),
+    modifier = modifier.fillMaxWidth().animateContentSize(animationSpec = tween(180)),
   ) {
     Column(
       modifier = Modifier.padding(16.dp),
@@ -1190,5 +1256,41 @@ private fun SettingsSwitchRow(
       checked = checked,
       onCheckedChange = onCheckedChange,
     )
+  }
+}
+
+@Composable
+private fun StorageStatBox(
+  label: String,
+  value: String,
+  modifier: Modifier = Modifier,
+) {
+  val palette = LocalIdePalette.current
+  Surface(
+    color = palette.glassSurface,
+    shape = RoundedCornerShape(10.dp),
+    border = rememberGlassBorderStroke(1.dp),
+    modifier = modifier,
+  ) {
+    Column(
+      modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+      verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+      Text(
+        text = value,
+        fontFamily = JetBrainsMono,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Bold,
+        color = palette.textPrimary,
+        maxLines = 1,
+      )
+      Text(
+        text = label,
+        fontSize = 10.sp,
+        color = palette.textMuted,
+        maxLines = 1,
+      )
+    }
   }
 }

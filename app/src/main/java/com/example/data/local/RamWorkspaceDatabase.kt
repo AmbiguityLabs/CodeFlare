@@ -142,6 +142,15 @@ class RamWorkspaceDatabase {
     return record
   }
 
+  fun restoreRecord(
+    record: RamWorkspaceRecord,
+    setActive: Boolean = false,
+  ) {
+    workspaces[record.key] = record
+    if (setActive) activeKey = record.key
+    publishStats()
+  }
+
   fun getWorkspace(key: String): RamWorkspaceRecord? = workspaces[key]
 
   fun hasWorkspace(key: String): Boolean = workspaces.containsKey(key)

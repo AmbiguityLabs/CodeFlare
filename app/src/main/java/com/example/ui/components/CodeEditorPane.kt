@@ -1,8 +1,11 @@
 package com.example.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -90,6 +93,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
@@ -126,6 +130,9 @@ import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.RoseError
+import com.example.ui.theme.edgeGlassDock
+import com.example.ui.theme.edgeGlassSurface
+import com.example.ui.theme.rememberGlassBorderStroke
 import com.example.ui.viewmodel.IdeUiState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -169,6 +176,7 @@ fun CodeEditorPane(
   onSyncWranglerToWorkspace: () -> Unit,
   onZoomPercentChange: (Int) -> Unit = {},
   onJumpToLocation: (String, Int, Int) -> Unit = { path, line, _ -> onJumpToLine(path, line) },
+  onHideEditorBottomBars: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
@@ -495,7 +503,8 @@ fun CodeEditorPane(
     // Collapsible Find & Replace Strip
     AnimatedVisibility(visible = uiState.showFindBar) {
       Surface(
-        color = palette.chromeSurface,
+        color = palette.glassElevated,
+        border = rememberGlassBorderStroke(1.dp),
         modifier = Modifier.fillMaxWidth(),
       ) {
         Column(
@@ -1059,233 +1068,252 @@ fun CodeEditorPane(
       )
     }
 
-    // Rebuilt Bottom Coding Dock: Compact Status Line + Zoom Controls + Autocomplete + Ergonomic Key Rail
-    HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
-    Row(
-      modifier =
-        Modifier
-          .fillMaxWidth()
-          .height(28.dp)
-          .background(palette.chromeBg)
-          .padding(horizontal = 8.dp),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(6.dp),
+    // Hideable Bottom Coding Dock: Status Line + Zoom Controls + Autocomplete + Ergonomic Key Rail
+    AnimatedVisibility(
+      visible = !uiState.isEditorBottomBarsHidden,
+      enter = slideInVertically(tween(180)) { it } + fadeIn(tween(160)),
+      exit = slideOutVertically(tween(150)) { it } + fadeOut(tween(130)),
     ) {
-      Text(
-        text = "Ln $activeLine, Col $activeCol",
-        fontFamily = JetBrainsMono,
-        fontSize = 10.sp,
-        color = palette.textSecondary,
-        maxLines = 1,
-      )
-      Text("·", fontSize = 10.sp, color = palette.textMuted)
-      Text(
-        text =
-          when (activeFile.language) {
-            WorkerLanguage.JAVASCRIPT -> "JS"
-            WorkerLanguage.TYPESCRIPT -> "TS"
-            WorkerLanguage.JSON -> "JSON"
-            WorkerLanguage.TEXT -> "TXT"
-          },
-        fontFamily = JetBrainsMono,
-        fontSize = 10.sp,
-        fontWeight = FontWeight.SemiBold,
-        color = palette.textMuted,
-        maxLines = 1,
-      )
-      Text("·", fontSize = 10.sp, color = palette.textMuted)
-      Text(
-        text = "$lineCount lines",
-        fontFamily = JetBrainsMono,
-        fontSize = 10.sp,
-        color = palette.textMuted,
-        maxLines = 1,
-      )
-      Spacer(Modifier.weight(1f))
+      Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+          modifier =
+            Modifier
+              .fillMaxWidth()
+              .height(28.dp)
+              .edgeGlassDock(shape = RectangleShape)
+              .padding(horizontal = 8.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          Text(
+            text = "Ln $activeLine, Col $activeCol",
+            fontFamily = JetBrainsMono,
+            fontSize = 10.sp,
+            color = palette.textSecondary,
+            maxLines = 1,
+          )
+          Text("·", fontSize = 10.sp, color = palette.textMuted)
+          Text(
+            text =
+              when (activeFile.language) {
+                WorkerLanguage.JAVASCRIPT -> "JS"
+                WorkerLanguage.TYPESCRIPT -> "TS"
+                WorkerLanguage.JSON -> "JSON"
+                WorkerLanguage.TEXT -> "TXT"
+              },
+            fontFamily = JetBrainsMono,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = palette.textMuted,
+            maxLines = 1,
+          )
+          Text("·", fontSize = 10.sp, color = palette.textMuted)
+          Text(
+            text = "$lineCount lines",
+            fontFamily = JetBrainsMono,
+            fontSize = 10.sp,
+            color = palette.textMuted,
+            maxLines = 1,
+          )
+          Spacer(Modifier.weight(1f))
 
-      // Compact Editor Zoom Controls (- | 100% | +) in isolated leaf composable
-      EditorZoomControlCluster(
-        zoomPercentProvider = { (committedZoomPercent * pinchScale).roundToInt().coerceIn(60, 220) },
-        zoomPresetMenuOpen = zoomPresetMenuOpen,
-        onZoomPresetMenuChange = { zoomPresetMenuOpen = it },
-        onSetZoom = { next ->
-          committedZoomPercent = next
-          onZoomPercentChange(next)
-          zoomHudBump++
-        },
-        onStepZoom = { delta ->
-          val next = (committedZoomPercent + delta).coerceIn(60, 220)
-          committedZoomPercent = next
-          onZoomPercentChange(next)
-          zoomHudBump++
-        },
-      )
+          // Compact Editor Zoom Controls (- | 100% | +) in isolated leaf composable
+          EditorZoomControlCluster(
+            zoomPercentProvider = { (committedZoomPercent * pinchScale).roundToInt().coerceIn(60, 220) },
+            zoomPresetMenuOpen = zoomPresetMenuOpen,
+            onZoomPresetMenuChange = { zoomPresetMenuOpen = it },
+            onSetZoom = { next ->
+              committedZoomPercent = next
+              onZoomPercentChange(next)
+              zoomHudBump++
+            },
+            onStepZoom = { delta ->
+              val next = (committedZoomPercent + delta).coerceIn(60, 220)
+              committedZoomPercent = next
+              onZoomPercentChange(next)
+              zoomHudBump++
+            },
+          )
 
-      val errCount = uiState.diagnostics.count { it.severity == DiagnosticSeverity.ERROR }
-      val warnCount = uiState.diagnostics.size - errCount
-      Row(
-        modifier =
-          Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .clickable { flushThen(onOpenProblems) }
-            .padding(horizontal = 6.dp, vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-      ) {
-        Icon(
-          imageVector =
-            if (uiState.diagnostics.isEmpty()) Icons.Outlined.CheckCircleOutline
-            else Icons.Outlined.WarningAmber,
-          contentDescription = "Diagnostics",
-          tint =
-            when {
-              errCount > 0 -> MaterialTheme.colorScheme.error
-              warnCount > 0 -> AmberWarn
-              else -> EmeraldLive
-            },
-          modifier = Modifier.size(12.dp),
-        )
-        Text(
-          text =
-            when {
-              errCount > 0 -> "$errCount err"
-              warnCount > 0 -> "$warnCount warn"
-              else -> "Clean"
-            },
-          fontFamily = JetBrainsMono,
-          fontSize = 10.sp,
-          fontWeight = FontWeight.Medium,
-          color =
-            when {
-              errCount > 0 -> MaterialTheme.colorScheme.error
-              warnCount > 0 -> AmberWarn
-              else -> palette.textSecondary
-            },
-          maxLines = 1,
-        )
-      }
-    }
-
-    if (!activeFile.isVirtualReadOnly) {
-      if (activeFile.language in setOf(WorkerLanguage.JAVASCRIPT, WorkerLanguage.TYPESCRIPT, WorkerLanguage.JSON)) {
-        val cursorPos = tfv.selection.start.coerceIn(0, tfv.text.length)
-        val wordBeforeCursor =
-          remember(tfv.text, cursorPos) {
-            val start = (cursorPos - 40).coerceAtLeast(0)
-            var idx = cursorPos
-            while (idx > start) {
-              val ch = tfv.text[idx - 1]
-              if (ch.isLetterOrDigit() || ch == '_' || ch == '.' || ch == '$') idx--
-              else break
-            }
-            if (idx == cursorPos) "" else tfv.text.substring(idx, cursorPos)
-          }
-        val completions =
-          remember(uiState.workspace?.bindings, activeFile.language, wordBeforeCursor) {
-            WranglerSyncParser.buildWorkersCompletions(uiState.workspace, activeFile.language, wordBeforeCursor)
-          }
-        if (completions.isNotEmpty()) {
-          HorizontalDivider(color = palette.border.copy(alpha = 0.4f))
+          val errCount = uiState.diagnostics.count { it.severity == DiagnosticSeverity.ERROR }
+          val warnCount = uiState.diagnostics.size - errCount
           Row(
             modifier =
               Modifier
-                .fillMaxWidth()
-                .height(34.dp)
-                .background(palette.chromeBg)
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                .clip(RoundedCornerShape(6.dp))
+                .clickable { flushThen(onOpenProblems) }
+                .padding(horizontal = 6.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
           ) {
-            completions.forEach { sug ->
-              Surface(
-                onClick = {
-                  if (wordBeforeCursor.isNotEmpty() && sug.label.startsWith(wordBeforeCursor, ignoreCase = true)) {
-                    val replaceStart = (cursorPos - wordBeforeCursor.length).coerceAtLeast(0)
-                    val nextText = tfv.text.replaceRange(replaceStart, cursorPos, sug.insertText)
-                    val nextPos = (replaceStart + sug.insertText.length - sug.cursorBackOffset).coerceIn(0, nextText.length)
-                    val nextVal = TextFieldValue(nextText, TextRange(nextPos))
-                    localTfv = nextVal
-                    onCodeChange(nextVal)
-                  } else {
-                    flushThen { onInsertText(sug.insertText, sug.cursorBackOffset) }
-                  }
+            Icon(
+              imageVector =
+                if (uiState.diagnostics.isEmpty()) Icons.Outlined.CheckCircleOutline
+                else Icons.Outlined.WarningAmber,
+              contentDescription = "Diagnostics",
+              tint =
+                when {
+                  errCount > 0 -> MaterialTheme.colorScheme.error
+                  warnCount > 0 -> AmberWarn
+                  else -> EmeraldLive
                 },
-                shape = RoundedCornerShape(7.dp),
-                color = palette.chromeSurface,
-                border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
+              modifier = Modifier.size(12.dp),
+            )
+            Text(
+              text =
+                when {
+                  errCount > 0 -> "$errCount err"
+                  warnCount > 0 -> "$warnCount warn"
+                  else -> "Clean"
+                },
+              fontFamily = JetBrainsMono,
+              fontSize = 10.sp,
+              fontWeight = FontWeight.Medium,
+              color =
+                when {
+                  errCount > 0 -> MaterialTheme.colorScheme.error
+                  warnCount > 0 -> AmberWarn
+                  else -> palette.textSecondary
+                },
+              maxLines = 1,
+            )
+          }
+
+          IconButton(
+            onClick = onHideEditorBottomBars,
+            modifier = Modifier.size(24.dp).testTag("hide_editor_bottom_bars_button"),
+          ) {
+            Icon(
+              imageVector = Icons.Outlined.KeyboardArrowDown,
+              contentDescription = "Hide editor bottom bars",
+              tint = palette.textMuted,
+              modifier = Modifier.size(15.dp),
+            )
+          }
+        }
+
+        if (!activeFile.isVirtualReadOnly) {
+          if (activeFile.language in setOf(WorkerLanguage.JAVASCRIPT, WorkerLanguage.TYPESCRIPT, WorkerLanguage.JSON)) {
+            val cursorPos = tfv.selection.start.coerceIn(0, tfv.text.length)
+            val wordBeforeCursor =
+              remember(tfv.text, cursorPos) {
+                val start = (cursorPos - 40).coerceAtLeast(0)
+                var idx = cursorPos
+                while (idx > start) {
+                  val ch = tfv.text[idx - 1]
+                  if (ch.isLetterOrDigit() || ch == '_' || ch == '.' || ch == '$') idx--
+                  else break
+                }
+                if (idx == cursorPos) "" else tfv.text.substring(idx, cursorPos)
+              }
+            val completions =
+              remember(uiState.workspace?.bindings, activeFile.language, wordBeforeCursor) {
+                WranglerSyncParser.buildWorkersCompletions(uiState.workspace, activeFile.language, wordBeforeCursor)
+              }
+            if (completions.isNotEmpty()) {
+              HorizontalDivider(color = palette.glassBorderSubtle)
+              Row(
+                modifier =
+                  Modifier
+                    .fillMaxWidth()
+                    .height(34.dp)
+                    .background(palette.glassSurface)
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
               ) {
-                Row(
-                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(5.dp),
-                ) {
-                  Text(
-                    text = sug.label,
-                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
-                    color = palette.activePillFg,
-                    maxLines = 1,
-                  )
-                  Text(
-                    text = sug.detail,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = palette.textMuted,
-                    maxLines = 1,
-                  )
+                completions.forEach { sug ->
+                  Surface(
+                    onClick = {
+                      if (wordBeforeCursor.isNotEmpty() && sug.label.startsWith(wordBeforeCursor, ignoreCase = true)) {
+                        val replaceStart = (cursorPos - wordBeforeCursor.length).coerceAtLeast(0)
+                        val nextText = tfv.text.replaceRange(replaceStart, cursorPos, sug.insertText)
+                        val nextPos = (replaceStart + sug.insertText.length - sug.cursorBackOffset).coerceIn(0, nextText.length)
+                        val nextVal = TextFieldValue(nextText, TextRange(nextPos))
+                        localTfv = nextVal
+                        onCodeChange(nextVal)
+                      } else {
+                        flushThen { onInsertText(sug.insertText, sug.cursorBackOffset) }
+                      }
+                    },
+                    shape = RoundedCornerShape(7.dp),
+                    color = palette.glassElevated,
+                    border = rememberGlassBorderStroke(1.dp),
+                  ) {
+                    Row(
+                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                      Text(
+                        text = sug.label,
+                        style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
+                        color = palette.activePillFg,
+                        maxLines = 1,
+                      )
+                      Text(
+                        text = sug.detail,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = palette.textMuted,
+                        maxLines = 1,
+                      )
+                    }
+                  }
                 }
               }
             }
           }
-        }
-      }
 
-      HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
-      Row(
-        modifier =
-          Modifier
-            .fillMaxWidth()
-            .height(42.dp)
-            .background(palette.chromeSurface)
-            .padding(horizontal = 6.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        // Sticky Undo / Redo group on the left
-        Row(
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-          IconButton(onClick = { flushThen(onUndo) }, modifier = Modifier.size(34.dp).testTag("editor_undo")) {
-            Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = "Undo", tint = palette.textSecondary, modifier = Modifier.size(17.dp))
+          HorizontalDivider(color = palette.glassBorderSubtle)
+          Row(
+            modifier =
+              Modifier
+                .fillMaxWidth()
+                .height(42.dp)
+                .background(palette.glassSurface)
+                .padding(horizontal = 6.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            // Sticky Undo / Redo group on the left
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+              IconButton(onClick = { flushThen(onUndo) }, modifier = Modifier.size(34.dp).testTag("editor_undo")) {
+                Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = "Undo", tint = palette.textSecondary, modifier = Modifier.size(17.dp))
+              }
+              IconButton(onClick = { flushThen(onRedo) }, modifier = Modifier.size(34.dp).testTag("editor_redo")) {
+                Icon(Icons.AutoMirrored.Outlined.Redo, contentDescription = "Redo", tint = palette.textSecondary, modifier = Modifier.size(17.dp))
+              }
+            }
+
+            VerticalDivider(
+              color = palette.glassBorderSubtle,
+              modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp),
+            )
+
+            // Scrollable tactile coding key rail
+            Row(
+              modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+              horizontalArrangement = Arrangement.spacedBy(5.dp),
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              AccessoryKey("TAB") { flushThen(onInsertTab) }
+              AccessoryKey("//") { flushThen(onToggleComment) }
+              AccessoryKey("{ }") { flushThen { onInsertText("{}", 1) } }
+              AccessoryKey("( )") { flushThen { onInsertText("()", 1) } }
+              AccessoryKey("[ ]") { flushThen { onInsertText("[]", 1) } }
+              AccessoryKey("=>") { flushThen { onInsertText(" => ", 0) } }
+              AccessoryKey(";") { flushThen { onInsertText(";", 0) } }
+              AccessoryKey(":") { flushThen { onInsertText(": ", 0) } }
+              AccessoryKey("\"") { flushThen { onInsertText("\"\"", 1) } }
+              AccessoryKey("'") { flushThen { onInsertText("''", 1) } }
+              AccessoryKey("`") { flushThen { onInsertText("``", 1) } }
+              AccessoryKey("=") { flushThen { onInsertText(" = ", 0) } }
+              AccessoryKey(".") { flushThen { onInsertText(".", 0) } }
+            }
           }
-          IconButton(onClick = { flushThen(onRedo) }, modifier = Modifier.size(34.dp).testTag("editor_redo")) {
-            Icon(Icons.AutoMirrored.Outlined.Redo, contentDescription = "Redo", tint = palette.textSecondary, modifier = Modifier.size(17.dp))
-          }
-        }
-
-        VerticalDivider(
-          color = palette.border.copy(alpha = 0.55f),
-          modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp),
-        )
-
-        // Scrollable tactile coding key rail
-        Row(
-          modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-          horizontalArrangement = Arrangement.spacedBy(5.dp),
-          verticalAlignment = Alignment.CenterVertically,
-        ) {
-          AccessoryKey("TAB") { flushThen(onInsertTab) }
-          AccessoryKey("//") { flushThen(onToggleComment) }
-          AccessoryKey("{ }") { flushThen { onInsertText("{}", 1) } }
-          AccessoryKey("( )") { flushThen { onInsertText("()", 1) } }
-          AccessoryKey("[ ]") { flushThen { onInsertText("[]", 1) } }
-          AccessoryKey("=>") { flushThen { onInsertText(" => ", 0) } }
-          AccessoryKey(";") { flushThen { onInsertText(";", 0) } }
-          AccessoryKey(":") { flushThen { onInsertText(": ", 0) } }
-          AccessoryKey("\"") { flushThen { onInsertText("\"\"", 1) } }
-          AccessoryKey("'") { flushThen { onInsertText("''", 1) } }
-          AccessoryKey("`") { flushThen { onInsertText("``", 1) } }
-          AccessoryKey("=") { flushThen { onInsertText(" = ", 0) } }
-          AccessoryKey(".") { flushThen { onInsertText(".", 0) } }
         }
       }
     }
@@ -1298,8 +1326,8 @@ private fun AccessoryKey(label: String, onClick: () -> Unit) {
   Surface(
     onClick = onClick,
     shape = RoundedCornerShape(8.dp),
-    color = palette.chromePill,
-    border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
+    color = palette.glassElevated,
+    border = rememberGlassBorderStroke(1.dp),
   ) {
     Box(
       modifier = Modifier.height(30.dp).padding(horizontal = 10.dp),
@@ -1448,8 +1476,9 @@ private fun EditorFileTabBar(
     ) {
       Surface(
         onClick = onOpenExplorer,
-        shape = RoundedCornerShape(9.dp),
-        color = palette.chromePill,
+        shape = RoundedCornerShape(10.dp),
+        color = palette.glassElevated,
+        border = rememberGlassBorderStroke(1.dp),
         modifier = Modifier.testTag("editor_files_button"),
       ) {
         Row(
@@ -1499,10 +1528,10 @@ private fun EditorFileTabBar(
             Box {
               Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = if (isActive) palette.tabActiveBg else palette.chromeSurface,
+                color = if (isActive) palette.tabActiveBg else palette.glassSurface,
                 border =
                   if (isActive) BorderStroke(1.dp, palette.activePillFg.copy(alpha = 0.45f))
-                  else BorderStroke(1.dp, palette.border.copy(alpha = 0.25f)),
+                  else rememberGlassBorderStroke(1.dp),
                 modifier =
                   Modifier
                     .clip(RoundedCornerShape(12.dp))
@@ -1918,10 +1947,10 @@ private fun EditorZoomHud(
   ) {
     val zoomPercent = zoomPercentProvider()
     Surface(
-      color = palette.chromeSurface.copy(alpha = 0.94f),
-      shape = RoundedCornerShape(10.dp),
-      border = BorderStroke(1.dp, palette.activePillFg.copy(alpha = 0.45f)),
-      shadowElevation = 4.dp,
+      color = palette.glassElevated,
+      shape = RoundedCornerShape(12.dp),
+      border = rememberGlassBorderStroke(1.dp),
+      shadowElevation = 6.dp,
     ) {
       Row(
         modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
@@ -1956,8 +1985,7 @@ private fun EditorZoomControlCluster(
     horizontalArrangement = Arrangement.spacedBy(2.dp),
     modifier =
       Modifier
-        .clip(RoundedCornerShape(6.dp))
-        .background(palette.chromeSurface)
+        .edgeGlassSurface(RoundedCornerShape(8.dp), elevated = true)
         .padding(horizontal = 2.dp, vertical = 1.dp),
   ) {
     IconButton(
