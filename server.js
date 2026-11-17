@@ -149,7 +149,7 @@ function renderHtml(apkPath) {
     <h1>EdgeCode</h1>
     <p class="sub">Cloudflare Workers mobile IDE built natively with Kotlin &amp; Jetpack Compose.</p>
     <div class="meta">
-      <div>Package: <strong>com.aistudio.edgecode.wqznxm</strong></div>
+      <div>Package: <strong>com.aistudio.edgecode.wqznxm (v1.1)</strong></div>
       <div>Architecture: <strong>Home &rarr; Project (Code / Test / Config / Console)</strong></div>
       <div>Integrations: <strong>Cloudflare Workers, Pages, Infra &amp; Optional GitHub</strong></div>
     </div>
@@ -224,6 +224,21 @@ const server = http.createServer((req, res) => {
   if (req.method !== "HEAD") res.end(html);
   else res.end();
 });
+
+server.on("error", (err) => {
+  if (err && err.code === "EADDRINUSE") {
+    console.log(`Port ${port} is already in use; assuming existing EdgeCode server is active.`);
+    process.exit(0);
+  }
+  console.error("Server error:", err);
+  process.exit(1);
+});
+
+for (const sig of ["SIGINT", "SIGTERM"]) {
+  process.on(sig, () => {
+    server.close(() => process.exit(0));
+  });
+}
 
 server.listen(port, "0.0.0.0", () => {
   console.log(`EdgeCode server listening on http://0.0.0.0:${port}`);

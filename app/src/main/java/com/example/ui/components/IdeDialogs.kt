@@ -20,12 +20,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -46,8 +48,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.repository.WorkerTemplate
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.RoseError
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -61,10 +65,11 @@ fun NewWorkerDialog(
 ) {
   val palette = LocalIdePalette.current
   val context = LocalContext.current
-  var name by remember { mutableStateOf("") }
+  var name by remember { mutableStateOf("my-edge-worker") }
   var uploadMode by remember { mutableStateOf(pickedUris.isNotEmpty()) }
   var selectedTemplate by remember { mutableStateOf(WorkerTemplate.HELLO_FETCH) }
   var folderPrefix by remember { mutableStateOf("") }
+  var showMissingFilesHint by remember { mutableStateOf(false) }
 
   val pickedNames =
     remember(pickedUris) {
@@ -73,17 +78,30 @@ fun NewWorkerDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    title = { Text("Create Cloudflare Worker") },
+    title = { Text("New Worker") },
     text = {
       Column(
-        modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+        modifier = Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp),
       ) {
         OutlinedTextField(
           value = name,
           onValueChange = { name = it },
           label = { Text("Worker Script Name") },
-          placeholder = { Text("my-edge-api") },
+          placeholder = { Text("my-edge-worker") },
+          trailingIcon = {
+            if (name.isNotEmpty()) {
+              IconButton(onClick = { name = "" }) {
+                Icon(Icons.Outlined.Close, contentDescription = "Clear name", modifier = Modifier.size(16.dp))
+              }
+            }
+          },
+          supportingText =
+            if (name.isBlank()) {
+              { Text("Defaults to my-edge-worker", fontSize = 11.sp) }
+            } else {
+              null
+            },
           singleLine = true,
           shape = RoundedCornerShape(14.dp),
           modifier = Modifier.fillMaxWidth().testTag("new_worker_name_input"),
@@ -100,7 +118,10 @@ fun NewWorkerDialog(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
           ) {
             Surface(
-              onClick = { uploadMode = false },
+              onClick = {
+                uploadMode = false
+                showMissingFilesHint = false
+              },
               shape = RoundedCornerShape(9.dp),
               color = if (!uploadMode) palette.activePillBg else palette.chromePill,
               modifier = Modifier.weight(1f).testTag("new_worker_template_mode"),
@@ -110,7 +131,7 @@ fun NewWorkerDialog(
                 style = MaterialTheme.typography.labelLarge,
                 color = if (!uploadMode) palette.activePillFg else palette.textSecondary,
                 fontWeight = if (!uploadMode) FontWeight.SemiBold else FontWeight.Normal,
-                modifier = Modifier.padding(vertical = 8.dp).padding(horizontal = 10.dp),
+                modifier = Modifier.padding(vertical = 8.dp, horizontal = 10.dp),
               )
             }
             Surface(
@@ -124,7 +145,7 @@ fun NewWorkerDialog(
                 style = MaterialTheme.typography.labelLarge,
                 color = if (uploadMode) palette.activePillFg else palette.textSecondary,
                 fontWeight = if (uploadMode) FontWeight.SemiBold else FontWeight.Normal,
-                modifier = Modifier.padding(vertical = 8.dp).padding(horizontal = 10.dp),
+                modifier = Modifier.padding(vertical = 8.dp, horizontal = 10.dp),
               )
             }
           }
@@ -134,41 +155,83 @@ fun NewWorkerDialog(
           Text(
             text = "Starter Template",
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = palette.textSecondary,
           )
 
-          WorkerTemplate.entries.forEach { tpl ->
-            Surface(
-              onClick = { selectedTemplate = tpl },
-              shape = RoundedCornerShape(12.dp),
-              color =
-                if (selectedTemplate == tpl) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
-                else MaterialTheme.colorScheme.surfaceContainerLow,
-              modifier = Modifier.fillMaxWidth(),
-            ) {
-              Row(
-                modifier = Modifier.padding(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+          Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            WorkerTemplate.entries.forEach { tpl ->
+              val isSelected = selectedTemplate == tpl
+              val shortTag =
+                when (tpl) {
+                  WorkerTemplate.HELLO_FETCH -> "HTTP"
+                  WorkerTemplate.JSON_ROUTER -> "Router"
+                  WorkerTemplate.CORS_PROXY -> "Proxy"
+                  WorkerTemplate.CRON_WORKER -> "Cron"
+                  WorkerTemplate.HONO_ROUTER -> "Hono"
+                  WorkerTemplate.BEARER_AUTH_WORKER -> "Auth"
+                  WorkerTemplate.PAGES_FUNCTIONS_API -> "Pages"
+                }
+              Surface(
+                onClick = { selectedTemplate = tpl },
+                shape = RoundedCornerShape(12.dp),
+                color =
+                  if (isSelected) palette.activePillBg.copy(alpha = 0.72f)
+                  else palette.chromePill,
+                modifier = Modifier.fillMaxWidth(),
               ) {
-                RadioButton(selected = selectedTemplate == tpl, onClick = { selectedTemplate = tpl })
-                Column(modifier = Modifier.weight(1f)) {
-                  Text(tpl.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                  Text(tpl.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(
+                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                  RadioButton(selected = isSelected, onClick = { selectedTemplate = tpl })
+                  Text(
+                    text = tpl.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                    color = if (isSelected) palette.activePillFg else palette.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                  )
+                  Surface(
+                    color = if (isSelected) palette.ctaBg else palette.chromeSurface,
+                    shape = RoundedCornerShape(6.dp),
+                  ) {
+                    Text(
+                      text = shortTag,
+                      fontSize = 10.5.sp,
+                      fontWeight = FontWeight.SemiBold,
+                      color = if (isSelected) palette.ctaFg else palette.textMuted,
+                      modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                    )
+                  }
                 }
               }
             }
           }
         } else {
           OutlinedButton(
-            onClick = onPickFiles,
+            onClick = {
+              showMissingFilesHint = false
+              onPickFiles()
+            },
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth().testTag("new_worker_pick_files_button"),
           ) {
             Icon(Icons.Outlined.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text(
-              if (pickedNames.isEmpty()) "Select Script File(s) from Device"
-              else "Selected ${pickedNames.size} File(s) — Change",
+              if (pickedNames.isEmpty()) "Select Script File(s)"
+              else "${pickedNames.size} File(s) Selected — Change",
+            )
+          }
+
+          if (showMissingFilesHint && pickedNames.isEmpty()) {
+            Text(
+              text = "Select at least one script file from your device first.",
+              style = MaterialTheme.typography.labelSmall,
+              color = RoseError,
             )
           }
 
@@ -179,7 +242,7 @@ fun NewWorkerDialog(
             ) {
               pickedNames.forEach { fileName ->
                 Surface(
-                  color = MaterialTheme.colorScheme.surfaceContainerLow,
+                  color = palette.chromePill,
                   shape = RoundedCornerShape(8.dp),
                 ) {
                   Row(
@@ -197,7 +260,8 @@ fun NewWorkerDialog(
             OutlinedTextField(
               value = folderPrefix,
               onValueChange = { folderPrefix = it },
-              label = { Text("Subfolder prefix (optional, e.g. src)") },
+              label = { Text("Subfolder prefix (optional)") },
+              placeholder = { Text("src") },
               singleLine = true,
               shape = RoundedCornerShape(12.dp),
               modifier = Modifier.fillMaxWidth(),
@@ -208,26 +272,35 @@ fun NewWorkerDialog(
             }
           } else {
             Text(
-              text = "Pick a single index.js or batch select multiple ES module files (.js, .mjs, .json, .html, .sql) to scaffold & deploy.",
+              text = "Supports .js, .mjs, .ts, .json, .html, .sql",
               style = MaterialTheme.typography.bodySmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              color = palette.textSecondary,
             )
           }
         }
       }
     },
     confirmButton = {
-      val canConfirm =
-        name.trim().isNotEmpty() && (!uploadMode || pickedUris.isNotEmpty())
+      val resolvedName = name.trim().ifBlank { "my-edge-worker" }
       Button(
         onClick = {
-          if (uploadMode) onCreateFromFiles(name, pickedUris, folderPrefix)
-          else onCreateFromTemplate(name, selectedTemplate)
+          if (uploadMode) {
+            if (pickedUris.isEmpty()) {
+              showMissingFilesHint = true
+            } else {
+              onCreateFromFiles(resolvedName, pickedUris, folderPrefix)
+            }
+          } else {
+            onCreateFromTemplate(resolvedName, selectedTemplate)
+          }
         },
-        enabled = canConfirm,
+        colors = ButtonDefaults.buttonColors(containerColor = palette.ctaBg, contentColor = palette.ctaFg),
         modifier = Modifier.testTag("confirm_create_worker_button"),
       ) {
-        Text(if (uploadMode) "Upload & Create" else "Create & Deploy")
+        Text(
+          text = if (uploadMode) "Import & Create" else "Create Project",
+          fontWeight = FontWeight.SemiBold,
+        )
       }
     },
     dismissButton = {
@@ -242,6 +315,7 @@ fun NewModuleFileDialog(
   onDismiss: () -> Unit,
   onCreate: (fileName: String) -> Unit,
 ) {
+  val palette = LocalIdePalette.current
   val defaultName =
     if (initialPrefix.isBlank()) "src/script.js"
     else "${initialPrefix.trimEnd('/')}/script.js"
@@ -264,8 +338,9 @@ fun NewModuleFileDialog(
       Button(
         onClick = { onCreate(fileName) },
         enabled = fileName.trim().isNotEmpty(),
+        colors = ButtonDefaults.buttonColors(containerColor = palette.ctaBg, contentColor = palette.ctaFg),
       ) {
-        Text("Add File")
+        Text("Add File", fontWeight = FontWeight.SemiBold)
       }
     },
     dismissButton = {
@@ -280,6 +355,7 @@ fun NewDirectoryDialog(
   onDismiss: () -> Unit,
   onCreate: (dirPath: String) -> Unit,
 ) {
+  val palette = LocalIdePalette.current
   val initial = if (basePath.isBlank()) "src/routes" else "${basePath.trimEnd('/')}/new-folder"
   var dirPath by remember(basePath) { mutableStateOf(initial) }
 
@@ -300,8 +376,9 @@ fun NewDirectoryDialog(
       Button(
         onClick = { onCreate(dirPath) },
         enabled = dirPath.trim().isNotEmpty(),
+        colors = ButtonDefaults.buttonColors(containerColor = palette.ctaBg, contentColor = palette.ctaFg),
       ) {
-        Text("Create")
+        Text("Create", fontWeight = FontWeight.SemiBold)
       }
     },
     dismissButton = {
@@ -316,6 +393,7 @@ fun RenameFileDialog(
   onDismiss: () -> Unit,
   onRename: (newPath: String) -> Unit,
 ) {
+  val palette = LocalIdePalette.current
   var nextPath by remember(currentPath) { mutableStateOf(currentPath) }
 
   AlertDialog(
@@ -342,9 +420,10 @@ fun RenameFileDialog(
       Button(
         onClick = { onRename(nextPath) },
         enabled = nextPath.trim().isNotEmpty() && nextPath.trim() != currentPath,
+        colors = ButtonDefaults.buttonColors(containerColor = palette.ctaBg, contentColor = palette.ctaFg),
         modifier = Modifier.testTag("confirm_rename_module_button"),
       ) {
-        Text("Rename")
+        Text("Rename", fontWeight = FontWeight.SemiBold)
       }
     },
     dismissButton = {
@@ -434,11 +513,16 @@ fun BatchUploadOptionsDialog(
       }
     },
     confirmButton = {
-      FilledTonalButton(
+      val palette = LocalIdePalette.current
+      Button(
         onClick = { onConfirmUpload(folderPrefix, autoDeploy) },
+        colors = ButtonDefaults.buttonColors(containerColor = palette.ctaBg, contentColor = palette.ctaFg),
         modifier = Modifier.testTag("confirm_upload_files_button"),
       ) {
-        Text(if (autoDeploy && !isLocalScratchpad) "Import & Deploy" else "Import to Worker")
+        Text(
+          text = if (autoDeploy && !isLocalScratchpad) "Import & Deploy" else "Import to Worker",
+          fontWeight = FontWeight.SemiBold,
+        )
       }
     },
     dismissButton = {

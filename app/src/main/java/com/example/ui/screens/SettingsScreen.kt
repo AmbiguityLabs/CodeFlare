@@ -202,7 +202,7 @@ fun SettingsScreen(
 
       Column(modifier = Modifier.weight(1f)) {
         Text(
-          text = "Settings & Credentials",
+          text = "Settings",
           fontSize = 19.sp,
           fontWeight = FontWeight.Bold,
           color = palette.textPrimary,
@@ -210,7 +210,7 @@ fun SettingsScreen(
           overflow = TextOverflow.Ellipsis,
         )
         Text(
-          text = "Cloudflare Worker deployment API & editor preferences",
+          text = "Credentials & editor",
           style = MaterialTheme.typography.labelSmall,
           color = palette.textMuted,
           maxLines = 1,
@@ -259,8 +259,8 @@ fun SettingsScreen(
       ) {
         // 1. CLOUDFLARE API CREDENTIALS FOR WORKER DEPLOYMENT
         SettingsSectionCard(
-          title = "Cloudflare API Credentials",
-          subtitle = "Encrypted credential vault for Worker & Pages deployment",
+          title = "Cloudflare Credentials",
+          subtitle = "Token, Global Key, or OAuth",
           icon = Icons.Outlined.Key,
           modifier = Modifier.testTag("settings_cloudflare_section"),
         ) {
@@ -289,10 +289,10 @@ fun SettingsScreen(
                   Text(
                     text =
                       when (creds?.method) {
-                        AuthMethod.API_TOKEN -> "Scoped Cloudflare API Token"
-                        AuthMethod.GLOBAL_KEY -> "Cloudflare Global API Key"
-                        AuthMethod.OAUTH_PKCE -> "Cloudflare OAuth 2.0 PKCE"
-                        null -> "No Cloudflare Credentials Stored"
+                        AuthMethod.API_TOKEN -> "API Token"
+                        AuthMethod.GLOBAL_KEY -> "Global API Key"
+                        AuthMethod.OAUTH_PKCE -> "OAuth 2.0"
+                        null -> "Not Connected"
                       },
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
@@ -301,10 +301,11 @@ fun SettingsScreen(
                   Text(
                     text =
                       when {
-                        creds == null -> "Add an API Token or Global Key below to enable live Worker deployments."
+                        creds == null -> "Add credentials below to deploy."
                         creds.email.isNotBlank() -> creds.email
-                        uiState.selectedAccount != null -> "Account: ${uiState.selectedAccount.name}"
-                        else -> "Encrypted in Android Keystore"
+                        uiState.selectedAccount != null ->
+                          uiState.selectedAccount.name.replace(Regex("'s\\s+Account$", RegexOption.IGNORE_CASE), "")
+                        else -> "Stored in Keystore"
                       },
                     style = MaterialTheme.typography.bodySmall,
                     color = palette.textSecondary,
@@ -736,8 +737,8 @@ fun SettingsScreen(
 
         // 2. WORKER DEPLOYMENT DEFAULTS
         SettingsSectionCard(
-          title = "Worker Deployment Defaults",
-          subtitle = "Applied to new Worker scaffolds and publish workflow",
+          title = "Deployment Defaults",
+          subtitle = "New Worker scaffold & publish",
           icon = Icons.Outlined.RocketLaunch,
           modifier = Modifier.testTag("settings_deploy_defaults_section"),
         ) {
@@ -750,7 +751,7 @@ fun SettingsScreen(
               OutlinedTextField(
                 value = compatDateDraft,
                 onValueChange = { compatDateDraft = it },
-                label = { Text("Default Compatibility Date") },
+                label = { Text("Compatibility Date") },
                 placeholder = { Text("2024-11-01") },
                 singleLine = true,
                 textStyle = TextStyle(fontFamily = JetBrainsMono, fontSize = 13.sp),
@@ -762,7 +763,7 @@ fun SettingsScreen(
                   val clean = compatDateDraft.trim().ifBlank { "2024-11-01" }
                   compatDateDraft = clean
                   onUpdateSettings { it.copy(defaultCompatibilityDate = clean) }
-                  onNotify("Default compatibility date saved: $clean")
+                  onNotify("Compatibility date saved: $clean")
                 },
                 enabled = compatDateDraft.trim().isNotEmpty() && compatDateDraft.trim() != settings.defaultCompatibilityDate,
                 shape = RoundedCornerShape(10.dp),
@@ -807,21 +808,21 @@ fun SettingsScreen(
 
           SettingsSwitchRow(
             title = "Default nodejs_compat Flag",
-            subtitle = "Enable Node.js compatibility APIs on newly created Workers",
+            subtitle = "Node.js APIs on new Workers",
             checked = settings.defaultNodejsCompat,
             onCheckedChange = { enabled -> onUpdateSettings { it.copy(defaultNodejsCompat = enabled) } },
           )
 
           SettingsSwitchRow(
-            title = "Enable workers.dev Route by Default",
-            subtitle = "Automatically expose new Workers on your *.workers.dev subdomain",
+            title = "workers.dev Subdomain",
+            subtitle = "Expose new Workers by default",
             checked = settings.defaultWorkersDevEnabled,
             onCheckedChange = { enabled -> onUpdateSettings { it.copy(defaultWorkersDevEnabled = enabled) } },
           )
 
           SettingsSwitchRow(
-            title = "Auto-Open Preview After Deploy",
-            subtitle = "Jump directly to the live Worker Preview pane after successful deploy",
+            title = "Auto-Open Preview",
+            subtitle = "Jump to preview after deploy",
             checked = settings.autoOpenPreviewOnDeploy,
             onCheckedChange = { enabled -> onUpdateSettings { it.copy(autoOpenPreviewOnDeploy = enabled) } },
           )
@@ -829,20 +830,20 @@ fun SettingsScreen(
 
         // 3. USER & CODE EDITOR PREFERENCES
         SettingsSectionCard(
-          title = "Appearance & Code Editor",
-          subtitle = "Theme palette, typography, and editing behavior",
+          title = "Appearance & Editor",
+          subtitle = "Theme & typography",
           icon = Icons.Outlined.Code,
           modifier = Modifier.testTag("settings_editor_section"),
         ) {
           SettingsSwitchRow(
-            title = "Dark Olive IDE Theme",
-            subtitle = "High-contrast dark surface palette with muted sage accents",
+            title = "Dark Olive Theme",
+            subtitle = "High-contrast dark surface",
             checked = settings.darkTheme,
             onCheckedChange = { dark -> onUpdateSettings { it.copy(darkTheme = dark) } },
           )
           SettingsSwitchRow(
-            title = "System Dynamic Color",
-            subtitle = "Blend Material You wallpaper accent colors on Android 12+",
+            title = "Dynamic Color",
+            subtitle = "Material You accents (Android 12+)",
             checked = settings.dynamicColor,
             onCheckedChange = { dyn -> onUpdateSettings { it.copy(dynamicColor = dyn) } },
           )
@@ -851,19 +852,19 @@ fun SettingsScreen(
 
           SettingsSwitchRow(
             title = "Word Wrap",
-            subtitle = "Wrap long source lines instead of scrolling horizontally",
+            subtitle = "Wrap long source lines",
             checked = settings.wordWrap,
             onCheckedChange = { wrap -> onUpdateSettings { it.copy(wordWrap = wrap) } },
           )
           SettingsSwitchRow(
-            title = "Line Numbers Gutter",
-            subtitle = "Display monospace line numbers alongside the active code editor",
+            title = "Line Numbers",
+            subtitle = "Show line numbers gutter",
             checked = settings.showLineNumbers,
             onCheckedChange = { ln -> onUpdateSettings { it.copy(showLineNumbers = ln) } },
           )
           SettingsSwitchRow(
-            title = "Auto-Close Brackets & Quotes",
-            subtitle = "Insert matching delimiters automatically when typing",
+            title = "Auto-Close Brackets",
+            subtitle = "Insert matching pairs automatically",
             checked = settings.autoCloseBrackets,
             onCheckedChange = { auto -> onUpdateSettings { it.copy(autoCloseBrackets = auto) } },
           )
@@ -962,7 +963,7 @@ fun SettingsScreen(
         // 4. OPTIONAL GITHUB & SESSION CONTROLS
         SettingsSectionCard(
           title = "Integrations & Session",
-          subtitle = "Optional GitHub source control & account sign-out",
+          subtitle = "GitHub sync & sign-out",
           icon = Icons.Outlined.Tune,
         ) {
           Row(

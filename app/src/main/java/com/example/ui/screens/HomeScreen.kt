@@ -432,7 +432,9 @@ fun HomeScreen(
                   ) {
                     Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(EmeraldLive))
                     Text(
-                      text = uiState.selectedAccount?.name ?: "Select Account",
+                      text =
+                        uiState.selectedAccount?.name?.let(::formatAccountDisplayName)
+                          ?: "Account",
                       style = MaterialTheme.typography.labelMedium,
                       color = palette.textPrimary,
                       maxLines = 1,
@@ -451,7 +453,7 @@ fun HomeScreen(
                     DropdownMenuItem(
                       text = {
                         Text(
-                          text = acc.name,
+                          text = formatAccountDisplayName(acc.name),
                           fontWeight = if (acc.id == uiState.selectedAccount?.id) FontWeight.Bold else FontWeight.Normal,
                         )
                       },
@@ -784,31 +786,27 @@ private fun HomeProjectsTabContent(
       }
     }
 
-    // Two Quick-Access Feature Cards (Credentials & GitHub) matching reference visual rhythm
+    // Compact Quick-Access Chips (API Vault & GitHub) without bloated descriptions
     item(key = "home_quick_cards") {
-      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        HomeFeatureLinkCard(
-          title = "Cloudflare Deploy API",
-          subtitle =
-            if (uiState.credentials != null) {
-              "${uiState.selectedAccount?.name ?: "Account linked"} · Manage API tokens & deploy defaults"
-            } else {
-              "Add an API Token, Global Key, or OAuth session to deploy Workers"
-            },
-          badgeBg = if (uiState.credentials != null) palette.ctaBg else AmberWarn.copy(alpha = 0.2f),
-          badgeTint = if (uiState.credentials != null) palette.ctaFg else AmberWarn,
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        CompactQuickChip(
+          title = "API Vault",
+          status = if (uiState.credentials != null) "Active" else "Setup",
+          accent = if (uiState.credentials != null) EmeraldLive else AmberWarn,
           icon = Icons.Outlined.Key,
           onClick = onOpenSettings,
+          modifier = Modifier.weight(1f),
         )
-        HomeFeatureLinkCard(
-          title = "GitHub Repositories",
-          subtitle =
-            uiState.gitHubCreds?.login?.let { "@$it · Clone repos, switch branches & push" }
-              ?: "Clone Worker repositories, manage commits & pull requests",
-          badgeBg = Color(0xFF5865F2),
-          badgeTint = Color.White,
+        CompactQuickChip(
+          title = "GitHub",
+          status = uiState.gitHubCreds?.login?.let { "@$it" } ?: "Optional",
+          accent = if (uiState.gitHubCreds != null) EmeraldLive else palette.textMuted,
           icon = Icons.Outlined.AccountTree,
           onClick = onOpenGitHubHub,
+          modifier = Modifier.weight(1f),
         )
       }
     }
@@ -863,20 +861,16 @@ private fun HomeProjectsTabContent(
           border = BorderStroke(1.dp, palette.border.copy(alpha = 0.65f)),
           modifier = Modifier.fillMaxWidth(),
         ) {
-          Column(
-            modifier = Modifier.padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+          Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
           ) {
             Text(
-              text = "No projects opened yet",
-              style = MaterialTheme.typography.titleSmall,
-              fontWeight = FontWeight.SemiBold,
-              color = palette.textPrimary,
-            )
-            Text(
-              text = "Tap New project above, import a .json bundle, or open a Cloudflare Worker below.",
+              text = "No local projects — tap + New project to start.",
               style = MaterialTheme.typography.bodySmall,
               color = palette.textSecondary,
+              modifier = Modifier.weight(1f),
             )
           }
         }
@@ -1063,65 +1057,65 @@ private fun SectionCountPill(
 }
 
 @Composable
-private fun HomeFeatureLinkCard(
+private fun CompactQuickChip(
   title: String,
-  subtitle: String,
-  badgeBg: Color,
-  badgeTint: Color,
+  status: String,
+  accent: Color,
   icon: ImageVector,
   onClick: () -> Unit,
+  modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
   Surface(
     onClick = onClick,
     color = palette.chromeSurface,
-    shape = RoundedCornerShape(22.dp),
-    border = BorderStroke(1.dp, palette.border.copy(alpha = 0.65f)),
-    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(16.dp),
+    border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
+    modifier = modifier.height(48.dp),
   ) {
     Row(
-      modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+      modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(14.dp),
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-      Surface(
-        color = badgeBg,
-        shape = RoundedCornerShape(14.dp),
-        modifier = Modifier.size(46.dp),
+      Icon(
+        imageVector = icon,
+        contentDescription = null,
+        tint = palette.textPrimary,
+        modifier = Modifier.size(17.dp),
+      )
+      Text(
+        text = title,
+        fontSize = 13.5.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = palette.textPrimary,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.weight(1f),
+      )
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
       ) {
-        Box(contentAlignment = Alignment.Center) {
-          Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = badgeTint,
-            modifier = Modifier.size(22.dp),
-          )
-        }
-      }
-      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(accent))
         Text(
-          text = title,
-          fontSize = 15.5.sp,
-          fontWeight = FontWeight.SemiBold,
-          color = palette.textPrimary,
-        )
-        Text(
-          text = subtitle,
-          style = MaterialTheme.typography.bodySmall,
+          text = status,
+          fontSize = 11.sp,
+          fontWeight = FontWeight.Medium,
           color = palette.textSecondary,
-          maxLines = 2,
+          maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )
       }
-      Icon(
-        imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-        contentDescription = null,
-        tint = palette.textSecondary,
-        modifier = Modifier.size(20.dp),
-      )
     }
   }
 }
+
+private fun formatAccountDisplayName(rawName: String): String =
+  rawName
+    .trim()
+    .replace(Regex("'s\\s+Account$", RegexOption.IGNORE_CASE), "")
+    .ifBlank { rawName.trim() }
 
 @Composable
 private fun RamProjectCard(
