@@ -23,7 +23,7 @@ object MultipartWorkerParser {
 
   fun inferModuleMimeType(path: String): String =
     when {
-      path.endsWith(".json", ignoreCase = true) -> "application/json"
+      path.endsWith(".json", ignoreCase = true) || path.endsWith(".jsonc", ignoreCase = true) -> "application/json"
       path.endsWith(".txt", ignoreCase = true) ||
         path.endsWith(".html", ignoreCase = true) ||
         path.endsWith(".htm", ignoreCase = true) ||
@@ -138,7 +138,13 @@ object MultipartWorkerParser {
     compatibilityDate: String,
     compatibilityFlags: List<String> = emptyList(),
   ): RequestBody {
-    val editableFiles = files.filter { !it.isVirtualReadOnly }
+    // wrangler config files (wrangler.jsonc/json/toml) are local project config, not Worker modules.
+    // Uploading them as JS modules makes Cloudflare fail with "Uncaught SyntaxError ... at wrangler.jsonc".
+    val editableFiles =
+      files.filter { f ->
+        val name = f.path.substringAfterLast('/').lowercase()
+        !f.isVirtualReadOnly && !(name.startsWith("wrangler.") && (name.endsWith(".jsonc") || name.endsWith(".json") || name.endsWith(".toml")))
+      }
     require(editableFiles.isNotEmpty()) { "Worker must contain at least one module script." }
     val builder = MultipartBody.Builder().setType(MultipartBody.FORM)
 
