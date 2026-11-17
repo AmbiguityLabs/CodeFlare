@@ -1,6 +1,8 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,7 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
@@ -27,18 +29,18 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.local.WorkerTestRunRecord
 import com.example.data.remote.ApiEnvVar
 import com.example.data.remote.ApiTesterRequest
@@ -46,6 +48,7 @@ import com.example.data.remote.DiagnosticSeverity
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
+import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.RoseError
 import com.example.ui.viewmodel.BottomPanelTab
 import com.example.ui.viewmodel.IdeUiState
@@ -86,97 +89,98 @@ fun BottomPanel(
   onToggleLiveTail: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
+  val palette = LocalIdePalette.current
+
   Surface(
-    color = MaterialTheme.colorScheme.surfaceContainerLow,
-    tonalElevation = 2.dp,
+    color = palette.chromeBg,
     modifier =
       modifier.fillMaxWidth().then(
         if (uiState.isBottomPanelExpanded) Modifier else Modifier.height(320.dp),
       ),
   ) {
     Column(modifier = Modifier.fillMaxSize()) {
+      HorizontalDivider(color = palette.border.copy(alpha = 0.55f))
       Row(
-        modifier = Modifier.fillMaxWidth().padding(end = 4.dp),
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .background(palette.chromeSurface)
+            .padding(start = 8.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
       ) {
-        ScrollableTabRow(
-          selectedTabIndex = uiState.activeBottomTab.ordinal,
-          containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-          edgePadding = 8.dp,
-          modifier = Modifier.weight(1f),
+        Row(
+          modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+          horizontalArrangement = Arrangement.spacedBy(4.dp),
+          verticalAlignment = Alignment.CenterVertically,
         ) {
-          Tab(
+          BottomPanelTabChip(
+            label = "Preview",
             selected = uiState.activeBottomTab == BottomPanelTab.WORKER_PREVIEW,
             onClick = { onSelectTab(BottomPanelTab.WORKER_PREVIEW) },
             modifier = Modifier.testTag("tab_worker_preview"),
-            text = { Text("Preview", maxLines = 1) },
           )
-          Tab(
+          BottomPanelTabChip(
+            label = "Worker Test",
             selected = uiState.activeBottomTab == BottomPanelTab.WORKER_TEST,
             onClick = { onSelectTab(BottomPanelTab.WORKER_TEST) },
             modifier = Modifier.testTag("tab_worker_test"),
-            text = { Text("Worker Test", maxLines = 1) },
           )
-          Tab(
+          BottomPanelTabChip(
+            label = "API Tester",
             selected = uiState.activeBottomTab == BottomPanelTab.API_TESTER,
             onClick = { onSelectTab(BottomPanelTab.API_TESTER) },
             modifier = Modifier.testTag("tab_api_tester"),
-            text = { Text("API Tester", maxLines = 1) },
           )
-          Tab(
+          BottomPanelTabChip(
+            label = "Terminal",
             selected = uiState.activeBottomTab == BottomPanelTab.TERMINAL,
             onClick = { onSelectTab(BottomPanelTab.TERMINAL) },
-            text = { Text("Terminal", maxLines = 1) },
           )
-          Tab(
+          BottomPanelTabChip(
+            label = "Problems",
             selected = uiState.activeBottomTab == BottomPanelTab.PROBLEMS,
+            badgeText = uiState.diagnostics.size.takeIf { it > 0 }?.toString(),
+            badgeColor = AmberWarn,
             onClick = { onSelectTab(BottomPanelTab.PROBLEMS) },
-            text = { Text("Problems (${uiState.diagnostics.size})", maxLines = 1) },
           )
-          Tab(
+          BottomPanelTabChip(
+            label = "Live Tail",
             selected = uiState.activeBottomTab == BottomPanelTab.TAIL_LOGS,
+            badgeText = if (uiState.isTailRunning) "LIVE" else null,
+            badgeColor = EmeraldLive,
             onClick = { onSelectTab(BottomPanelTab.TAIL_LOGS) },
-            text = {
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
-              ) {
-                if (uiState.isTailRunning) {
-                  Box(
-                    modifier =
-                      Modifier
-                        .size(7.dp)
-                        .clip(CircleShape)
-                        .background(EmeraldLive),
-                  )
-                }
-                Text("Live Tail", maxLines = 1)
-              }
-            },
           )
-          Tab(
+          BottomPanelTabChip(
+            label = "IDE Log",
             selected = uiState.activeBottomTab == BottomPanelTab.CONSOLE,
             onClick = { onSelectTab(BottomPanelTab.CONSOLE) },
-            text = { Text("IDE Log", maxLines = 1) },
           )
         }
+
         IconButton(
           onClick = onToggleExpand,
-          modifier = Modifier.size(38.dp).testTag("expand_bottom_panel"),
+          modifier = Modifier.size(34.dp).testTag("expand_bottom_panel"),
         ) {
           Icon(
             imageVector =
               if (uiState.isBottomPanelExpanded) Icons.Outlined.CloseFullscreen
               else Icons.Outlined.OpenInFull,
             contentDescription = if (uiState.isBottomPanelExpanded) "Restore panel size" else "Maximize terminal panel",
+            tint = palette.textSecondary,
+            modifier = Modifier.size(16.dp),
+          )
+        }
+        IconButton(onClick = onClose, modifier = Modifier.size(34.dp).testTag("close_bottom_panel")) {
+          Icon(
+            Icons.Outlined.Close,
+            contentDescription = "Close bottom panel",
+            tint = palette.textSecondary,
             modifier = Modifier.size(17.dp),
           )
         }
-        IconButton(onClick = onClose, modifier = Modifier.size(38.dp).testTag("close_bottom_panel")) {
-          Icon(Icons.Outlined.Close, contentDescription = "Close bottom panel", modifier = Modifier.size(18.dp))
-        }
       }
-      HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+      HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
 
       when (uiState.activeBottomTab) {
         BottomPanelTab.WORKER_PREVIEW ->
@@ -442,3 +446,62 @@ fun LiveTailView(
     }
   }
 }
+
+@Composable
+private fun BottomPanelTabChip(
+  label: String,
+  selected: Boolean,
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier,
+  badgeText: String? = null,
+  badgeColor: Color? = null,
+) {
+  val palette = LocalIdePalette.current
+  val fg = if (selected) palette.activePillFg else palette.textSecondary
+
+  Surface(
+    onClick = onClick,
+    shape = RoundedCornerShape(7.dp),
+    color = if (selected) palette.activePillBg else Color.Transparent,
+    border =
+      if (selected) BorderStroke(1.dp, palette.activePillFg.copy(alpha = 0.25f))
+      else null,
+    modifier = modifier.height(28.dp),
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 9.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+      Text(
+        text = label,
+        fontSize = 11.sp,
+        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+        color = fg,
+        maxLines = 1,
+        softWrap = false,
+      )
+      if (!badgeText.isNullOrBlank()) {
+        val bColor = badgeColor ?: palette.activePillFg
+        Box(
+          modifier =
+            Modifier
+              .clip(RoundedCornerShape(4.dp))
+              .background(bColor.copy(alpha = 0.16f))
+              .padding(horizontal = 4.dp, vertical = 1.dp),
+        ) {
+          Text(
+            text = badgeText,
+            fontFamily = JetBrainsMono,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            color = bColor,
+            maxLines = 1,
+            softWrap = false,
+          )
+        }
+      }
+    }
+  }
+}
+

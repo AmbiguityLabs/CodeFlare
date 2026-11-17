@@ -155,13 +155,14 @@ class RamWorkspaceDatabase {
 
   fun updateWorkspace(
     key: String,
+    notifyStats: Boolean = true,
     transform: (RamWorkspaceRecord) -> RamWorkspaceRecord,
   ): RamWorkspaceRecord? {
     val current = workspaces[key] ?: return null
     val updated = transform(current)
     workspaces[key] = updated
     activeKey = key
-    publishStats()
+    if (notifyStats) publishStats()
     return updated
   }
 

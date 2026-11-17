@@ -110,9 +110,41 @@ object SyntaxHighlighter {
       "ctx",
     )
 
+  private data class HighlightCacheKey(
+    val textHash: Int,
+    val length: Int,
+    val language: WorkerLanguage,
+    val isDark: Boolean,
+  )
+
+  private data class HighlightCacheEntry(
+    val rawText: String,
+    val highlighted: AnnotatedString,
+  )
+
+  private val cacheLock = Any()
+  private val highlightCache =
+    object : LinkedHashMap<HighlightCacheKey, HighlightCacheEntry>(32, 0.75f, true) {
+      override fun removeEldestEntry(eldest: MutableMap.MutableEntry<HighlightCacheKey, HighlightCacheEntry>?): Boolean {
+        return size > 24
+      }
+    }
+
+  private const val MAX_HIGHLIGHT_CHARS = 30_000
+
   fun highlight(code: String, language: WorkerLanguage, palette: IdePalette): AnnotatedString {
     if (code.isEmpty()) return AnnotatedString("")
-    if (language == WorkerLanguage.TEXT) return AnnotatedString(code)
+    if (language == WorkerLanguage.TEXT || code.length > MAX_HIGHLIGHT_CHARS) {
+      return AnnotatedString(code)
+    }
+
+    val cacheKey = HighlightCacheKey(code.hashCode(), code.length, language, palette.isDark)
+    synchronized(cacheLock) {
+      val cached = highlightCache[cacheKey]
+      if (cached != null && cached.rawText == code) {
+        return cached.highlighted
+      }
+    }
 
     val builder = AnnotatedString.Builder(code)
     val len = code.length
@@ -208,15 +240,14 @@ object SyntaxHighlighter {
         continue
       }
 
-      // Brackets & operators
-      if (c in "{}()[]=>+-*/!&|?:") {
-        builder.addStyle(SpanStyle(color = palette.syntaxOperator), i, i + 1)
-      }
-
       i++
     }
 
-    return builder.toAnnotatedString()
+    val result = builder.toAnnotatedString()
+    synchronized(cacheLock) {
+      highlightCache[cacheKey] = HighlightCacheEntry(code, result)
+    }
+    return result
   }
 
   private fun isFollowedByColon(code: String, startIndex: Int): Boolean {

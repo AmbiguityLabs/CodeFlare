@@ -360,47 +360,55 @@ object WranglerSyncParser {
     )
   }
 
+  private val quotedStringRegex = Regex(""""([^"]+)"""")
+  private val fnRegex = Regex("""^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(""")
+  private val methodRegex = Regex("""^\s*(?:async\s+)?(fetch|scheduled|queue|tail|email|onRequest|onRequestGet|onRequestPost|onRequestPut|onRequestDelete)\s*\(""")
+  private val classRegex = Regex("""^\s*(?:export\s+)?class\s+([A-Za-z_$][A-Za-z0-9_$]*)""")
+  private val arrowRegex = Regex("""^\s*(?:export\s+)?const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][A-Za-z0-9_$]*)\s*=>""")
+  private val honoRouteRegex = Regex("""^\s*(?:app|router)\.(get|post|put|delete|patch|all)\s*\(\s*["']([^"']+)["']""")
+  private val topKeyRegex = Regex("""^\s{2}"([^"]+)"\s*:""")
+
   fun extractCodeSymbols(code: String, language: WorkerLanguage): List<CodeSymbol> {
+    if (code.length > 80_000) return emptyList()
     val symbols = mutableListOf<CodeSymbol>()
     val lines = code.lines()
     when (language) {
       WorkerLanguage.JAVASCRIPT, WorkerLanguage.TYPESCRIPT -> {
-        val fnRegex = Regex("""^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(""")
-        val methodRegex = Regex("""^\s*(?:async\s+)?(fetch|scheduled|queue|tail|email|onRequest|onRequestGet|onRequestPost|onRequestPut|onRequestDelete)\s*\(""")
-        val classRegex = Regex("""^\s*(?:export\s+)?class\s+([A-Za-z_$][A-Za-z0-9_$]*)""")
-        val arrowRegex = Regex("""^\s*(?:export\s+)?const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][A-Za-z0-9_$]*)\s*=>""")
-        val honoRouteRegex = Regex("""^\s*(?:app|router)\.(get|post|put|delete|patch|all)\s*\(\s*["']([^"']+)["']""")
-
         lines.forEachIndexed { idx, line ->
           val lineNum = idx + 1
           when {
             line.trimStart().startsWith("export default") ->
               symbols.add(CodeSymbol("export default", "default", lineNum))
-            fnRegex.find(line) != null -> {
-              val m = fnRegex.find(line)!!
-              symbols.add(CodeSymbol("${m.groupValues[1]}()", "fn", lineNum))
-            }
-            methodRegex.find(line) != null -> {
-              val m = methodRegex.find(line)!!
-              symbols.add(CodeSymbol("${m.groupValues[1]}()", "handler", lineNum))
-            }
-            classRegex.find(line) != null -> {
-              val m = classRegex.find(line)!!
-              symbols.add(CodeSymbol(m.groupValues[1], "class", lineNum))
-            }
-            arrowRegex.find(line) != null -> {
-              val m = arrowRegex.find(line)!!
-              symbols.add(CodeSymbol(m.groupValues[1], "const", lineNum))
-            }
-            honoRouteRegex.find(line) != null -> {
-              val m = honoRouteRegex.find(line)!!
-              symbols.add(CodeSymbol("${m.groupValues[1].uppercase()} ${m.groupValues[2]}", "route", lineNum))
+            else -> {
+              val fn = fnRegex.find(line)
+              if (fn != null) {
+                symbols.add(CodeSymbol("${fn.groupValues[1]}()", "fn", lineNum))
+              } else {
+                val method = methodRegex.find(line)
+                if (method != null) {
+                  symbols.add(CodeSymbol("${method.groupValues[1]}()", "handler", lineNum))
+                } else {
+                  val cls = classRegex.find(line)
+                  if (cls != null) {
+                    symbols.add(CodeSymbol(cls.groupValues[1], "class", lineNum))
+                  } else {
+                    val arrow = arrowRegex.find(line)
+                    if (arrow != null) {
+                      symbols.add(CodeSymbol(arrow.groupValues[1], "const", lineNum))
+                    } else {
+                      val route = honoRouteRegex.find(line)
+                      if (route != null) {
+                        symbols.add(CodeSymbol("${route.groupValues[1].uppercase()} ${route.groupValues[2]}", "route", lineNum))
+                      }
+                    }
+                  }
+                }
+              }
             }
           }
         }
       }
       WorkerLanguage.JSON -> {
-        val topKeyRegex = Regex("""^\s{2}"([^"]+)"\s*:""")
         lines.forEachIndexed { idx, line ->
           topKeyRegex.find(line)?.let { m ->
             symbols.add(CodeSymbol(m.groupValues[1], "key", idx + 1))

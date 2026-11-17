@@ -55,9 +55,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -88,6 +85,8 @@ import com.example.data.local.RamWorkspaceRecord
 import com.example.data.remote.CfWorkerScript
 import com.example.ui.components.CloudflareInfraPanel
 import com.example.ui.components.CloudflarePagesPanel
+import com.example.ui.components.EdgeBottomDock
+import com.example.ui.components.EdgeBottomDockItem
 import com.example.ui.components.GitHubAndDiffPanel
 import com.example.ui.components.NewWorkerDialog
 import com.example.ui.components.SettingsPanel
@@ -537,47 +536,33 @@ fun HomeScreen(
       }
     },
     bottomBar = {
-      Column(modifier = Modifier.background(palette.chromeBg).navigationBarsPadding()) {
-        HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
-        NavigationBar(
-          containerColor = palette.chromeBg,
-          tonalElevation = 0.dp,
-          modifier = Modifier.height(64.dp),
-        ) {
-          val navColors =
-            NavigationBarItemDefaults.colors(
-              selectedIconColor = palette.activePillFg,
-              selectedTextColor = palette.activePillFg,
-              indicatorColor = palette.activePillBg,
-              unselectedIconColor = palette.textSecondary,
-              unselectedTextColor = palette.textSecondary,
-            )
-          NavigationBarItem(
-            selected = uiState.homeTab == HomeTab.PROJECTS,
-            onClick = { viewModel.setHomeTab(HomeTab.PROJECTS) },
-            icon = { Icon(Icons.Outlined.Code, contentDescription = "Projects") },
-            label = { Text("Projects", fontSize = 11.sp) },
-            colors = navColors,
-            modifier = Modifier.testTag("home_tab_projects"),
-          )
-          NavigationBarItem(
-            selected = uiState.homeTab == HomeTab.PAGES,
-            onClick = { viewModel.setHomeTab(HomeTab.PAGES) },
-            icon = { Icon(Icons.Outlined.Web, contentDescription = "Pages") },
-            label = { Text("Pages", fontSize = 11.sp) },
-            colors = navColors,
-            modifier = Modifier.testTag("home_tab_pages"),
-          )
-          NavigationBarItem(
-            selected = uiState.homeTab == HomeTab.INFRA,
-            onClick = { viewModel.setHomeTab(HomeTab.INFRA) },
-            icon = { Icon(Icons.Outlined.Storage, contentDescription = "Infra") },
-            label = { Text("Infra", fontSize = 11.sp) },
-            colors = navColors,
-            modifier = Modifier.testTag("home_tab_infra"),
-          )
-        }
-      }
+      EdgeBottomDock(
+        modifier = Modifier.background(palette.chromeSurface).navigationBarsPadding(),
+        items =
+          listOf(
+            EdgeBottomDockItem(
+              label = "Projects",
+              icon = Icons.Outlined.Code,
+              selected = uiState.homeTab == HomeTab.PROJECTS,
+              testTag = "home_tab_projects",
+              onClick = { viewModel.setHomeTab(HomeTab.PROJECTS) },
+            ),
+            EdgeBottomDockItem(
+              label = "Pages",
+              icon = Icons.Outlined.Web,
+              selected = uiState.homeTab == HomeTab.PAGES,
+              testTag = "home_tab_pages",
+              onClick = { viewModel.setHomeTab(HomeTab.PAGES) },
+            ),
+            EdgeBottomDockItem(
+              label = "Infra",
+              icon = Icons.Outlined.Storage,
+              selected = uiState.homeTab == HomeTab.INFRA,
+              testTag = "home_tab_infra",
+              onClick = { viewModel.setHomeTab(HomeTab.INFRA) },
+            ),
+          ),
+      )
     },
   ) { innerPadding ->
     Box(

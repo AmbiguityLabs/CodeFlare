@@ -90,8 +90,10 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -381,6 +383,8 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   private var oauthJob: Job? = null
   private var gitHubOAuthJob: Job? = null
   private var draftSaveJob: Job? = null
+  private var diagnosticsJob: Job? = null
+  private var ramStatsJob: Job? = null
   private var activeTailSession: ActiveTailSession? = null
   private val undoStacks = mutableMapOf<String, ArrayDeque<TextFieldValue>>()
   private val redoStacks = mutableMapOf<String, ArrayDeque<TextFieldValue>>()
@@ -1700,13 +1704,18 @@ export default {
   }
 
   fun updateEditorValue(newValue: TextFieldValue) {
-    val path = _uiState.value.activeFilePath ?: return
-    val currentFile = _uiState.value.activeFile ?: return
+    val currentState = _uiState.value
+    val path = currentState.activeFilePath ?: return
+    val currentFile = currentState.activeFile ?: return
     if (currentFile.isVirtualReadOnly) return
 
-    val prevValue = _uiState.value.editorFieldValues[path] ?: TextFieldValue(currentFile.content)
+    val prevValue = currentState.editorFieldValues[path] ?: TextFieldValue(currentFile.content)
     val textChanged = prevValue.text != newValue.text
-    val ramKey = activeWorkspaceKey()
+    if (!textChanged && prevValue.selection == newValue.selection && prevValue.composition == newValue.composition) {
+      return
+    }
+
+    val ramKey = activeWorkspaceKey(currentState)
 
     if (textChanged) {
       if (ramKey != null) {
@@ -1721,19 +1730,18 @@ export default {
       }
     }
 
+    var latestFilesForAnalysis: List<com.example.data.remote.WorkerFile>? = null
     _uiState.update { state ->
       val ws = state.workspace ?: return@update state
       val updatedFiles =
         if (textChanged) {
           ws.files.map { f -> if (f.path == path) f.copy(content = newValue.text) else f }
         } else ws.files
-      val diags =
-        if (textChanged) updatedFiles.flatMap { CodeAnalyzer.analyzeFile(it) }
-        else state.diagnostics
+      if (textChanged) latestFilesForAnalysis = updatedFiles
       val nextWs = if (textChanged) ws.copy(files = updatedFiles) else ws
       val nextFields = state.editorFieldValues + (path to newValue)
-      if (ramKey != null) {
-        ramDb.updateWorkspace(ramKey) { rec ->
+      if (textChanged && ramKey != null) {
+        ramDb.updateWorkspace(ramKey, notifyStats = false) { rec ->
           rec.copy(
             workingWorkspace = nextWs,
             fieldValues = nextFields,
@@ -1743,9 +1751,36 @@ export default {
       state.copy(
         workspace = nextWs,
         editorFieldValues = nextFields,
-        diagnostics = diags,
-        ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else state.ramDbStats,
       )
+    }
+
+    if (textChanged) {
+      val filesSnapshot = latestFilesForAnalysis
+      if (filesSnapshot != null) {
+        diagnosticsJob?.cancel()
+        diagnosticsJob =
+          viewModelScope.launch {
+            delay(260L)
+            val diags =
+              withContext(Dispatchers.Default) {
+                filesSnapshot.flatMap { CodeAnalyzer.analyzeFile(it) }
+              }
+            _uiState.update { state ->
+              if (state.workspace?.files == filesSnapshot) state.copy(diagnostics = diags)
+              else state
+            }
+          }
+      }
+      if (ramKey != null) {
+        ramStatsJob?.cancel()
+        ramStatsJob =
+          viewModelScope.launch {
+            delay(450L)
+            val stats = withContext(Dispatchers.Default) { ramDb.computeStats(ramKey) }
+            val list = withContext(Dispatchers.Default) { ramDb.listWorkspaces() }
+            _uiState.update { it.copy(ramDbStats = stats, ramWorkspaces = list) }
+          }
+      }
     }
   }
 
@@ -2190,7 +2225,7 @@ export default {
         durationMs = durationMs,
       )
     _uiState.update { state ->
-      state.copy(previewConsoleEntries = (listOf(entry) + state.previewConsoleEntries).take(120))
+      state.copy(previewConsoleEntries = (listOf(entry) + state.previewConsoleEntries).take(80))
     }
   }
 

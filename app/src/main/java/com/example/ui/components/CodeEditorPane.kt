@@ -5,6 +5,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.automirrored.outlined.FormatIndentIncreas
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.CheckCircleOutline
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
@@ -69,12 +71,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -425,16 +433,55 @@ fun CodeEditorPane(
       }
     }
 
-    // Code Editor with Gutter, Active Line Highlight, Fold Marker & Vertical Gutter Divider
-    val fontSize = uiState.editorSettings.fontSizeSp.sp
-    val lineHeight = (uiState.editorSettings.fontSizeSp + 7).sp
+    // High-FPS Code Editor with Single-Text Gutter, Active Line Highlight & Vertical Gutter Divider
+    val fontSizeSp = uiState.editorSettings.fontSizeSp
+    val lineHeightSp = fontSizeSp + 7
+    val fontSize = fontSizeSp.sp
+    val lineHeight = lineHeightSp.sp
+    val density = LocalDensity.current
+    val lineHeightPx = with(density) { lineHeight.toPx() }
+    val topPaddingPx = with(density) { 8.dp.toPx() }
+
     val verticalScroll = rememberScrollState()
     val horizontalScroll = rememberScrollState()
-    val codeLines = remember(tfv.text) { tfv.text.lines() }
-    val activeLine = uiState.cursorLineAndCol.first
+    val lineCount = remember(tfv.text) { tfv.text.count { it == '\n' } + 1 }
+    val (activeLine, activeCol) = uiState.cursorLineAndCol
     val visualTransformation =
       remember(activeFile.language, palette) {
         CodeSyntaxVisualTransformation(activeFile.language, palette)
+      }
+
+    val rawGutterText =
+      remember(lineCount) {
+        buildString(lineCount * 4) {
+          for (n in 1..lineCount) {
+            if (n > 1) append('\n')
+            append(n)
+          }
+        }
+      }
+    val gutterAnnotated =
+      remember(rawGutterText, activeLine, lineCount, palette) {
+        val builder = AnnotatedString.Builder(rawGutterText)
+        val clampedLine = activeLine.coerceIn(1, lineCount)
+        var startOffset = 0
+        var currentLine = 1
+        while (currentLine < clampedLine && startOffset < rawGutterText.length) {
+          val nl = rawGutterText.indexOf('\n', startOffset)
+          if (nl < 0) break
+          startOffset = nl + 1
+          currentLine++
+        }
+        val endOffset =
+          rawGutterText.indexOf('\n', startOffset).let { if (it < 0) rawGutterText.length else it }
+        if (startOffset < endOffset) {
+          builder.addStyle(
+            SpanStyle(color = palette.textPrimary, fontWeight = FontWeight.SemiBold),
+            startOffset,
+            endOffset,
+          )
+        }
+        builder.toAnnotatedString()
       }
 
     Row(
@@ -445,58 +492,62 @@ fun CodeEditorPane(
           .verticalScroll(verticalScroll),
     ) {
       if (uiState.editorSettings.showLineNumbers) {
-        Column(
+        val gutterMinWidth =
+          when {
+            lineCount >= 1000 -> 46.dp
+            lineCount >= 100 -> 38.dp
+            else -> 32.dp
+          }
+        Box(
           modifier =
             Modifier
+              .widthIn(min = gutterMinWidth)
               .background(palette.editorGutterBg)
-              .padding(top = 8.dp, bottom = 12.dp),
-          horizontalAlignment = Alignment.End,
+              .drawBehind {
+                val y = topPaddingPx + (activeLine - 1).coerceAtLeast(0) * lineHeightPx
+                if (y < size.height) {
+                  drawRect(
+                    color = palette.editorActiveLineBg,
+                    topLeft = Offset(0f, y),
+                    size = Size(size.width, lineHeightPx),
+                  )
+                }
+              }
+              .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 12.dp),
+          contentAlignment = Alignment.TopEnd,
         ) {
-          codeLines.forEachIndexed { idx, lineText ->
-            val lineNum = idx + 1
-            val isCurrent = lineNum == activeLine
-            val hasBlockOpen = lineText.trimEnd().endsWith("{")
-            Row(
-              modifier =
-                Modifier
-                  .background(if (isCurrent) palette.editorActiveLineBg else palette.editorGutterBg)
-                  .padding(start = 10.dp, end = 6.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-              Text(
-                text = lineNum.toString(),
-                style =
-                  TextStyle(
-                    fontFamily = JetBrainsMono,
-                    fontSize = fontSize,
-                    lineHeight = lineHeight,
-                    color = if (isCurrent) palette.textPrimary else palette.textMuted,
-                    fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-                    textAlign = TextAlign.End,
-                  ),
-              )
-              Text(
-                text = if (hasBlockOpen) "▾" else " ",
-                style =
-                  TextStyle(
-                    fontFamily = JetBrainsMono,
-                    fontSize = 10.sp,
-                    lineHeight = lineHeight,
-                    color = palette.textMuted,
-                  ),
-              )
-            }
-          }
+          Text(
+            text = gutterAnnotated,
+            style =
+              TextStyle(
+                fontFamily = JetBrainsMono,
+                fontSize = fontSize,
+                lineHeight = lineHeight,
+                color = palette.textMuted,
+                textAlign = TextAlign.End,
+              ),
+          )
         }
 
-        VerticalDivider(color = palette.border, thickness = 1.dp)
+        VerticalDivider(color = palette.border.copy(alpha = 0.7f), thickness = 1.dp)
       }
 
       val editorModifier =
         Modifier
           .weight(1f)
           .fillMaxHeight()
+          .drawBehind {
+            if (!uiState.editorSettings.wordWrap) {
+              val y = topPaddingPx + (activeLine - 1).coerceAtLeast(0) * lineHeightPx
+              if (y < size.height) {
+                drawRect(
+                  color = palette.editorActiveLineBg.copy(alpha = 0.55f),
+                  topLeft = Offset(0f, y),
+                  size = Size(size.width, lineHeightPx),
+                )
+              }
+            }
+          }
           .then(
             if (!uiState.editorSettings.wordWrap) Modifier.horizontalScroll(horizontalScroll)
             else Modifier
@@ -521,7 +572,95 @@ fun CodeEditorPane(
       )
     }
 
-    // Workers Autocomplete Strip + Compact Coding Symbol Accessory Bar
+    // Rebuilt Bottom Coding Dock: Compact Status Line + Autocomplete + Ergonomic Key Rail
+    HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
+    Row(
+      modifier =
+        Modifier
+          .fillMaxWidth()
+          .height(26.dp)
+          .background(palette.chromeBg)
+          .padding(horizontal = 10.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      Text(
+        text = "Ln $activeLine, Col $activeCol",
+        fontFamily = JetBrainsMono,
+        fontSize = 10.sp,
+        color = palette.textSecondary,
+        maxLines = 1,
+      )
+      Text("·", fontSize = 10.sp, color = palette.textMuted)
+      Text(
+        text =
+          when (activeFile.language) {
+            WorkerLanguage.JAVASCRIPT -> "JS"
+            WorkerLanguage.TYPESCRIPT -> "TS"
+            WorkerLanguage.JSON -> "JSON"
+            WorkerLanguage.TEXT -> "TXT"
+          },
+        fontFamily = JetBrainsMono,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = palette.textMuted,
+        maxLines = 1,
+      )
+      Text("·", fontSize = 10.sp, color = palette.textMuted)
+      Text(
+        text = "$lineCount lines",
+        fontFamily = JetBrainsMono,
+        fontSize = 10.sp,
+        color = palette.textMuted,
+        maxLines = 1,
+      )
+      Spacer(Modifier.weight(1f))
+
+      val errCount = uiState.diagnostics.count { it.severity == DiagnosticSeverity.ERROR }
+      val warnCount = uiState.diagnostics.size - errCount
+      Row(
+        modifier =
+          Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(onClick = onOpenProblems)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+      ) {
+        Icon(
+          imageVector =
+            if (uiState.diagnostics.isEmpty()) Icons.Outlined.CheckCircleOutline
+            else Icons.Outlined.WarningAmber,
+          contentDescription = "Diagnostics",
+          tint =
+            when {
+              errCount > 0 -> MaterialTheme.colorScheme.error
+              warnCount > 0 -> AmberWarn
+              else -> EmeraldLive
+            },
+          modifier = Modifier.size(12.dp),
+        )
+        Text(
+          text =
+            when {
+              errCount > 0 -> "$errCount err"
+              warnCount > 0 -> "$warnCount warn"
+              else -> "Clean"
+            },
+          fontFamily = JetBrainsMono,
+          fontSize = 10.sp,
+          fontWeight = FontWeight.Medium,
+          color =
+            when {
+              errCount > 0 -> MaterialTheme.colorScheme.error
+              warnCount > 0 -> AmberWarn
+              else -> palette.textSecondary
+            },
+          maxLines = 1,
+        )
+      }
+    }
+
     if (!activeFile.isVirtualReadOnly) {
       if (activeFile.language in setOf(WorkerLanguage.JAVASCRIPT, WorkerLanguage.TYPESCRIPT, WorkerLanguage.JSON)) {
         val cursorPos = tfv.selection.start.coerceIn(0, tfv.text.length)
@@ -535,11 +674,12 @@ fun CodeEditorPane(
             WranglerSyncParser.buildWorkersCompletions(uiState.workspace, activeFile.language, wordBeforeCursor)
           }
         if (completions.isNotEmpty()) {
-          HorizontalDivider(color = palette.border)
+          HorizontalDivider(color = palette.border.copy(alpha = 0.4f))
           Row(
             modifier =
               Modifier
                 .fillMaxWidth()
+                .height(34.dp)
                 .background(palette.chromeBg)
                 .horizontalScroll(rememberScrollState())
                 .padding(horizontal = 8.dp, vertical = 4.dp),
@@ -558,16 +698,27 @@ fun CodeEditorPane(
                     onInsertText(sug.insertText, sug.cursorBackOffset)
                   }
                 },
-                shape = RoundedCornerShape(8.dp),
-                color = palette.chromePill,
+                shape = RoundedCornerShape(7.dp),
+                color = palette.chromeSurface,
+                border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
               ) {
                 Row(
-                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                   verticalAlignment = Alignment.CenterVertically,
                   horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
-                  Text(sug.label, style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold), color = palette.activePillFg)
-                  Text(sug.detail, style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+                  Text(
+                    text = sug.label,
+                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
+                    color = palette.activePillFg,
+                    maxLines = 1,
+                  )
+                  Text(
+                    text = sug.detail,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.textMuted,
+                    maxLines = 1,
+                  )
                 }
               }
             }
@@ -575,36 +726,54 @@ fun CodeEditorPane(
         }
       }
 
-      HorizontalDivider(color = palette.border)
+      HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
       Row(
         modifier =
           Modifier
             .fillMaxWidth()
+            .height(42.dp)
             .background(palette.chromeSurface)
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+            .padding(horizontal = 6.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
       ) {
-        IconButton(onClick = onUndo, modifier = Modifier.size(34.dp).testTag("editor_undo")) {
-          Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = "Undo", tint = palette.textSecondary, modifier = Modifier.size(17.dp))
+        // Sticky Undo / Redo group on the left
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+          IconButton(onClick = onUndo, modifier = Modifier.size(34.dp).testTag("editor_undo")) {
+            Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = "Undo", tint = palette.textSecondary, modifier = Modifier.size(17.dp))
+          }
+          IconButton(onClick = onRedo, modifier = Modifier.size(34.dp).testTag("editor_redo")) {
+            Icon(Icons.AutoMirrored.Outlined.Redo, contentDescription = "Redo", tint = palette.textSecondary, modifier = Modifier.size(17.dp))
+          }
         }
-        IconButton(onClick = onRedo, modifier = Modifier.size(34.dp).testTag("editor_redo")) {
-          Icon(Icons.AutoMirrored.Outlined.Redo, contentDescription = "Redo", tint = palette.textSecondary, modifier = Modifier.size(17.dp))
+
+        VerticalDivider(
+          color = palette.border.copy(alpha = 0.55f),
+          modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp),
+        )
+
+        // Scrollable tactile coding key rail
+        Row(
+          modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+          horizontalArrangement = Arrangement.spacedBy(5.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          AccessoryKey("TAB") { onInsertTab() }
+          AccessoryKey("//") { onToggleComment() }
+          AccessoryKey("{ }") { onInsertText("{}", 1) }
+          AccessoryKey("( )") { onInsertText("()", 1) }
+          AccessoryKey("[ ]") { onInsertText("[]", 1) }
+          AccessoryKey("=>") { onInsertText(" => ", 0) }
+          AccessoryKey(";") { onInsertText(";", 0) }
+          AccessoryKey(":") { onInsertText(": ", 0) }
+          AccessoryKey("\"") { onInsertText("\"\"", 1) }
+          AccessoryKey("'") { onInsertText("''", 1) }
+          AccessoryKey("`") { onInsertText("``", 1) }
+          AccessoryKey("=") { onInsertText(" = ", 0) }
+          AccessoryKey(".") { onInsertText(".", 0) }
         }
-        AccessoryKey("TAB") { onInsertTab() }
-        AccessoryKey("//") { onToggleComment() }
-        AccessoryKey("{ }") { onInsertText("{}", 1) }
-        AccessoryKey("( )") { onInsertText("()", 1) }
-        AccessoryKey("[ ]") { onInsertText("[]", 1) }
-        AccessoryKey("=>") { onInsertText(" => ", 0) }
-        AccessoryKey(";") { onInsertText(";", 0) }
-        AccessoryKey(":") { onInsertText(": ", 0) }
-        AccessoryKey("\"") { onInsertText("\"\"", 1) }
-        AccessoryKey("'") { onInsertText("''", 1) }
-        AccessoryKey("`") { onInsertText("``", 1) }
-        AccessoryKey("=") { onInsertText(" = ", 0) }
-        AccessoryKey(".") { onInsertText(".", 0) }
       }
     }
   }
@@ -617,13 +786,22 @@ private fun AccessoryKey(label: String, onClick: () -> Unit) {
     onClick = onClick,
     shape = RoundedCornerShape(8.dp),
     color = palette.chromePill,
+    border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
   ) {
-    Text(
-      text = label,
-      style = MaterialTheme.typography.labelMedium,
-      color = palette.textPrimary,
-      modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-    )
+    Box(
+      modifier = Modifier.height(30.dp).padding(horizontal = 10.dp),
+      contentAlignment = Alignment.Center,
+    ) {
+      Text(
+        text = label,
+        fontFamily = JetBrainsMono,
+        fontSize = 11.5.sp,
+        fontWeight = FontWeight.Medium,
+        color = palette.textPrimary,
+        maxLines = 1,
+        softWrap = false,
+      )
+    }
   }
 }
 

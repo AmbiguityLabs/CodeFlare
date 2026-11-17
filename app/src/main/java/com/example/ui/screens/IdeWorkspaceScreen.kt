@@ -55,9 +55,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -92,6 +89,8 @@ import com.example.ui.components.CodeEditorPane
 import com.example.ui.components.CommandPaletteDialog
 import com.example.ui.components.ConsoleView
 import com.example.ui.components.DeployedWorkerPreviewPane
+import com.example.ui.components.EdgeBottomDock
+import com.example.ui.components.EdgeBottomDockItem
 import com.example.ui.components.GitHubAndDiffPanel
 import com.example.ui.components.LinuxTerminalPane
 import com.example.ui.components.LiveTailView
@@ -834,77 +833,52 @@ fun IdeWorkspaceScreen(
             }
           }
 
-          // Clean 4-Destination Bottom Navigation Bar
-          HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
-          NavigationBar(
-            containerColor = palette.chromeBg,
-            tonalElevation = 0.dp,
-            modifier = Modifier.height(62.dp),
-          ) {
-            val navColors =
-              NavigationBarItemDefaults.colors(
-                selectedIconColor = palette.activePillFg,
-                selectedTextColor = palette.activePillFg,
-                indicatorColor = palette.activePillBg,
-                unselectedIconColor = palette.textSecondary,
-                unselectedTextColor = palette.textSecondary,
-              )
-
-            NavigationBarItem(
-              selected = uiState.projectMode == ProjectMode.CODE,
-              onClick = { viewModel.setProjectMode(ProjectMode.CODE) },
-              icon = { Icon(Icons.Outlined.Code, contentDescription = "Code") },
-              label = { Text("Code", fontSize = 11.sp) },
-              colors = navColors,
-              modifier = Modifier.testTag("project_nav_code"),
-            )
-
-            NavigationBarItem(
-              selected = uiState.projectMode == ProjectMode.TEST,
-              onClick = { viewModel.setProjectMode(ProjectMode.TEST) },
-              icon = { Icon(Icons.Outlined.PlayArrow, contentDescription = "Test") },
-              label = { Text("Test", fontSize = 11.sp) },
-              colors = navColors,
-              modifier = Modifier.testTag("project_nav_test"),
-            )
-
-            NavigationBarItem(
-              selected = uiState.projectMode == ProjectMode.CONFIG,
-              onClick = { viewModel.setProjectMode(ProjectMode.CONFIG) },
-              icon = { Icon(Icons.Outlined.Tune, contentDescription = "Config") },
-              label = { Text("Config", fontSize = 11.sp) },
-              colors = navColors,
-              modifier = Modifier.testTag("project_nav_config"),
-            )
-
-            NavigationBarItem(
-              selected = uiState.projectMode == ProjectMode.CONSOLE,
-              onClick = { viewModel.setProjectMode(ProjectMode.CONSOLE) },
-              icon = {
-                Box {
-                  Icon(Icons.Outlined.Terminal, contentDescription = "Console")
-                  if (uiState.isTailRunning || uiState.diagnostics.isNotEmpty()) {
-                    Box(
-                      modifier =
-                        Modifier
-                          .size(7.dp)
-                          .align(Alignment.TopEnd)
-                          .clip(CircleShape)
-                          .background(if (uiState.isTailRunning) EmeraldLive else AmberWarn),
-                    )
-                  }
-                }
-              },
-              label = { Text("Console", fontSize = 11.sp) },
-              colors = navColors,
-              modifier = Modifier.testTag("project_nav_console"),
-            )
-          }
+          // Sleek 4-Destination Bottom Dock
+          EdgeBottomDock(
+            items =
+              listOf(
+                EdgeBottomDockItem(
+                  label = "Code",
+                  icon = Icons.Outlined.Code,
+                  selected = uiState.projectMode == ProjectMode.CODE,
+                  testTag = "project_nav_code",
+                  onClick = { viewModel.setProjectMode(ProjectMode.CODE) },
+                ),
+                EdgeBottomDockItem(
+                  label = "Test",
+                  icon = Icons.Outlined.PlayArrow,
+                  selected = uiState.projectMode == ProjectMode.TEST,
+                  testTag = "project_nav_test",
+                  onClick = { viewModel.setProjectMode(ProjectMode.TEST) },
+                ),
+                EdgeBottomDockItem(
+                  label = "Config",
+                  icon = Icons.Outlined.Tune,
+                  selected = uiState.projectMode == ProjectMode.CONFIG,
+                  testTag = "project_nav_config",
+                  onClick = { viewModel.setProjectMode(ProjectMode.CONFIG) },
+                ),
+                EdgeBottomDockItem(
+                  label = "Console",
+                  icon = Icons.Outlined.Terminal,
+                  selected = uiState.projectMode == ProjectMode.CONSOLE,
+                  testTag = "project_nav_console",
+                  badgeText =
+                    when {
+                      uiState.isTailRunning -> "LIVE"
+                      uiState.diagnostics.isNotEmpty() -> "${uiState.diagnostics.size}"
+                      else -> null
+                    },
+                  badgeColor = if (uiState.isTailRunning) EmeraldLive else AmberWarn,
+                  onClick = { viewModel.setProjectMode(ProjectMode.CONSOLE) },
+                ),
+              ),
+          )
         }
 
         SnackbarHost(
           hostState = snackbarHostState,
-          modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 68.dp),
+          modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 62.dp),
         )
       }
     }

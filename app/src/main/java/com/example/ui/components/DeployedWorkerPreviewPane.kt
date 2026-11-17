@@ -12,7 +12,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -38,7 +38,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
-import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Http
@@ -62,6 +61,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -81,7 +81,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.local.WorkerTestRunRecord
-import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
@@ -117,6 +116,10 @@ fun DeployedWorkerPreviewPane(
   var canGoForward by remember { mutableStateOf(false) }
   var loadedUrl by remember { mutableStateOf("") }
   var lastLoadedNonce by remember { mutableStateOf(-1L) }
+
+  val latestPreviewUrl by rememberUpdatedState(uiState.previewUrl)
+  val latestOnUrlChange by rememberUpdatedState(onUrlChange)
+  val latestOnAppendConsole by rememberUpdatedState(onAppendConsoleEntry)
 
   fun normalizeWorkerUrl(raw: String): String {
     val trimmed = raw.trim()
@@ -166,7 +169,7 @@ fun DeployedWorkerPreviewPane(
   Column(
     modifier = modifier.fillMaxSize().background(palette.chromeBg),
   ) {
-    // 1. Cloudflare-style Top Bar: Preview | HTTP + Visit + Console Toggle + Deploy
+    // 1. Cloudflare-style Top Bar: Preview | HTTP + Visit + Deploy
     Row(
       modifier =
         Modifier
@@ -391,6 +394,12 @@ fun DeployedWorkerPreviewPane(
           )
         } else {
           val initialUrl = remember(uiState.workspace?.scriptName) { normalizeWorkerUrl(uiState.previewUrl) }
+          val activeWorkerHost =
+            remember(currentTarget) {
+              runCatching { Uri.parse(currentTarget).host }.getOrNull()
+            }
+          val latestWorkerHost by rememberUpdatedState(activeWorkerHost)
+
           AndroidView(
             factory = { ctx ->
               WebView(ctx).apply {
@@ -411,8 +420,10 @@ fun DeployedWorkerPreviewPane(
                       canGoForward = view?.canGoForward() == true
                       if (!url.isNullOrBlank()) {
                         loadedUrl = url
-                        onUrlChange(url)
-                        onAppendConsoleEntry("NAV", "GET", url, null, null)
+                        if (url != latestPreviewUrl) {
+                          latestOnUrlChange(url)
+                        }
+                        latestOnAppendConsole("NAV", "GET", url, null, null)
                       }
                     }
 
@@ -422,12 +433,12 @@ fun DeployedWorkerPreviewPane(
                     ): WebResourceResponse? {
                       val reqUrl = request?.url?.toString().orEmpty()
                       if (request != null && !request.isForMainFrame && reqUrl.startsWith("http")) {
-                        val workerHost = runCatching { Uri.parse(currentTarget).host }.getOrNull()
+                        val workerHost = latestWorkerHost
                         val reqHost = request.url?.host
                         if (workerHost != null && workerHost == reqHost) {
-                          val m = request.method ?: "GET"
+                          val method = request.method ?: "GET"
                           view?.post {
-                            onAppendConsoleEntry("NET", m, reqUrl, null, null)
+                            latestOnAppendConsole("NET", method, reqUrl, null, null)
                           }
                         }
                       }
@@ -448,7 +459,7 @@ fun DeployedWorkerPreviewPane(
                     ) {
                       super.onReceivedHttpError(view, request, errorResponse)
                       if (request?.isForMainFrame == true && errorResponse != null) {
-                        onAppendConsoleEntry(
+                        latestOnAppendConsole(
                           "ERR",
                           request.method ?: "GET",
                           request.url?.toString().orEmpty(),
@@ -466,7 +477,7 @@ fun DeployedWorkerPreviewPane(
                       super.onReceivedError(view, request, error)
                       if (request?.isForMainFrame == true) {
                         val desc = error?.description?.toString() ?: "Load failed"
-                        onAppendConsoleEntry("ERR", request.method ?: "GET", "${request.url} • $desc", null, null)
+                        latestOnAppendConsole("ERR", request.method ?: "GET", "${request.url} • $desc", null, null)
                       }
                     }
                   }
@@ -480,7 +491,7 @@ fun DeployedWorkerPreviewPane(
                       consoleMessage?.let { cm ->
                         val lvl = cm.messageLevel().name
                         val kind = if (lvl == "ERROR") "ERR" else "JS"
-                        onAppendConsoleEntry(kind, "JS:$lvl", "${cm.message()} (L${cm.lineNumber()})", null, null)
+                        latestOnAppendConsole(kind, "JS:$lvl", "${cm.message()} (L${cm.lineNumber()})", null, null)
                       }
                       return true
                     }
@@ -524,51 +535,84 @@ fun DeployedWorkerPreviewPane(
       }
     }
 
-    // 4. Cloudflare-style Bottom CONSOLE Strip (timestamp + method + live URL / JS logs + Clear)
-    HorizontalDivider(color = palette.border)
+    // 4. Rebuilt Bottom CONSOLE Drawer (crisp header bar + zero-jank log stream)
+    HorizontalDivider(color = palette.border.copy(alpha = 0.55f))
     Column(
       modifier = Modifier.fillMaxWidth().background(palette.chromeSurface),
     ) {
+      val entryCount = uiState.previewConsoleEntries.size
+      val errorCount =
+        remember(uiState.previewConsoleEntries) {
+          uiState.previewConsoleEntries.count { it.kind == "ERR" || (it.statusCode != null && it.statusCode >= 400) }
+        }
+
       Row(
         modifier =
           Modifier
             .fillMaxWidth()
+            .height(36.dp)
             .clickable { onToggleConsoleExpanded() }
-            .padding(horizontal = 10.dp, vertical = 5.dp),
+            .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
       ) {
         Text(
           text = "CONSOLE",
-          style = MaterialTheme.typography.labelSmall,
+          fontFamily = JetBrainsMono,
+          fontSize = 10.5.sp,
+          letterSpacing = 0.8.sp,
           fontWeight = FontWeight.Bold,
           color = palette.textSecondary,
         )
-        if (uiState.previewConsoleEntries.isNotEmpty()) {
-          Spacer(Modifier.width(6.dp))
-          Surface(color = palette.chromePill, shape = RoundedCornerShape(999.dp)) {
+        if (entryCount > 0) {
+          Spacer(Modifier.width(7.dp))
+          Surface(
+            color = palette.chromePill,
+            shape = RoundedCornerShape(4.dp),
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
+          ) {
             Text(
-              text = "${uiState.previewConsoleEntries.size}",
+              text = "$entryCount",
+              fontFamily = JetBrainsMono,
               fontSize = 10.sp,
+              fontWeight = FontWeight.SemiBold,
               color = palette.activePillFg,
-              modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+              modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+            )
+          }
+        }
+        if (errorCount > 0) {
+          Spacer(Modifier.width(5.dp))
+          Surface(
+            color = RoseError.copy(alpha = 0.14f),
+            shape = RoundedCornerShape(4.dp),
+            border = BorderStroke(1.dp, RoseError.copy(alpha = 0.35f)),
+          ) {
+            Text(
+              text = "$errorCount ERR",
+              fontFamily = JetBrainsMono,
+              fontSize = 9.5.sp,
+              fontWeight = FontWeight.Bold,
+              color = RoseError,
+              modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
             )
           }
         }
         Spacer(Modifier.weight(1f))
-        if (uiState.previewConsoleEntries.isNotEmpty()) {
+        if (entryCount > 0) {
           Surface(
             onClick = onClearConsole,
             color = palette.chromePill,
             shape = RoundedCornerShape(6.dp),
-            modifier = Modifier.testTag("worker_preview_console_clear"),
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
+            modifier = Modifier.height(24.dp).testTag("worker_preview_console_clear"),
           ) {
             Row(
-              modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+              modifier = Modifier.padding(horizontal = 7.dp),
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.spacedBy(3.dp),
             ) {
-              Icon(Icons.Outlined.DeleteSweep, contentDescription = "Clear console", tint = palette.textSecondary, modifier = Modifier.size(13.dp))
-              Text("Clear", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+              Icon(Icons.Outlined.DeleteSweep, contentDescription = "Clear console", tint = palette.textSecondary, modifier = Modifier.size(12.dp))
+              Text("Clear", style = MaterialTheme.typography.labelSmall, fontSize = 10.5.sp, color = palette.textSecondary)
             }
           }
           Spacer(Modifier.width(6.dp))
@@ -583,33 +627,39 @@ fun DeployedWorkerPreviewPane(
         )
       }
 
-      AnimatedVisibility(visible = uiState.isPreviewConsoleExpanded) {
-        if (uiState.previewConsoleEntries.isEmpty()) {
-          Box(
-            modifier = Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 12.dp),
-            contentAlignment = Alignment.CenterStart,
-          ) {
-            Text(
-              text = "Interact with your deployed Worker preview or send an HTTP test to inspect live requests & console output.",
-              style = MaterialTheme.typography.labelSmall,
-              color = palette.textMuted,
-              maxLines = 2,
-              overflow = TextOverflow.Ellipsis,
-            )
-          }
-        } else {
-          LazyColumn(
-            modifier = Modifier.fillMaxWidth().heightIn(min = 68.dp, max = 124.dp).padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
-          ) {
-            items(uiState.previewConsoleEntries, key = { it.id }) { entry ->
-              PreviewConsoleRow(
-                entry = entry,
-                onCopy = {
-                  clipboard.setText(AnnotatedString("${entry.timestamp} ${entry.methodOrLevel} ${entry.message}"))
-                  onNotifyStatus("Copied console entry")
-                },
+      if (uiState.isPreviewConsoleExpanded) {
+        HorizontalDivider(color = palette.border.copy(alpha = 0.35f))
+        Box(
+          modifier = Modifier.fillMaxWidth().background(palette.editorBg),
+        ) {
+          if (uiState.previewConsoleEntries.isEmpty()) {
+            Box(
+              modifier = Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 12.dp),
+              contentAlignment = Alignment.CenterStart,
+            ) {
+              Text(
+                text = "Load a Worker URL or run an HTTP test to inspect live requests & console logs.",
+                fontFamily = JetBrainsMono,
+                fontSize = 10.5.sp,
+                color = palette.textMuted,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
               )
+            }
+          } else {
+            LazyColumn(
+              modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp, max = 148.dp).padding(horizontal = 6.dp, vertical = 4.dp),
+              verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+              items(uiState.previewConsoleEntries, key = { it.id }) { entry ->
+                PreviewConsoleRow(
+                  entry = entry,
+                  onCopy = {
+                    clipboard.setText(AnnotatedString("${entry.timestamp} ${entry.methodOrLevel} ${entry.message}"))
+                    onNotifyStatus("Copied console entry")
+                  },
+                )
+              }
             }
           }
         }
@@ -628,34 +678,43 @@ private fun PreviewConsoleRow(
     when {
       entry.kind == "ERR" || (entry.statusCode != null && entry.statusCode >= 400) -> RoseError
       entry.kind == "DEPLOY" -> EmeraldLive
-      else -> AmberWarn
+      else -> palette.activePillFg
     }
   Row(
     modifier =
       Modifier
         .fillMaxWidth()
-        .clip(RoundedCornerShape(6.dp))
+        .clip(RoundedCornerShape(5.dp))
         .clickable(onClick = onCopy)
-        .padding(horizontal = 6.dp, vertical = 3.dp),
+        .padding(horizontal = 6.dp, vertical = 4.dp),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(6.dp),
   ) {
-    Icon(
-      imageVector = Icons.Outlined.Bolt,
-      contentDescription = entry.kind,
-      tint = accent,
-      modifier = Modifier.size(13.dp),
+    Box(
+      modifier =
+        Modifier
+          .width(2.5.dp)
+          .height(14.dp)
+          .clip(RoundedCornerShape(2.dp))
+          .background(accent),
     )
     Text(
       text = entry.timestamp,
-      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
+      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 10.5.sp),
       color = palette.textMuted,
     )
-    Text(
-      text = entry.methodOrLevel,
-      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.Bold),
-      color = if (entry.kind == "ERR") RoseError else palette.textPrimary,
-    )
+    Surface(
+      color = palette.chromeSurface,
+      shape = RoundedCornerShape(4.dp),
+      border = BorderStroke(1.dp, palette.border.copy(alpha = 0.45f)),
+    ) {
+      Text(
+        text = entry.methodOrLevel,
+        style = TextStyle(fontFamily = JetBrainsMono, fontSize = 10.sp, fontWeight = FontWeight.Bold),
+        color = if (entry.kind == "ERR") RoseError else palette.textPrimary,
+        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+      )
+    }
     Text(
       text = entry.message,
       style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
@@ -665,7 +724,11 @@ private fun PreviewConsoleRow(
       modifier = Modifier.weight(1f),
     )
     entry.statusCode?.let { code ->
-      Surface(color = accent.copy(alpha = 0.16f), shape = RoundedCornerShape(4.dp)) {
+      Surface(
+        color = accent.copy(alpha = 0.14f),
+        shape = RoundedCornerShape(4.dp),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.35f)),
+      ) {
         Text(
           text = "$code",
           style = TextStyle(fontFamily = JetBrainsMono, fontSize = 10.sp, fontWeight = FontWeight.Bold),
