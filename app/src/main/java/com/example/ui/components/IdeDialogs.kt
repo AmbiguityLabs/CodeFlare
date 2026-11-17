@@ -239,52 +239,33 @@ fun NewWorkerDialog(
 @Composable
 fun NewModuleFileDialog(
   initialPrefix: String = "",
-  defaultRunLocally: Boolean = false,
   onDismiss: () -> Unit,
-  onCreate: (fileName: String, runLocally: Boolean) -> Unit,
+  onCreate: (fileName: String) -> Unit,
 ) {
   val defaultName =
     if (initialPrefix.isBlank()) "src/script.js"
     else "${initialPrefix.trimEnd('/')}/script.js"
   var fileName by remember(initialPrefix) { mutableStateOf(defaultName) }
-  var runLocally by remember(defaultRunLocally) { mutableStateOf(defaultRunLocally) }
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    title = { Text("New Script / File") },
+    title = { Text("New File") },
     text = {
-      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        OutlinedTextField(
-          value = fileName,
-          onValueChange = { fileName = it },
-          label = { Text("File path (.js, .ts, .html, .sh, .json)") },
-          singleLine = true,
-          shape = RoundedCornerShape(14.dp),
-          modifier = Modifier.fillMaxWidth().testTag("new_module_filename_input"),
-        )
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-          Column(modifier = Modifier.weight(1f)) {
-            Text("Run locally right after create", style = MaterialTheme.typography.bodyMedium)
-            Text(
-              text = "Test in local V8/shell without deploying to Cloudflare",
-              style = MaterialTheme.typography.labelSmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-          }
-          Switch(checked = runLocally, onCheckedChange = { runLocally = it })
-        }
-      }
+      OutlinedTextField(
+        value = fileName,
+        onValueChange = { fileName = it },
+        label = { Text("File path (.js, .ts, .html, .json, .toml)") },
+        singleLine = true,
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier.fillMaxWidth().testTag("new_module_filename_input"),
+      )
     },
     confirmButton = {
       Button(
-        onClick = { onCreate(fileName, runLocally) },
+        onClick = { onCreate(fileName) },
         enabled = fileName.trim().isNotEmpty(),
       ) {
-        Text(if (runLocally) "Create & Run" else "Add File")
+        Text("Add File")
       }
     },
     dismissButton = {

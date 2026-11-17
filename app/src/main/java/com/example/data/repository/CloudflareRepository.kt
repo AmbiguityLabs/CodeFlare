@@ -1555,7 +1555,7 @@ class CloudflareRepository(
         headersMap.forEach { (k, v) -> if (k.isNotBlank()) reqBuilder.header(k.trim(), v.trim()) }
         val upperMethod = method.uppercase()
         val reqBody =
-          if (upperMethod in listOf("POST", "PUT", "PATCH")) {
+          if (upperMethod in listOf("POST", "PUT", "PATCH") || (upperMethod == "DELETE" && bodyText.isNotEmpty())) {
             val media =
               if (headersMap.keys.any { it.equals("Content-Type", ignoreCase = true) }) {
                 headersMap.entries.first { it.key.equals("Content-Type", ignoreCase = true) }.value.toMediaType()

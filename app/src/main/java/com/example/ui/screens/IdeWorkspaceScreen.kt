@@ -8,6 +8,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -25,19 +26,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Http
 import androidx.compose.material.icons.outlined.Menu
-import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Sensors
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.VerticalSplit
+import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
@@ -103,7 +106,6 @@ fun IdeWorkspaceScreen(
   var showNewWorkerDialog by remember { mutableStateOf(false) }
   var pickedNewWorkerUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
   var newFileDialogPrefix by remember { mutableStateOf<String?>(null) }
-  var newFileAutoRun by remember { mutableStateOf(false) }
   var newDirDialogBase by remember { mutableStateOf<String?>(null) }
   var showCommandPalette by remember { mutableStateOf(false) }
   var pendingUploadUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
@@ -124,13 +126,6 @@ fun IdeWorkspaceScreen(
       }
     }
 
-  val importAndRunLauncher =
-    rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-      if (uris.isNotEmpty()) {
-        viewModel.importAndRunFilesDirectly(uris)
-      }
-    }
-
   val newWorkerFilesLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
       if (uris.isNotEmpty()) {
@@ -142,6 +137,20 @@ fun IdeWorkspaceScreen(
     rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
       if (uri != null) {
         viewModel.exportActiveFileToUri(uri)
+      }
+    }
+
+  val exportWorkspaceBundleLauncher =
+    rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+      if (uri != null) {
+        viewModel.exportWorkspaceBundleToUri(uri)
+      }
+    }
+
+  val importWorkspaceBundleLauncher =
+    rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+      if (uri != null) {
+        viewModel.importWorkspaceBundleFromUri(uri)
       }
     }
 
@@ -168,14 +177,16 @@ fun IdeWorkspaceScreen(
 
   val triggerSingleUpload = { singleFileUploadLauncher.launch(arrayOf("*/*")) }
   val triggerBatchUpload = { batchFileUploadLauncher.launch(arrayOf("*/*")) }
-  val triggerImportAndRun = { importAndRunLauncher.launch(arrayOf("*/*")) }
-  val triggerCreateAndRun = {
-    newFileAutoRun = true
-    newFileDialogPrefix = ""
-  }
   val triggerExportActiveFile = {
     val fileName = uiState.activeFile?.fileName ?: "index.js"
     exportFileLauncher.launch(fileName)
+  }
+  val triggerExportWorkspaceBundle = {
+    val slug = (uiState.workspace?.scriptName ?: "worker").replace(Regex("[^a-zA-Z0-9._-]"), "-")
+    exportWorkspaceBundleLauncher.launch("$slug-ram-bundle.json")
+  }
+  val triggerImportWorkspaceBundle = {
+    importWorkspaceBundleLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
   }
 
   LaunchedEffect(uiState.statusMessage) {
@@ -223,15 +234,10 @@ fun IdeWorkspaceScreen(
   newFileDialogPrefix?.let { prefix ->
     NewModuleFileDialog(
       initialPrefix = prefix,
-      defaultRunLocally = newFileAutoRun,
-      onDismiss = {
+      onDismiss = { newFileDialogPrefix = null },
+      onCreate = { path ->
         newFileDialogPrefix = null
-        newFileAutoRun = false
-      },
-      onCreate = { path, runLocally ->
-        newFileDialogPrefix = null
-        newFileAutoRun = false
-        viewModel.addModuleFile(path, autoRunLocally = runLocally)
+        viewModel.addModuleFile(path)
       },
     )
   }
@@ -275,26 +281,35 @@ fun IdeWorkspaceScreen(
   if (showCommandPalette) {
     val commands =
       listOf(
-        PaletteCommand("Import File & Run Locally (No Deploy)", "Open a local script & execute immediately") {
-          triggerImportAndRun()
+        PaletteCommand("Open WorkerTestWindow", "Test live deployed Worker URL with methods, headers, body & timing") {
+          viewModel.openWorkerTestWindow(maximizeWindow = true)
         },
-        PaletteCommand("Create & Run Script Locally", "Write a new script and preview result before deploying") {
-          triggerCreateAndRun()
+        PaletteCommand("Deployed Worker Preview Window", "Live WebView + HTTP tester + console for deployed Worker") {
+          viewModel.openDeployedWorkerPreview(maximizeWindow = true)
         },
-        PaletteCommand("Run Active Script Locally", "Execute unsaved buffer in V8/shell right now") {
-          viewModel.runActiveFileLocally()
-        },
-        PaletteCommand("Deploy Worker to Cloudflare", "Publish all module edits & deletions live") {
+        PaletteCommand("Export / Deploy Worker to Cloudflare", "Publish all local RAM edits, bindings & deletions live") {
           viewModel.deployActiveWorker()
+        },
+        PaletteCommand("Re-Import Worker from Cloudflare", "Discard local RAM edits and pull fresh Worker code from Cloudflare") {
+          viewModel.reimportActiveWorkerFromCloudflare()
+        },
+        PaletteCommand("Revert Workspace to Imported Baseline", "Restore workspace files in RAM back to imported baseline") {
+          viewModel.revertWorkspaceToImportedBaseline()
+        },
+        PaletteCommand("Export RAM Workspace Bundle (.json)", "Save workspace files and metadata as a local JSON bundle") {
+          if (uiState.workspace != null) triggerExportWorkspaceBundle()
+        },
+        PaletteCommand("Import Workspace Bundle (.json)", "Load saved workspace JSON bundle into on-device RAM DB") {
+          triggerImportWorkspaceBundle()
         },
         PaletteCommand("Create New Worker", "Scaffold from template or upload local files") {
           showNewWorkerDialog = true
         },
         PaletteCommand("Upload Single File to Worker", "Pick one local script/asset file via Android picker") {
-          if (uiState.workspace != null) triggerSingleUpload() else triggerImportAndRun()
+          if (uiState.workspace != null) triggerSingleUpload() else showNewWorkerDialog = true
         },
         PaletteCommand("Batch Upload Multiple Files", "Import multiple module scripts at once into Worker") {
-          if (uiState.workspace != null) triggerBatchUpload() else triggerImportAndRun()
+          if (uiState.workspace != null) triggerBatchUpload() else showNewWorkerDialog = true
         },
         PaletteCommand("Export Active File", "Save current script out to device storage") {
           if (uiState.activeFile != null) triggerExportActiveFile()
@@ -359,16 +374,9 @@ fun IdeWorkspaceScreen(
         onShowNewWorkerDialog = { showNewWorkerDialog = true },
         onDeleteWorker = viewModel::deleteWorker,
         onOpenFile = { path -> viewModel.openFileTab(path, recordHistory = true) },
-        onRunFileLocally = { path ->
-          viewModel.openFileTab(path, recordHistory = true)
-          viewModel.runActiveFileLocally(path)
-        },
-        onShowNewFileDialog = { prefix ->
-          newFileAutoRun = false
-          newFileDialogPrefix = prefix
-        },
+        onOpenWorkerPreview = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
+        onShowNewFileDialog = { prefix -> newFileDialogPrefix = prefix },
         onShowNewDirectoryDialog = { base -> newDirDialogBase = base },
-        onImportAndRunFile = triggerImportAndRun,
         onUploadSingleFile = triggerSingleUpload,
         onUploadBatchFiles = triggerBatchUpload,
         onExportActiveFile = triggerExportActiveFile,
@@ -376,6 +384,10 @@ fun IdeWorkspaceScreen(
         onRequestRenameModuleFile = { path -> pendingRenamePath = path },
         onSetEntryModule = viewModel::setEntryModule,
         onDeployActiveWorker = viewModel::deployActiveWorker,
+        onReimportActiveWorker = viewModel::reimportActiveWorkerFromCloudflare,
+        onRevertWorkspaceToImported = viewModel::revertWorkspaceToImportedBaseline,
+        onExportWorkspaceBundle = triggerExportWorkspaceBundle,
+        onImportWorkspaceBundle = triggerImportWorkspaceBundle,
         onInsertSnippet = { snippet -> viewModel.insertTextAtCursor(snippet, 0) },
         onJumpToLine = viewModel::jumpToLine,
         onSearchQueryChange = viewModel::setSearchQuery,
@@ -560,12 +572,24 @@ fun IdeWorkspaceScreen(
 
             if (uiState.workspace != null) {
               IconButton(
-                onClick = { viewModel.runActiveFileLocally() },
-                modifier = Modifier.size(38.dp).testTag("top_run_script_button"),
+                onClick = { viewModel.openWorkerTestWindow(maximizeWindow = true) },
+                modifier = Modifier.size(38.dp).testTag("top_worker_test_button"),
               ) {
                 Icon(
-                  imageVector = Icons.Outlined.PlayArrow,
-                  contentDescription = "Run active script locally without deploying",
+                  imageVector = Icons.Outlined.Http,
+                  contentDescription = "Open WorkerTestWindow",
+                  tint = palette.activePillFg,
+                  modifier = Modifier.size(20.dp),
+                )
+              }
+
+              IconButton(
+                onClick = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
+                modifier = Modifier.size(38.dp).testTag("top_worker_preview_button"),
+              ) {
+                Icon(
+                  imageVector = Icons.Outlined.Visibility,
+                  contentDescription = "Open deployed Worker preview & HTTP tester",
                   tint = palette.activePillFg,
                   modifier = Modifier.size(21.dp),
                 )
@@ -610,7 +634,7 @@ fun IdeWorkspaceScreen(
                         modifier = Modifier.size(16.dp),
                       )
                       Text(
-                        text = if (uiState.hasUnsavedChanges) "Deploy*" else "Deploy",
+                        text = if (uiState.hasUnsavedChanges) "Export*" else "Deploy",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = if (uiState.hasUnsavedChanges) palette.activePillFg else palette.textPrimary,
@@ -642,11 +666,16 @@ fun IdeWorkspaceScreen(
                   uiState = uiState,
                   onSelectTab = { path -> viewModel.openFileTab(path, recordHistory = true) },
                   onCloseTab = viewModel::closeFileTab,
+                  onSelectAdjacentTab = viewModel::selectAdjacentTab,
+                  onCloseOtherTabs = viewModel::closeOtherTabs,
+                  onCloseSavedTabs = viewModel::closeSavedTabs,
+                  onCloseAllTabs = viewModel::closeAllTabs,
+                  onSetEntryModule = viewModel::setEntryModule,
+                  onRevertFile = viewModel::revertFile,
                   onNavigateTabBack = viewModel::navigateTabBack,
                   onNavigateTabForward = viewModel::navigateTabForward,
-                  onImportAndRunFile = triggerImportAndRun,
-                  onCreateAndRunFile = triggerCreateAndRun,
-                  onRunActiveFile = { viewModel.runActiveFileLocally() },
+                  onOpenWorkerPreview = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
+                  onCreateNewFile = { newFileDialogPrefix = "" },
                   onCodeChange = viewModel::updateEditorValue,
                   onInsertText = viewModel::insertTextAtCursor,
                   onInsertTab = viewModel::insertTab,
@@ -682,10 +711,17 @@ fun IdeWorkspaceScreen(
                   onSelectTab = { viewModel.toggleBottomPanel(it) },
                   onToggleExpand = viewModel::toggleBottomPanelExpanded,
                   onClose = viewModel::hideBottomPanel,
-                  onRunActiveFileLocally = { viewModel.runActiveFileLocally() },
-                  onImportAndRunFile = triggerImportAndRun,
-                  onCreateAndRunFile = triggerCreateAndRun,
-                  onUpdateRunRequest = viewModel::updateRunRequest,
+                  onPreviewSelectModeTab = viewModel::setPreviewModeTab,
+                  onPreviewUrlChange = viewModel::setPreviewUrl,
+                  onReloadPreview = viewModel::reloadDeployedWorkerPreview,
+                  onTogglePreviewConsoleExpanded = viewModel::togglePreviewConsoleExpanded,
+                  onUpdatePreviewHttp = viewModel::updatePreviewHttpRequest,
+                  onSendPreviewHttp = { viewModel.sendPreviewHttpTest() },
+                  onSelectWorkerTestHistoryRun = viewModel::selectWorkerTestHistoryRun,
+                  onClearWorkerTestHistory = viewModel::clearWorkerTestHistory,
+                  onAppendPreviewConsole = viewModel::appendPreviewConsoleEntry,
+                  onClearPreviewConsole = viewModel::clearPreviewConsole,
+                  onDeployActiveWorker = viewModel::deployActiveWorker,
                   onUpdateApiRequest = viewModel::updateApiRequest,
                   onUpdateApiEnvVars = viewModel::updateApiEnvVars,
                   onRunApiRequest = { viewModel.runApiTesterRequest() },
@@ -709,28 +745,29 @@ fun IdeWorkspaceScreen(
             }
           }
 
-          // Bottom Action Bar (Run, API, Terminal, Tail, Search, Problems, Prefs)
+          // Bottom Action Bar (Preview, Test, API, Terminal, Tail, Search, Problems, Prefs)
           HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
           Row(
             modifier =
               Modifier
                 .fillMaxWidth()
                 .background(palette.chromeBg)
-                .padding(horizontal = 4.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically,
           ) {
             BottomBarToolButton(
-              icon = Icons.Outlined.PlayArrow,
-              label = "Run",
-              active = uiState.showBottomPanel && uiState.activeBottomTab == BottomPanelTab.RUN_PREVIEW,
-              onClick = {
-                if (uiState.activeFile?.isVirtualReadOnly == false) {
-                  viewModel.runActiveFileLocally()
-                } else {
-                  viewModel.toggleBottomPanel(BottomPanelTab.RUN_PREVIEW)
-                }
-              },
+              icon = Icons.Outlined.Visibility,
+              label = "Preview",
+              active = uiState.showBottomPanel && uiState.activeBottomTab == BottomPanelTab.WORKER_PREVIEW,
+              onClick = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
+            )
+            BottomBarToolButton(
+              icon = Icons.Outlined.Http,
+              label = "Test",
+              active = uiState.showBottomPanel && uiState.activeBottomTab == BottomPanelTab.WORKER_TEST,
+              onClick = { viewModel.openWorkerTestWindow(maximizeWindow = true) },
             )
             BottomBarToolButton(
               icon = Icons.AutoMirrored.Outlined.Send,

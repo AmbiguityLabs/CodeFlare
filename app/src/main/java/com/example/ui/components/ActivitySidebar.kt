@@ -25,10 +25,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.CloudDownload
+import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.DeleteOutline
@@ -42,12 +45,15 @@ import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.MoreVert
-import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Remove
+import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.StarOutline
+import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.UploadFile
+import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -93,12 +99,15 @@ import com.example.data.remote.GitHubIssue
 import com.example.data.remote.GitHubRepo
 import com.example.data.remote.WorkerFile
 import com.example.data.security.EditorSettings
+import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.BadgeJs
 import com.example.ui.theme.BadgeJson
 import com.example.ui.theme.BadgeTs
 import com.example.ui.theme.BadgeWrangler
+import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.FolderGreen
 import com.example.ui.theme.FolderYellow
+import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.viewmodel.IdeUiState
 import com.example.ui.viewmodel.SearchMatchItem
@@ -202,10 +211,9 @@ fun ActivitySidebar(
   onShowNewWorkerDialog: () -> Unit,
   onDeleteWorker: (String) -> Unit,
   onOpenFile: (String) -> Unit,
-  onRunFileLocally: (String) -> Unit,
+  onOpenWorkerPreview: () -> Unit,
   onShowNewFileDialog: (String) -> Unit,
   onShowNewDirectoryDialog: (String) -> Unit,
-  onImportAndRunFile: () -> Unit,
   onUploadSingleFile: () -> Unit,
   onUploadBatchFiles: () -> Unit,
   onExportActiveFile: () -> Unit,
@@ -213,6 +221,10 @@ fun ActivitySidebar(
   onRequestRenameModuleFile: (String) -> Unit,
   onSetEntryModule: (String) -> Unit,
   onDeployActiveWorker: () -> Unit,
+  onReimportActiveWorker: () -> Unit,
+  onRevertWorkspaceToImported: () -> Unit,
+  onExportWorkspaceBundle: () -> Unit,
+  onImportWorkspaceBundle: () -> Unit,
   onInsertSnippet: (String) -> Unit,
   onJumpToLine: (String, Int) -> Unit,
   onSearchQueryChange: (String) -> Unit,
@@ -413,16 +425,12 @@ fun ActivitySidebar(
               onOpenFile(it)
               onCloseDrawerIfCompact()
             },
-            onRunFileLocally = {
-              onRunFileLocally(it)
+            onOpenWorkerPreview = {
+              onOpenWorkerPreview()
               onCloseDrawerIfCompact()
             },
             onShowNewFileDialog = onShowNewFileDialog,
             onShowNewDirectoryDialog = onShowNewDirectoryDialog,
-            onImportAndRunFile = {
-              onImportAndRunFile()
-              onCloseDrawerIfCompact()
-            },
             onUploadSingleFile = onUploadSingleFile,
             onUploadBatchFiles = onUploadBatchFiles,
             onExportActiveFile = onExportActiveFile,
@@ -430,6 +438,10 @@ fun ActivitySidebar(
             onRequestRenameModuleFile = onRequestRenameModuleFile,
             onSetEntryModule = onSetEntryModule,
             onDeployActiveWorker = onDeployActiveWorker,
+            onReimportActiveWorker = onReimportActiveWorker,
+            onRevertWorkspaceToImported = onRevertWorkspaceToImported,
+            onExportWorkspaceBundle = onExportWorkspaceBundle,
+            onImportWorkspaceBundle = onImportWorkspaceBundle,
             onOpenSnippets = { onSelectSection(SidebarSection.SNIPPETS) },
             onOpenSettings = { onSelectSection(SidebarSection.SETTINGS) },
           )
@@ -606,10 +618,9 @@ private fun ExplorerPanel(
   onShowNewWorkerDialog: () -> Unit,
   onDeleteWorker: (String) -> Unit,
   onOpenFile: (String) -> Unit,
-  onRunFileLocally: (String) -> Unit,
+  onOpenWorkerPreview: () -> Unit,
   onShowNewFileDialog: (String) -> Unit,
   onShowNewDirectoryDialog: (String) -> Unit,
-  onImportAndRunFile: () -> Unit,
   onUploadSingleFile: () -> Unit,
   onUploadBatchFiles: () -> Unit,
   onExportActiveFile: () -> Unit,
@@ -617,6 +628,10 @@ private fun ExplorerPanel(
   onRequestRenameModuleFile: (String) -> Unit,
   onSetEntryModule: (String) -> Unit,
   onDeployActiveWorker: () -> Unit,
+  onReimportActiveWorker: () -> Unit,
+  onRevertWorkspaceToImported: () -> Unit,
+  onExportWorkspaceBundle: () -> Unit,
+  onImportWorkspaceBundle: () -> Unit,
   onOpenSnippets: () -> Unit,
   onOpenSettings: () -> Unit,
 ) {
@@ -715,14 +730,14 @@ private fun ExplorerPanel(
             }
           }
           DropdownMenuItem(
-            text = { Text("Import & Run File (No Deploy)") },
+            text = { Text("Open Deployed Worker Preview") },
             onClick = {
               projectMenuOpen = false
-              onImportAndRunFile()
+              onOpenWorkerPreview()
             },
           )
           DropdownMenuItem(
-            text = { Text("+ New Local Script (No Deploy)") },
+            text = { Text("+ New File in Workspace") },
             onClick = {
               projectMenuOpen = false
               onShowNewFileDialog("")
@@ -745,16 +760,9 @@ private fun ExplorerPanel(
           onClick = { uploadMenuOpen = true },
           modifier = Modifier.size(36.dp).testTag("upload_files_menu_button"),
         ) {
-          Icon(Icons.Outlined.UploadFile, contentDescription = "Import or Upload Files", tint = palette.activePillFg, modifier = Modifier.size(19.dp))
+          Icon(Icons.Outlined.UploadFile, contentDescription = "Upload or Export Files", tint = palette.activePillFg, modifier = Modifier.size(19.dp))
         }
         DropdownMenu(expanded = uploadMenuOpen, onDismissRequest = { uploadMenuOpen = false }) {
-          DropdownMenuItem(
-            text = { Text("Import & Run Immediately (Local)") },
-            onClick = {
-              uploadMenuOpen = false
-              onImportAndRunFile()
-            },
-          )
           if (uiState.workspace != null) {
             DropdownMenuItem(
               text = { Text("Upload Single File to Worker") },
@@ -779,6 +787,14 @@ private fun ExplorerPanel(
                 },
               )
             }
+          } else {
+            DropdownMenuItem(
+              text = { Text("Create New Worker from Files") },
+              onClick = {
+                uploadMenuOpen = false
+                onShowNewWorkerDialog()
+              },
+            )
           }
         }
       }
@@ -865,6 +881,18 @@ private fun ExplorerPanel(
       modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp),
       verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
+      item(key = "ram_db_status_card") {
+        RamWorkspaceStatusCard(
+          uiState = uiState,
+          onDeployExport = onDeployActiveWorker,
+          onReimport = onReimportActiveWorker,
+          onRevertWorkspace = onRevertWorkspaceToImported,
+          onExportBundle = onExportWorkspaceBundle,
+          onImportBundle = onImportWorkspaceBundle,
+        )
+        Spacer(Modifier.height(6.dp))
+      }
+
       if (uiState.workspace != null) {
         items(treeRows, key = { it.id }) { entry ->
           when (entry) {
@@ -883,7 +911,7 @@ private fun ExplorerPanel(
                 onClick = { expandedFolders[entry.id] = !isExpanded },
                 onNewFileInFolder = { onShowNewFileDialog(entry.folderPath) },
                 onNewDirInFolder = { onShowNewDirectoryDialog(entry.folderPath) },
-                onRunLocallyClick = {},
+                onOpenPreviewClick = onOpenWorkerPreview,
                 onDeployClick = {},
                 onRenameClick = {},
                 onSetEntryClick = {},
@@ -908,7 +936,7 @@ private fun ExplorerPanel(
                 onClick = { onOpenFile(entry.file.path) },
                 onNewFileInFolder = { onShowNewFileDialog(parentFolder) },
                 onNewDirInFolder = { onShowNewDirectoryDialog(parentFolder) },
-                onRunLocallyClick = { onRunFileLocally(entry.file.path) },
+                onOpenPreviewClick = onOpenWorkerPreview,
                 onDeployClick = onDeployActiveWorker,
                 onRenameClick = { onRequestRenameModuleFile(entry.file.path) },
                 onSetEntryClick = { onSetEntryModule(entry.file.path) },
@@ -1006,7 +1034,7 @@ private fun TreeRowItem(
   onClick: () -> Unit,
   onNewFileInFolder: () -> Unit,
   onNewDirInFolder: () -> Unit,
-  onRunLocallyClick: () -> Unit,
+  onOpenPreviewClick: () -> Unit,
   onDeployClick: () -> Unit,
   onRenameClick: () -> Unit,
   onSetEntryClick: () -> Unit,
@@ -1171,17 +1199,15 @@ private fun TreeRowItem(
                 },
               )
             } else if (file != null) {
-              if (!file.isVirtualReadOnly) {
-                FloatingMenuRow(
-                  icon = Icons.Outlined.PlayArrow,
-                  label = "Run Locally (No Deploy)",
-                  tint = palette.activePillFg,
-                  onClick = {
-                    showContextPopup = false
-                    onRunLocallyClick()
-                  },
-                )
-              }
+              FloatingMenuRow(
+                icon = Icons.Outlined.Visibility,
+                label = "Preview Deployed Worker",
+                tint = palette.activePillFg,
+                onClick = {
+                  showContextPopup = false
+                  onOpenPreviewClick()
+                },
+              )
               FloatingMenuRow(
                 icon = Icons.Outlined.Description,
                 label = "Open in Tab",
@@ -1575,3 +1601,165 @@ private fun SettingsPanel(
     }
   }
 }
+
+@Composable
+private fun RamWorkspaceStatusCard(
+  uiState: IdeUiState,
+  onDeployExport: () -> Unit,
+  onReimport: () -> Unit,
+  onRevertWorkspace: () -> Unit,
+  onExportBundle: () -> Unit,
+  onImportBundle: () -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  val stats = uiState.ramDbStats
+  val dirtyOrPending = uiState.hasUnsavedChanges || stats.dirtyFilesCount > 0 || uiState.activeWorkspaceHasPendingConfig
+
+  Surface(
+    color = palette.chromePill.copy(alpha = 0.7f),
+    shape = RoundedCornerShape(12.dp),
+    border =
+      BorderStroke(
+        width = 1.dp,
+        color = if (dirtyOrPending) AmberWarn.copy(alpha = 0.45f) else palette.border.copy(alpha = 0.4f),
+      ),
+    modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp).testTag("ram_db_card"),
+  ) {
+    Column(
+      modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+      verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        Icon(
+          Icons.Outlined.Storage,
+          contentDescription = "On-device RAM database",
+          tint = if (dirtyOrPending) AmberWarn else EmeraldLive,
+          modifier = Modifier.size(15.dp),
+        )
+        Text(
+          text = "ON-DEVICE RAM DB",
+          style = MaterialTheme.typography.labelSmall,
+          fontWeight = FontWeight.Bold,
+          color = palette.textPrimary,
+          modifier = Modifier.weight(1f),
+        )
+        Surface(
+          color = palette.activePillBg,
+          shape = RoundedCornerShape(6.dp),
+        ) {
+          Text(
+            text = "${stats.estimatedRamKb} KB",
+            fontFamily = JetBrainsMono,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = palette.activePillFg,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+          )
+        }
+      }
+
+      Text(
+        text =
+          buildString {
+            append("${stats.workspacesInRam} ws • ${stats.totalFilesInRam} files • ${stats.dirtyFilesCount} edited")
+            if (uiState.activeWorkspaceHasPendingConfig) append(" • config*")
+          },
+        fontFamily = JetBrainsMono,
+        fontSize = 10.sp,
+        color = palette.textSecondary,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+      )
+
+      Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        if (uiState.workspace != null && !uiState.isLocalScratchpad) {
+          RamActionChip(
+            icon = Icons.Outlined.CloudUpload,
+            label = if (dirtyOrPending) "Export / Deploy*" else "Export / Deploy",
+            accent = if (dirtyOrPending) palette.activePillFg else palette.textPrimary,
+            bg = if (dirtyOrPending) palette.activePillBg else palette.chromeSurface,
+            tag = "ram_export_deploy_button",
+            enabled = !uiState.isDeploying,
+            onClick = onDeployExport,
+          )
+          RamActionChip(
+            icon = Icons.Outlined.Refresh,
+            label = "Re-Import",
+            accent = palette.textPrimary,
+            bg = palette.chromeSurface,
+            tag = "ram_reimport_button",
+            enabled = !uiState.isOpeningWorker,
+            onClick = onReimport,
+          )
+        }
+        if (uiState.workspace != null && dirtyOrPending) {
+          RamActionChip(
+            icon = Icons.Outlined.Restore,
+            label = "Revert",
+            accent = MaterialTheme.colorScheme.error,
+            bg = palette.chromeSurface,
+            tag = "ram_revert_button",
+            enabled = true,
+            onClick = onRevertWorkspace,
+          )
+        }
+        if (uiState.workspace != null) {
+          RamActionChip(
+            icon = Icons.Outlined.FileUpload,
+            label = "Export .json",
+            accent = palette.textSecondary,
+            bg = palette.chromeSurface,
+            tag = "ram_export_bundle_button",
+            enabled = true,
+            onClick = onExportBundle,
+          )
+        }
+        RamActionChip(
+          icon = Icons.Outlined.CloudDownload,
+          label = "Import .json",
+          accent = palette.textSecondary,
+          bg = palette.chromeSurface,
+          tag = "ram_import_bundle_button",
+          enabled = true,
+          onClick = onImportBundle,
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun RamActionChip(
+  icon: ImageVector,
+  label: String,
+  accent: Color,
+  bg: Color,
+  tag: String,
+  enabled: Boolean,
+  onClick: () -> Unit,
+) {
+  Surface(
+    onClick = onClick,
+    enabled = enabled,
+    color = bg,
+    shape = RoundedCornerShape(8.dp),
+    modifier = Modifier.testTag(tag),
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+      Icon(icon, contentDescription = label, tint = accent, modifier = Modifier.size(13.dp))
+      Text(label, fontSize = 10.sp, fontWeight = FontWeight.Medium, color = accent, maxLines = 1)
+    }
+  }
+}
+

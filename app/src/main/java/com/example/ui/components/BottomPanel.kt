@@ -39,6 +39,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.data.local.WorkerTestRunRecord
 import com.example.data.remote.ApiEnvVar
 import com.example.data.remote.ApiTesterRequest
 import com.example.data.remote.DiagnosticSeverity
@@ -55,10 +56,17 @@ fun BottomPanel(
   onSelectTab: (BottomPanelTab) -> Unit,
   onToggleExpand: () -> Unit,
   onClose: () -> Unit,
-  onRunActiveFileLocally: () -> Unit,
-  onImportAndRunFile: () -> Unit,
-  onCreateAndRunFile: () -> Unit,
-  onUpdateRunRequest: (String, String, String, String) -> Unit,
+  onPreviewSelectModeTab: (Int) -> Unit,
+  onPreviewUrlChange: (String) -> Unit,
+  onReloadPreview: () -> Unit,
+  onTogglePreviewConsoleExpanded: () -> Unit,
+  onUpdatePreviewHttp: (String, String, String) -> Unit,
+  onSendPreviewHttp: () -> Unit,
+  onSelectWorkerTestHistoryRun: (WorkerTestRunRecord) -> Unit,
+  onClearWorkerTestHistory: () -> Unit,
+  onAppendPreviewConsole: (String, String, String, Int?, Long?) -> Unit,
+  onClearPreviewConsole: () -> Unit,
+  onDeployActiveWorker: () -> Unit,
   onUpdateApiRequest: ((ApiTesterRequest) -> ApiTesterRequest) -> Unit,
   onUpdateApiEnvVars: (List<ApiEnvVar>) -> Unit,
   onRunApiRequest: () -> Unit,
@@ -98,9 +106,16 @@ fun BottomPanel(
           modifier = Modifier.weight(1f),
         ) {
           Tab(
-            selected = uiState.activeBottomTab == BottomPanelTab.RUN_PREVIEW,
-            onClick = { onSelectTab(BottomPanelTab.RUN_PREVIEW) },
-            text = { Text("Run & Result", maxLines = 1) },
+            selected = uiState.activeBottomTab == BottomPanelTab.WORKER_PREVIEW,
+            onClick = { onSelectTab(BottomPanelTab.WORKER_PREVIEW) },
+            modifier = Modifier.testTag("tab_worker_preview"),
+            text = { Text("Preview", maxLines = 1) },
+          )
+          Tab(
+            selected = uiState.activeBottomTab == BottomPanelTab.WORKER_TEST,
+            onClick = { onSelectTab(BottomPanelTab.WORKER_TEST) },
+            modifier = Modifier.testTag("tab_worker_test"),
+            text = { Text("Worker Test", maxLines = 1) },
           )
           Tab(
             selected = uiState.activeBottomTab == BottomPanelTab.API_TESTER,
@@ -164,14 +179,40 @@ fun BottomPanel(
       HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
       when (uiState.activeBottomTab) {
-        BottomPanelTab.RUN_PREVIEW ->
-          LocalRunPreviewPane(
+        BottomPanelTab.WORKER_PREVIEW ->
+          DeployedWorkerPreviewPane(
             uiState = uiState,
-            onRunActiveFile = onRunActiveFileLocally,
-            onImportAndRunFile = onImportAndRunFile,
-            onCreateAndRunFile = onCreateAndRunFile,
-            onUpdateRequest = onUpdateRunRequest,
-            onNotifyCopied = onNotifyStatus,
+            onSelectModeTab = onPreviewSelectModeTab,
+            onUrlChange = onPreviewUrlChange,
+            onReloadPreview = onReloadPreview,
+            onToggleConsoleExpanded = onTogglePreviewConsoleExpanded,
+            onUpdateHttpRequest = onUpdatePreviewHttp,
+            onSendHttpTest = onSendPreviewHttp,
+            onSelectHistoryRun = onSelectWorkerTestHistoryRun,
+            onClearHistory = onClearWorkerTestHistory,
+            onAppendConsoleEntry = onAppendPreviewConsole,
+            onClearConsole = onClearPreviewConsole,
+            onDeployActiveWorker = onDeployActiveWorker,
+            onNotifyStatus = onNotifyStatus,
+            modifier = Modifier.weight(1f),
+          )
+        BottomPanelTab.WORKER_TEST ->
+          WorkerTestWindow(
+            uiState = uiState,
+            onUrlChange = onPreviewUrlChange,
+            onMethodChange = { method ->
+              onUpdatePreviewHttp(method, uiState.previewHttpHeadersJson, uiState.previewHttpBody)
+            },
+            onHeadersJsonChange = { headersJson ->
+              onUpdatePreviewHttp(uiState.previewHttpMethod, headersJson, uiState.previewHttpBody)
+            },
+            onBodyChange = { body ->
+              onUpdatePreviewHttp(uiState.previewHttpMethod, uiState.previewHttpHeadersJson, body)
+            },
+            onSendRequest = onSendPreviewHttp,
+            onSelectHistoryRun = onSelectWorkerTestHistoryRun,
+            onClearHistory = onClearWorkerTestHistory,
+            onNotifyStatus = onNotifyStatus,
             modifier = Modifier.weight(1f),
           )
         BottomPanelTab.API_TESTER ->

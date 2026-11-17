@@ -1,8 +1,11 @@
 package com.example.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,10 +16,14 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,13 +36,15 @@ import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowLeft
 import androidx.compose.material.icons.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.ListAlt
-import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.NoteAdd
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.Sync
-import androidx.compose.material.icons.outlined.UploadFile
+import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
@@ -52,6 +61,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,6 +69,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -77,6 +88,8 @@ import com.example.data.remote.DiagnosticSeverity
 import com.example.data.remote.WorkerLanguage
 import com.example.editor.CodeSyntaxVisualTransformation
 import com.example.editor.WranglerSyncParser
+import com.example.ui.theme.AmberWarn
+import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.viewmodel.IdeUiState
@@ -86,11 +99,16 @@ fun CodeEditorPane(
   uiState: IdeUiState,
   onSelectTab: (String) -> Unit,
   onCloseTab: (String) -> Unit,
+  onSelectAdjacentTab: (Boolean) -> Unit,
+  onCloseOtherTabs: (String) -> Unit,
+  onCloseSavedTabs: () -> Unit,
+  onCloseAllTabs: () -> Unit,
+  onSetEntryModule: (String) -> Unit,
+  onRevertFile: (String) -> Unit,
   onNavigateTabBack: () -> Unit,
   onNavigateTabForward: () -> Unit,
-  onImportAndRunFile: () -> Unit,
-  onCreateAndRunFile: () -> Unit,
-  onRunActiveFile: () -> Unit,
+  onOpenWorkerPreview: () -> Unit,
+  onCreateNewFile: () -> Unit,
   onCodeChange: (TextFieldValue) -> Unit,
   onInsertText: (String, Int) -> Unit,
   onInsertTab: () -> Unit,
@@ -116,65 +134,20 @@ fun CodeEditorPane(
   val activeFile = uiState.activeFile
 
   Column(modifier = modifier.fillMaxSize().background(palette.editorBg)) {
-    // Rounded Capsule Tabs Strip (matching screenshot)
-    if (uiState.openTabPaths.isNotEmpty()) {
-      Row(
-        modifier =
-          Modifier
-            .fillMaxWidth()
-            .background(palette.tabBarBg)
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp, vertical = 5.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        uiState.openTabPaths.forEach { path ->
-          val file = uiState.workspace?.files?.firstOrNull { it.path == path }
-          val isActive = path == uiState.activeFilePath
-          Surface(
-            onClick = { onSelectTab(path) },
-            shape = RoundedCornerShape(14.dp),
-            color = if (isActive) palette.tabActiveBg else palette.chromeSurface,
-            modifier = Modifier.testTag("editor_tab_$path"),
-          ) {
-            Row(
-              modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 5.dp, bottom = 5.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-              FileTypeBadge(path = path)
-              Text(
-                text = path.substringAfterLast('/'),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (isActive) palette.textPrimary else palette.textSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-              )
-              if (file?.isDirty == true) {
-                Box(
-                  modifier =
-                    Modifier
-                      .size(7.dp)
-                      .clip(CircleShape)
-                      .background(palette.activePillFg),
-                )
-              }
-              IconButton(
-                onClick = { onCloseTab(path) },
-                modifier = Modifier.size(22.dp),
-              ) {
-                Icon(
-                  imageVector = Icons.Outlined.Close,
-                  contentDescription = stringResource(R.string.cd_close_tab),
-                  tint = palette.textMuted,
-                  modifier = Modifier.size(13.dp),
-                )
-              }
-            }
-          }
-        }
-      }
+    if (uiState.workspace != null) {
+      EditorFileTabBar(
+        uiState = uiState,
+        onSelectTab = onSelectTab,
+        onCloseTab = onCloseTab,
+        onSelectAdjacentTab = onSelectAdjacentTab,
+        onCloseOtherTabs = onCloseOtherTabs,
+        onCloseSavedTabs = onCloseSavedTabs,
+        onCloseAllTabs = onCloseAllTabs,
+        onSetEntryModule = onSetEntryModule,
+        onRevertFile = onRevertFile,
+        onCreateNewFile = onCreateNewFile,
+        onOpenExplorer = onOpenExplorer,
+      )
     }
 
     uiState.restoredDraftBanner?.let { bannerMsg ->
@@ -206,13 +179,24 @@ fun CodeEditorPane(
     }
 
     if (activeFile == null) {
-      EmptyWorkspaceWelcome(
-        hasWorkers = uiState.workers.isNotEmpty(),
-        onOpenExplorer = onOpenExplorer,
-        onShowNewWorkerDialog = onShowNewWorkerDialog,
-        onImportAndRunFile = onImportAndRunFile,
-        onCreateAndRunFile = onCreateAndRunFile,
-      )
+      val workspaceFiles = uiState.workspace?.files.orEmpty()
+      if (uiState.workspace != null && workspaceFiles.isNotEmpty()) {
+        AllTabsClosedState(
+          workerName = uiState.workspace.scriptName,
+          files = workspaceFiles,
+          onOpenFile = onSelectTab,
+          onCreateNewFile = onCreateNewFile,
+          onOpenExplorer = onOpenExplorer,
+        )
+      } else {
+        EmptyWorkspaceWelcome(
+          hasWorkers = uiState.workers.isNotEmpty(),
+          onOpenExplorer = onOpenExplorer,
+          onShowNewWorkerDialog = onShowNewWorkerDialog,
+          onOpenWorkerPreview = onOpenWorkerPreview,
+          onCreateNewFile = onCreateNewFile,
+        )
+      }
       return
     }
 
@@ -386,18 +370,18 @@ fun CodeEditorPane(
           modifier = Modifier.size(16.dp),
         )
       }
+      IconButton(
+        onClick = onOpenWorkerPreview,
+        modifier = Modifier.size(32.dp).testTag("editor_preview_worker_button"),
+      ) {
+        Icon(
+          Icons.Outlined.Visibility,
+          contentDescription = "Open deployed Worker preview & HTTP tester",
+          tint = palette.activePillFg,
+          modifier = Modifier.size(18.dp),
+        )
+      }
       if (!activeFile.isVirtualReadOnly) {
-        IconButton(
-          onClick = onRunActiveFile,
-          modifier = Modifier.size(32.dp).testTag("editor_run_script_button"),
-        ) {
-          Icon(
-            Icons.Outlined.PlayArrow,
-            contentDescription = "Run script locally without deploying",
-            tint = palette.activePillFg,
-            modifier = Modifier.size(18.dp),
-          )
-        }
         IconButton(
           onClick = onFormat,
           modifier = Modifier.size(32.dp).testTag("format_code_button"),
@@ -659,8 +643,8 @@ private fun EmptyWorkspaceWelcome(
   hasWorkers: Boolean,
   onOpenExplorer: () -> Unit,
   onShowNewWorkerDialog: () -> Unit,
-  onImportAndRunFile: () -> Unit,
-  onCreateAndRunFile: () -> Unit,
+  onOpenWorkerPreview: () -> Unit,
+  onCreateNewFile: () -> Unit,
 ) {
   val palette = LocalIdePalette.current
   Box(
@@ -686,30 +670,30 @@ private fun EmptyWorkspaceWelcome(
       )
       Text(
         text =
-          if (hasWorkers) "Open a Worker/Pages project, or import/create any script to run & test locally without deploying."
-          else "Import a file or create a script to test locally first, then deploy when ready.",
+          if (hasWorkers) "Open a Cloudflare Worker or Pages project, deploy edits live, and inspect responses in the Worker Preview window."
+          else "Create a Cloudflare Worker, deploy to your workers.dev URL, and test it in the live Worker Preview window.",
         style = MaterialTheme.typography.bodyMedium,
         color = palette.textSecondary,
         textAlign = TextAlign.Center,
       )
       Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilledTonalButton(
-          onClick = onImportAndRunFile,
+          onClick = onOpenWorkerPreview,
           shape = RoundedCornerShape(14.dp),
-          modifier = Modifier.height(48.dp).testTag("welcome_import_run_button"),
+          modifier = Modifier.height(48.dp).testTag("welcome_worker_preview_button"),
         ) {
-          Icon(Icons.Outlined.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
+          Icon(Icons.Outlined.Visibility, contentDescription = null, modifier = Modifier.size(18.dp))
           Spacer(Modifier.width(6.dp))
-          Text("Import & Run")
+          Text("Test Live Worker")
         }
         OutlinedButton(
-          onClick = onCreateAndRunFile,
+          onClick = onCreateNewFile,
           shape = RoundedCornerShape(14.dp),
-          modifier = Modifier.height(48.dp).testTag("welcome_create_run_button"),
+          modifier = Modifier.height(48.dp).testTag("welcome_new_file_button"),
         ) {
-          Icon(Icons.Outlined.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+          Icon(Icons.Outlined.NoteAdd, contentDescription = null, modifier = Modifier.size(18.dp))
           Spacer(Modifier.width(6.dp))
-          Text("New Script")
+          Text("New File")
         }
       }
       Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -717,7 +701,7 @@ private fun EmptyWorkspaceWelcome(
           OutlinedButton(
             onClick = onOpenExplorer,
             shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.height(44.dp),
+            modifier = Modifier.height(48.dp),
           ) {
             Icon(Icons.Outlined.FolderOpen, contentDescription = null, modifier = Modifier.size(17.dp))
             Spacer(Modifier.width(6.dp))
@@ -727,11 +711,479 @@ private fun EmptyWorkspaceWelcome(
         Button(
           onClick = onShowNewWorkerDialog,
           shape = RoundedCornerShape(14.dp),
-          modifier = Modifier.height(44.dp).testTag("welcome_new_worker_button"),
+          modifier = Modifier.height(48.dp).testTag("welcome_new_worker_button"),
         ) {
           Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(17.dp))
           Spacer(Modifier.width(6.dp))
           Text("New Worker")
+        }
+      }
+    }
+  }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun EditorFileTabBar(
+  uiState: IdeUiState,
+  onSelectTab: (String) -> Unit,
+  onCloseTab: (String) -> Unit,
+  onSelectAdjacentTab: (Boolean) -> Unit,
+  onCloseOtherTabs: (String) -> Unit,
+  onCloseSavedTabs: () -> Unit,
+  onCloseAllTabs: () -> Unit,
+  onSetEntryModule: (String) -> Unit,
+  onRevertFile: (String) -> Unit,
+  onCreateNewFile: () -> Unit,
+  onOpenExplorer: () -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  val tabListState = rememberLazyListState()
+  var tabSwitcherOpen by remember { mutableStateOf(false) }
+  var switcherQuery by remember { mutableStateOf("") }
+  var contextMenuPath by remember { mutableStateOf<String?>(null) }
+
+  val workspaceFiles = uiState.workspace?.files.orEmpty()
+  val duplicateNames =
+    remember(uiState.openTabPaths) {
+      uiState.openTabPaths
+        .groupingBy { it.substringAfterLast('/') }
+        .eachCount()
+        .filterValues { it > 1 }
+        .keys
+    }
+
+  LaunchedEffect(uiState.activeFilePath, uiState.openTabPaths) {
+    val idx = uiState.openTabPaths.indexOf(uiState.activeFilePath)
+    if (idx >= 0) {
+      tabListState.animateScrollToItem(idx)
+    }
+  }
+
+  Column(modifier = Modifier.fillMaxWidth().background(palette.tabBarBg)) {
+    Row(
+      modifier = Modifier.fillMaxWidth().padding(start = 6.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+      if (uiState.openTabPaths.isEmpty()) {
+        Text(
+          text = "No open tabs • ${workspaceFiles.size} project files",
+          style = MaterialTheme.typography.labelSmall,
+          color = palette.textMuted,
+          modifier = Modifier.weight(1f).padding(horizontal = 6.dp),
+        )
+      } else {
+        LazyRow(
+          state = tabListState,
+          modifier = Modifier.weight(1f),
+          horizontalArrangement = Arrangement.spacedBy(5.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          items(uiState.openTabPaths, key = { it }) { path ->
+            val file = workspaceFiles.firstOrNull { it.path == path }
+            val isActive = path == uiState.activeFilePath
+            val fileName = path.substringAfterLast('/')
+            val parentHint =
+              if (fileName in duplicateNames && path.contains('/')) {
+                path.substringBeforeLast('/').substringAfterLast('/') + "/"
+              } else {
+                ""
+              }
+
+            Box {
+              Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = if (isActive) palette.tabActiveBg else palette.chromeSurface,
+                border =
+                  if (isActive) BorderStroke(1.dp, palette.activePillFg.copy(alpha = 0.45f))
+                  else BorderStroke(1.dp, palette.border.copy(alpha = 0.25f)),
+                modifier =
+                  Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .combinedClickable(
+                      onClick = { onSelectTab(path) },
+                      onLongClick = { contextMenuPath = path },
+                    )
+                    .testTag("editor_tab_$path"),
+              ) {
+                Column {
+                  Row(
+                    modifier = Modifier.padding(start = 9.dp, end = 4.dp, top = 5.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                  ) {
+                    FileTypeBadge(path = path)
+                    Column {
+                      Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                      ) {
+                        if (parentHint.isNotEmpty()) {
+                          Text(
+                            text = parentHint,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = palette.textMuted,
+                            maxLines = 1,
+                          )
+                        }
+                        Text(
+                          text = fileName,
+                          style = MaterialTheme.typography.labelMedium,
+                          fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                          color = if (isActive) palette.textPrimary else palette.textSecondary,
+                          maxLines = 1,
+                          overflow = TextOverflow.Ellipsis,
+                        )
+                        if (file?.isEntryPoint == true) {
+                          Surface(color = palette.activePillBg, shape = RoundedCornerShape(4.dp)) {
+                            Text(
+                              text = "MAIN",
+                              fontSize = 8.sp,
+                              fontWeight = FontWeight.Bold,
+                              color = palette.activePillFg,
+                              modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                            )
+                          }
+                        }
+                        if (file?.isDirty == true) {
+                          Box(
+                            modifier =
+                              Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(palette.activePillFg)
+                                .testTag("dirty_dot_$path"),
+                          )
+                        }
+                      }
+                    }
+                    IconButton(
+                      onClick = { onCloseTab(path) },
+                      modifier = Modifier.size(22.dp).testTag("close_tab_$path"),
+                    ) {
+                      Icon(
+                        imageVector = Icons.Outlined.Close,
+                        contentDescription = "${stringResource(R.string.cd_close_tab)} $fileName",
+                        tint = palette.textMuted,
+                        modifier = Modifier.size(13.dp),
+                      )
+                    }
+                  }
+                  if (isActive) {
+                    Box(
+                      modifier =
+                        Modifier
+                          .fillMaxWidth()
+                          .height(2.dp)
+                          .background(palette.activePillFg),
+                    )
+                  }
+                }
+              }
+
+              DropdownMenu(
+                expanded = contextMenuPath == path,
+                onDismissRequest = { contextMenuPath = null },
+              ) {
+                DropdownMenuItem(
+                  text = { Text("Close Tab") },
+                  onClick = {
+                    contextMenuPath = null
+                    onCloseTab(path)
+                  },
+                )
+                if (uiState.openTabPaths.size > 1) {
+                  DropdownMenuItem(
+                    text = { Text("Close Other Tabs") },
+                    onClick = {
+                      contextMenuPath = null
+                      onCloseOtherTabs(path)
+                    },
+                  )
+                }
+                DropdownMenuItem(
+                  text = { Text("Close Saved Tabs") },
+                  onClick = {
+                    contextMenuPath = null
+                    onCloseSavedTabs()
+                  },
+                )
+                DropdownMenuItem(
+                  text = { Text("Close All Tabs") },
+                  onClick = {
+                    contextMenuPath = null
+                    onCloseAllTabs()
+                  },
+                )
+                if (file != null && !file.isVirtualReadOnly && !file.isEntryPoint && file.language in setOf(WorkerLanguage.JAVASCRIPT, WorkerLanguage.TYPESCRIPT)) {
+                  DropdownMenuItem(
+                    text = { Text("Set as Worker Entry Point") },
+                    onClick = {
+                      contextMenuPath = null
+                      onSetEntryModule(path)
+                    },
+                  )
+                }
+                if (file != null && file.isDirty && !file.isVirtualReadOnly) {
+                  DropdownMenuItem(
+                    text = { Text("Revert to Imported Baseline", color = MaterialTheme.colorScheme.error) },
+                    onClick = {
+                      contextMenuPath = null
+                      onRevertFile(path)
+                    },
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // RAM DB Status Pill
+      val dirtyCount = uiState.ramDbStats.dirtyFilesCount
+      Surface(
+        onClick = onOpenExplorer,
+        color = if (dirtyCount > 0) palette.activePillBg else palette.chromePill,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.testTag("ram_status_chip"),
+      ) {
+        Row(
+          modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+          Icon(
+            Icons.Outlined.Storage,
+            contentDescription = "On-device RAM database status",
+            tint = if (dirtyCount > 0) EmeraldLive else palette.textSecondary,
+            modifier = Modifier.size(12.dp),
+          )
+          Text(
+            text = if (dirtyCount > 0) "RAM $dirtyCount*" else "RAM",
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = if (dirtyCount > 0) palette.activePillFg else palette.textSecondary,
+          )
+        }
+      }
+
+      // Quick Prev/Next tab cycling
+      if (uiState.openTabPaths.size > 1) {
+        IconButton(
+          onClick = { onSelectAdjacentTab(false) },
+          modifier = Modifier.size(26.dp).testTag("tab_cycle_prev"),
+        ) {
+          Icon(Icons.Outlined.KeyboardArrowLeft, contentDescription = "Previous open tab", tint = palette.textSecondary, modifier = Modifier.size(16.dp))
+        }
+        IconButton(
+          onClick = { onSelectAdjacentTab(true) },
+          modifier = Modifier.size(26.dp).testTag("tab_cycle_next"),
+        ) {
+          Icon(Icons.Outlined.KeyboardArrowRight, contentDescription = "Next open tab", tint = palette.textSecondary, modifier = Modifier.size(16.dp))
+        }
+      }
+
+      // Quick New File button
+      IconButton(
+        onClick = onCreateNewFile,
+        modifier = Modifier.size(28.dp).testTag("tab_bar_new_file"),
+      ) {
+        Icon(Icons.Outlined.Add, contentDescription = "New file tab", tint = palette.textSecondary, modifier = Modifier.size(16.dp))
+      }
+
+      // Searchable Open Tabs & Workspace Files Switcher
+      Box {
+        Surface(
+          onClick = {
+            switcherQuery = ""
+            tabSwitcherOpen = true
+          },
+          shape = RoundedCornerShape(8.dp),
+          color = palette.chromePill,
+          modifier = Modifier.testTag("tab_switcher_button"),
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+          ) {
+            Text(
+              text = "${uiState.openTabPaths.size}/${workspaceFiles.size}",
+              fontSize = 10.sp,
+              fontWeight = FontWeight.Medium,
+              color = palette.textPrimary,
+            )
+            Icon(
+              Icons.Outlined.KeyboardArrowDown,
+              contentDescription = "Open tabs and project file switcher",
+              tint = palette.textSecondary,
+              modifier = Modifier.size(14.dp),
+            )
+          }
+        }
+
+        DropdownMenu(
+          expanded = tabSwitcherOpen,
+          onDismissRequest = { tabSwitcherOpen = false },
+          modifier = Modifier.widthIn(min = 260.dp, max = 340.dp).heightIn(max = 420.dp),
+        ) {
+          OutlinedTextField(
+            value = switcherQuery,
+            onValueChange = { switcherQuery = it },
+            placeholder = { Text("Jump to file…", fontSize = 12.sp) },
+            singleLine = true,
+            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+          )
+
+          val openMatches =
+            uiState.openTabPaths.filter { p ->
+              switcherQuery.isBlank() || p.contains(switcherQuery, ignoreCase = true)
+            }
+          val closedProjectMatches =
+            workspaceFiles
+              .map { it.path }
+              .filter { it !in uiState.openTabPaths && (switcherQuery.isBlank() || it.contains(switcherQuery, ignoreCase = true)) }
+
+          if (openMatches.isNotEmpty()) {
+            Text(
+              text = "OPEN TABS (${openMatches.size})",
+              style = MaterialTheme.typography.labelSmall,
+              color = palette.textMuted,
+              modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+            )
+            openMatches.forEach { path ->
+              val isActive = path == uiState.activeFilePath
+              val isDirty = workspaceFiles.firstOrNull { it.path == path }?.isDirty == true
+              DropdownMenuItem(
+                text = {
+                  Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FileTypeBadge(path = path)
+                    Text(
+                      text = path,
+                      style = MaterialTheme.typography.bodySmall,
+                      fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                      color = if (isActive) palette.activePillFg else palette.textPrimary,
+                      maxLines = 1,
+                      overflow = TextOverflow.Ellipsis,
+                      modifier = Modifier.weight(1f),
+                    )
+                    if (isDirty) {
+                      Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(AmberWarn))
+                    }
+                  }
+                },
+                onClick = {
+                  tabSwitcherOpen = false
+                  onSelectTab(path)
+                },
+              )
+            }
+          }
+
+          if (closedProjectMatches.isNotEmpty()) {
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            Text(
+              text = "WORKSPACE FILES (${closedProjectMatches.size})",
+              style = MaterialTheme.typography.labelSmall,
+              color = palette.textMuted,
+              modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+            )
+            closedProjectMatches.forEach { path ->
+              DropdownMenuItem(
+                text = {
+                  Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FileTypeBadge(path = path)
+                    Text(
+                      text = path,
+                      style = MaterialTheme.typography.bodySmall,
+                      color = palette.textSecondary,
+                      maxLines = 1,
+                      overflow = TextOverflow.Ellipsis,
+                      modifier = Modifier.weight(1f),
+                    )
+                  }
+                },
+                onClick = {
+                  tabSwitcherOpen = false
+                  onSelectTab(path)
+                },
+              )
+            }
+          }
+
+          if (uiState.openTabPaths.isNotEmpty()) {
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            DropdownMenuItem(
+              text = { Text("Close Saved Tabs") },
+              onClick = {
+                tabSwitcherOpen = false
+                onCloseSavedTabs()
+              },
+            )
+            DropdownMenuItem(
+              text = { Text("Close All Tabs") },
+              onClick = {
+                tabSwitcherOpen = false
+                onCloseAllTabs()
+              },
+            )
+          }
+        }
+      }
+    }
+    HorizontalDivider(color = palette.border.copy(alpha = 0.4f))
+  }
+}
+
+@Composable
+private fun AllTabsClosedState(
+  workerName: String,
+  files: List<com.example.data.remote.WorkerFile>,
+  onOpenFile: (String) -> Unit,
+  onCreateNewFile: () -> Unit,
+  onOpenExplorer: () -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  Box(
+    modifier = Modifier.fillMaxSize().padding(24.dp),
+    contentAlignment = Alignment.Center,
+  ) {
+    Column(
+      modifier = Modifier.widthIn(max = 400.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+      verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+      Text(
+        text = workerName,
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.Bold,
+        color = palette.textPrimary,
+      )
+      Text(
+        text = "All editor tabs are closed. Pick a file from RAM or create a new module to continue editing on-device.",
+        style = MaterialTheme.typography.bodySmall,
+        color = palette.textSecondary,
+        textAlign = TextAlign.Center,
+      )
+      files.take(4).forEach { file ->
+        FilledTonalButton(
+          onClick = { onOpenFile(file.path) },
+          shape = RoundedCornerShape(10.dp),
+          modifier = Modifier.fillMaxWidth().height(48.dp),
+        ) {
+          FileTypeBadge(path = file.path)
+          Spacer(Modifier.width(8.dp))
+          Text(file.path, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+      }
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = onOpenExplorer, modifier = Modifier.height(48.dp)) {
+          Text("Explorer")
+        }
+        Button(onClick = onCreateNewFile, modifier = Modifier.height(48.dp)) {
+          Text("New File")
         }
       }
     }
