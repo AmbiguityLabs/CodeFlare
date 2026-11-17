@@ -52,6 +52,8 @@ data class EditorSettings(
   val wordWrap: Boolean = false,
   val showLineNumbers: Boolean = true,
   val autoCloseBrackets: Boolean = true,
+  val autoSaveEnabled: Boolean = true,
+  val autoSaveIntervalSeconds: Int = 5,
   val defaultCompatibilityDate: String = "2024-11-01",
   val defaultNodejsCompat: Boolean = false,
   val defaultWorkersDevEnabled: Boolean = true,
@@ -83,6 +85,8 @@ class AuthPreferencesStore(private val context: Context) {
     val WORD_WRAP = booleanPreferencesKey("editor_word_wrap")
     val SHOW_LINE_NUMBERS = booleanPreferencesKey("editor_line_numbers")
     val AUTO_CLOSE_BRACKETS = booleanPreferencesKey("editor_auto_brackets")
+    val AUTO_SAVE_ENABLED = booleanPreferencesKey("editor_auto_save_enabled")
+    val AUTO_SAVE_INTERVAL_SEC = intPreferencesKey("editor_auto_save_interval_sec")
     val DEFAULT_COMPAT_DATE = stringPreferencesKey("deploy_default_compat_date")
     val DEFAULT_NODEJS_COMPAT = booleanPreferencesKey("deploy_default_nodejs_compat")
     val DEFAULT_WORKERS_DEV = booleanPreferencesKey("deploy_default_workers_dev")
@@ -134,6 +138,8 @@ class AuthPreferencesStore(private val context: Context) {
         wordWrap = prefs[Keys.WORD_WRAP] ?: false,
         showLineNumbers = prefs[Keys.SHOW_LINE_NUMBERS] ?: true,
         autoCloseBrackets = prefs[Keys.AUTO_CLOSE_BRACKETS] ?: true,
+        autoSaveEnabled = prefs[Keys.AUTO_SAVE_ENABLED] ?: true,
+        autoSaveIntervalSeconds = (prefs[Keys.AUTO_SAVE_INTERVAL_SEC] ?: 5).coerceIn(3, 60),
         defaultCompatibilityDate =
           prefs[Keys.DEFAULT_COMPAT_DATE]?.takeIf { it.isNotBlank() } ?: "2024-11-01",
         defaultNodejsCompat = prefs[Keys.DEFAULT_NODEJS_COMPAT] ?: false,
@@ -222,6 +228,8 @@ class AuthPreferencesStore(private val context: Context) {
       prefs[Keys.WORD_WRAP] = next.wordWrap
       prefs[Keys.SHOW_LINE_NUMBERS] = next.showLineNumbers
       prefs[Keys.AUTO_CLOSE_BRACKETS] = next.autoCloseBrackets
+      prefs[Keys.AUTO_SAVE_ENABLED] = next.autoSaveEnabled
+      prefs[Keys.AUTO_SAVE_INTERVAL_SEC] = next.autoSaveIntervalSeconds.coerceIn(3, 60)
       prefs[Keys.DEFAULT_COMPAT_DATE] = next.defaultCompatibilityDate.trim().ifBlank { "2024-11-01" }
       prefs[Keys.DEFAULT_NODEJS_COMPAT] = next.defaultNodejsCompat
       prefs[Keys.DEFAULT_WORKERS_DEV] = next.defaultWorkersDevEnabled

@@ -11,14 +11,15 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -52,7 +53,6 @@ import androidx.compose.material.icons.outlined.ListAlt
 import androidx.compose.material.icons.outlined.NoteAdd
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.WarningAmber
@@ -72,31 +72,38 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -108,6 +115,10 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.remote.DiagnosticSeverity
 import com.example.data.remote.WorkerLanguage
+import com.example.editor.BracketMatch
+import com.example.editor.CodeAnalyzer
+import com.example.editor.CodeEditHelper
+import com.example.editor.CodeSymbol
 import com.example.editor.CodeSyntaxVisualTransformation
 import com.example.editor.WranglerSyncParser
 import com.example.ui.theme.AmberWarn
@@ -116,7 +127,10 @@ import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.RoseError
 import com.example.ui.viewmodel.IdeUiState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 @Composable
@@ -160,20 +174,34 @@ fun CodeEditorPane(
   val palette = LocalIdePalette.current
   val activeFile = uiState.activeFile
 
+  var localTfv by remember(activeFile?.path) {
+    mutableStateOf(uiState.activeTextFieldValue)
+  }
+  val latestLocalTfv by rememberUpdatedState(localTfv)
+  val latestVmTfv by rememberUpdatedState(uiState.activeTextFieldValue)
+  val latestOnCodeChange by rememberUpdatedState(onCodeChange)
+
+  fun flushThen(action: () -> Unit) {
+    if (activeFile != null && !activeFile.isVirtualReadOnly && localTfv != latestVmTfv) {
+      onCodeChange(localTfv)
+    }
+    action()
+  }
+
   Column(modifier = modifier.fillMaxSize().background(palette.editorBg)) {
     if (uiState.workspace != null) {
       EditorFileTabBar(
         uiState = uiState,
-        onSelectTab = onSelectTab,
-        onCloseTab = onCloseTab,
-        onSelectAdjacentTab = onSelectAdjacentTab,
-        onCloseOtherTabs = onCloseOtherTabs,
-        onCloseSavedTabs = onCloseSavedTabs,
-        onCloseAllTabs = onCloseAllTabs,
+        onSelectTab = { p -> flushThen { onSelectTab(p) } },
+        onCloseTab = { p -> flushThen { onCloseTab(p) } },
+        onSelectAdjacentTab = { next -> flushThen { onSelectAdjacentTab(next) } },
+        onCloseOtherTabs = { p -> flushThen { onCloseOtherTabs(p) } },
+        onCloseSavedTabs = { flushThen(onCloseSavedTabs) },
+        onCloseAllTabs = { flushThen(onCloseAllTabs) },
         onSetEntryModule = onSetEntryModule,
         onRevertFile = onRevertFile,
-        onCreateNewFile = onCreateNewFile,
-        onOpenExplorer = onOpenExplorer,
+        onCreateNewFile = { flushThen(onCreateNewFile) },
+        onOpenExplorer = { flushThen(onOpenExplorer) },
       )
     }
 
@@ -227,18 +255,68 @@ fun CodeEditorPane(
       return
     }
 
+    // Keep local editor buffer in sync with external ViewModel mutations (Undo/Redo/Format/Jump/Revert)
+    LaunchedEffect(activeFile.path, uiState.editorRevision) {
+      val vmVal = latestVmTfv
+      if (localTfv != vmVal) {
+        localTfv = vmVal
+      }
+    }
+
+    // Debounce typing sync back to ViewModel so rapid keystrokes never trigger full-app recomposition
+    LaunchedEffect(activeFile.path, localTfv) {
+      if (!activeFile.isVirtualReadOnly && localTfv != latestVmTfv) {
+        delay(110L)
+        latestOnCodeChange(latestLocalTfv)
+      }
+    }
+
+    // Flush any pending typed text when switching tabs, pausing app, or leaving the editor
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(activeFile.path, lifecycleOwner) {
+      val observer =
+        LifecycleEventObserver { _, event ->
+          if ((event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) &&
+            !activeFile.isVirtualReadOnly &&
+            latestLocalTfv != latestVmTfv
+          ) {
+            latestOnCodeChange(latestLocalTfv)
+          }
+        }
+      lifecycleOwner.lifecycle.addObserver(observer)
+      onDispose {
+        lifecycleOwner.lifecycle.removeObserver(observer)
+        if (!activeFile.isVirtualReadOnly && latestLocalTfv != latestVmTfv) {
+          latestOnCodeChange(latestLocalTfv)
+        }
+      }
+    }
+
+    val tfv = localTfv
     val isWranglerConfig =
       activeFile.path.equals("wrangler.jsonc", ignoreCase = true) ||
         activeFile.path.equals("wrangler.json", ignoreCase = true) ||
         activeFile.path.equals("wrangler.toml", ignoreCase = true)
     var showSymbolOutlineMenu by remember { mutableStateOf(false) }
-    val tfv = uiState.activeTextFieldValue
-    val symbols =
-      remember(tfv.text, activeFile.language) {
-        WranglerSyncParser.extractCodeSymbols(tfv.text, activeFile.language)
-      }
 
-    // Tab-history navigation chevrons (< >) + Breadcrumb Strip (matching Screenshot 2)
+    var symbols by remember(activeFile.path, activeFile.language) {
+      mutableStateOf<List<CodeSymbol>>(emptyList())
+    }
+    LaunchedEffect(activeFile.path, activeFile.language, tfv.text) {
+      if (activeFile.language == WorkerLanguage.TEXT) {
+        symbols = emptyList()
+        return@LaunchedEffect
+      }
+      val snapshot = tfv.text
+      val lang = activeFile.language
+      if (snapshot.length > 2_000) delay(320L)
+      symbols =
+        withContext(Dispatchers.Default) {
+          WranglerSyncParser.extractCodeSymbols(snapshot, lang)
+        }
+    }
+
+    // Tab-history navigation chevrons (< >) + Breadcrumb Strip
     Row(
       modifier =
         Modifier
@@ -248,7 +326,7 @@ fun CodeEditorPane(
       verticalAlignment = Alignment.CenterVertically,
     ) {
       IconButton(
-        onClick = onNavigateTabBack,
+        onClick = { flushThen(onNavigateTabBack) },
         enabled = uiState.canNavigateTabBack,
         modifier = Modifier.size(30.dp).testTag("editor_nav_back"),
       ) {
@@ -260,7 +338,7 @@ fun CodeEditorPane(
         )
       }
       IconButton(
-        onClick = onNavigateTabForward,
+        onClick = { flushThen(onNavigateTabForward) },
         enabled = uiState.canNavigateTabForward,
         modifier = Modifier.size(30.dp).testTag("editor_nav_forward"),
       ) {
@@ -274,9 +352,11 @@ fun CodeEditorPane(
       Spacer(Modifier.width(4.dp))
 
       val segments =
-        buildList {
-          add(uiState.workspace?.scriptName ?: "worker")
-          addAll(activeFile.path.split('/'))
+        remember(uiState.workspace?.scriptName, activeFile.path) {
+          buildList {
+            add(uiState.workspace?.scriptName ?: "worker")
+            addAll(activeFile.path.split('/'))
+          }
         }
       Row(
         modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
@@ -303,7 +383,7 @@ fun CodeEditorPane(
       if (uiState.diagnostics.isNotEmpty()) {
         val hasErr = uiState.diagnostics.any { it.severity == DiagnosticSeverity.ERROR }
         Surface(
-          onClick = onOpenProblems,
+          onClick = { flushThen(onOpenProblems) },
           shape = RoundedCornerShape(999.dp),
           color =
             if (hasErr) MaterialTheme.colorScheme.errorContainer
@@ -335,7 +415,7 @@ fun CodeEditorPane(
 
       if (isWranglerConfig) {
         Surface(
-          onClick = onSyncWranglerToWorkspace,
+          onClick = { flushThen(onSyncWranglerToWorkspace) },
           shape = RoundedCornerShape(999.dp),
           color = palette.activePillBg,
           modifier = Modifier.padding(end = 4.dp).testTag("apply_wrangler_config_button"),
@@ -378,7 +458,7 @@ fun CodeEditorPane(
                 },
                 onClick = {
                   showSymbolOutlineMenu = false
-                  onJumpToLine(activeFile.path, sym.line)
+                  flushThen { onJumpToLine(activeFile.path, sym.line) }
                 },
               )
             }
@@ -399,7 +479,7 @@ fun CodeEditorPane(
       }
       if (!activeFile.isVirtualReadOnly) {
         IconButton(
-          onClick = onFormat,
+          onClick = { flushThen(onFormat) },
           modifier = Modifier.size(32.dp).testTag("format_code_button"),
         ) {
           Icon(
@@ -430,7 +510,10 @@ fun CodeEditorPane(
               singleLine = true,
               modifier = Modifier.weight(1f),
             )
-            FilledTonalButton(onClick = onFindNext, enabled = uiState.findQuery.isNotEmpty()) {
+            FilledTonalButton(
+              onClick = { flushThen(onFindNext) },
+              enabled = uiState.findQuery.isNotEmpty(),
+            ) {
               Text("Next")
             }
           }
@@ -443,7 +526,10 @@ fun CodeEditorPane(
                 singleLine = true,
                 modifier = Modifier.weight(1f),
               )
-              TextButton(onClick = onReplaceAll, enabled = uiState.findQuery.isNotEmpty()) {
+              TextButton(
+                onClick = { flushThen(onReplaceAll) },
+                enabled = uiState.findQuery.isNotEmpty(),
+              ) {
                 Text("Replace All")
               }
             }
@@ -460,7 +546,10 @@ fun CodeEditorPane(
       remember(fileDiagnostics) {
         fileDiagnostics.filter { it.severity != DiagnosticSeverity.INFO }.ifEmpty { fileDiagnostics }
       }
-    val (activeLine, activeCol) = uiState.cursorLineAndCol
+    val (activeLine, activeCol) =
+      remember(tfv.text, tfv.selection.start) {
+        CodeEditHelper.computeCursorLineAndCol(tfv.text, tfv.selection.start)
+      }
     var selectedDiagIndex by remember(activeFile.path) { mutableIntStateOf(0) }
     val activeLineDiagIdx =
       remember(actionableDiagnostics, activeLine) {
@@ -497,7 +586,7 @@ fun CodeEditorPane(
         modifier =
           Modifier
             .fillMaxWidth()
-            .clickable { onJumpToLocation(currentDiag.filePath, currentDiag.line, currentDiag.column) }
+            .clickable { flushThen { onJumpToLocation(currentDiag.filePath, currentDiag.line, currentDiag.column) } }
             .testTag("editor_syntax_catcher_bar"),
       ) {
         Row(
@@ -546,7 +635,7 @@ fun CodeEditorPane(
                   if (selectedDiagIndex <= 0) actionableDiagnostics.lastIndex else selectedDiagIndex - 1
                 selectedDiagIndex = prev
                 val d = actionableDiagnostics[prev]
-                onJumpToLocation(d.filePath, d.line, d.column)
+                flushThen { onJumpToLocation(d.filePath, d.line, d.column) }
               },
               modifier = Modifier.size(24.dp).testTag("syntax_prev_button"),
             ) {
@@ -557,7 +646,7 @@ fun CodeEditorPane(
                 val next = (selectedDiagIndex + 1) % actionableDiagnostics.size
                 selectedDiagIndex = next
                 val d = actionableDiagnostics[next]
-                onJumpToLocation(d.filePath, d.line, d.column)
+                flushThen { onJumpToLocation(d.filePath, d.line, d.column) }
               },
               modifier = Modifier.size(24.dp).testTag("syntax_next_button"),
             ) {
@@ -569,17 +658,33 @@ fun CodeEditorPane(
       HorizontalDivider(color = stripFg.copy(alpha = 0.35f))
     }
 
-    // High-FPS Code Editor with Zooming, Syntax Catching Gutter, Active Line Highlight & Vertical Gutter Divider
-    val zoomPercent = uiState.editorSettings.zoomPercent.coerceIn(60, 220)
-    val effectiveFontSizeSp = (uiState.editorSettings.fontSizeSp * (zoomPercent / 100f)).coerceIn(8f, 34f)
+    // Hardware-accelerated Pinch-to-Zoom + Pure VisualTransformation + GPU TextLayoutResult Overlays
+    var committedZoomPercent by remember {
+      mutableIntStateOf(uiState.editorSettings.zoomPercent.coerceIn(60, 220))
+    }
+    var pinchScale by remember { mutableFloatStateOf(1f) }
+    var isPinching by remember { mutableStateOf(false) }
+    var pinchStartPivot by remember { mutableStateOf(Offset.Zero) }
+    var pinchCurrentCentroid by remember { mutableStateOf(Offset.Zero) }
+
+    LaunchedEffect(uiState.editorSettings.zoomPercent) {
+      if (!isPinching) {
+        committedZoomPercent = uiState.editorSettings.zoomPercent.coerceIn(60, 220)
+      }
+    }
+
+    val effectiveFontSizeSp = (uiState.editorSettings.fontSizeSp * (committedZoomPercent / 100f)).coerceIn(8f, 34f)
     val effectiveLineHeightSp = effectiveFontSizeSp * 1.48f
     val fontSize = effectiveFontSizeSp.sp
     val lineHeight = effectiveLineHeightSp.sp
     val density = LocalDensity.current
     val lineHeightPx = with(density) { lineHeight.toPx() }
     val topPaddingPx = with(density) { 8.dp.toPx() }
+    val hPadPx = with(density) { 10.dp.toPx() }
 
-    val latestZoomPercent by rememberUpdatedState(zoomPercent)
+    val scope = rememberCoroutineScope()
+    val latestCommittedZoom by rememberUpdatedState(committedZoomPercent)
+    val latestOnZoomPercentChange by rememberUpdatedState(onZoomPercentChange)
     var showZoomHud by remember { mutableStateOf(false) }
     var zoomHudBump by remember { mutableIntStateOf(0) }
     var zoomPresetMenuOpen by remember { mutableStateOf(false) }
@@ -587,23 +692,51 @@ fun CodeEditorPane(
     LaunchedEffect(zoomHudBump) {
       if (zoomHudBump > 0) {
         showZoomHud = true
-        delay(1150L)
+        delay(1000L)
         showZoomHud = false
       }
     }
 
     val verticalScroll = rememberScrollState()
     val horizontalScroll = rememberScrollState()
-    val lineCount = remember(tfv.text) { tfv.text.count { it == '\n' } + 1 }
+
+    val lineStarts = remember(tfv.text) { CodeEditHelper.computeLineStarts(tfv.text) }
+    val lineCount = lineStarts.size
+
+    // Pure VisualTransformation keyed ONLY on (language, palette) -> never invalidated on cursor moves, diagnostics, or zoom
     val visualTransformation =
-      remember(activeFile.language, palette, fileDiagnostics, tfv.selection.start) {
+      remember(activeFile.language, palette) {
         CodeSyntaxVisualTransformation(
           language = activeFile.language,
           palette = palette,
-          diagnostics = fileDiagnostics,
-          cursorOffset = tfv.selection.start,
         )
       }
+
+    var textLayoutResult by remember(activeFile.path) { mutableStateOf<TextLayoutResult?>(null) }
+
+    var bracketMatch by remember(activeFile.path) { mutableStateOf<BracketMatch?>(null) }
+    LaunchedEffect(activeFile.path, activeFile.language, tfv.text, tfv.selection.start) {
+      val text = tfv.text
+      val cursor = tfv.selection.start
+      if (activeFile.language == WorkerLanguage.TEXT || text.isEmpty()) {
+        bracketMatch = null
+        return@LaunchedEffect
+      }
+      val atCursor = cursor in text.indices && text[cursor] in charArrayOf('{', '}', '(', ')', '[', ']')
+      val beforeCursor = (cursor - 1) in text.indices && text[cursor - 1] in charArrayOf('{', '}', '(', ')', '[', ']')
+      if (!atCursor && !beforeCursor) {
+        bracketMatch = null
+        return@LaunchedEffect
+      }
+      val lang = activeFile.language
+      bracketMatch =
+        if (text.length > 4_000) {
+          delay(35L)
+          withContext(Dispatchers.Default) { CodeAnalyzer.findMatchingBracket(text, cursor, lang) }
+        } else {
+          CodeAnalyzer.findMatchingBracket(text, cursor, lang)
+        }
+    }
 
     val lineSeverityMap =
       remember(fileDiagnostics) {
@@ -626,101 +759,112 @@ fun CodeEditorPane(
           }
         }
       }
-    val gutterAnnotated =
-      remember(rawGutterText, activeLine, lineCount, palette, lineSeverityMap) {
-        val builder = AnnotatedString.Builder(rawGutterText)
-        fun lineSpan(targetLine: Int): IntRange? {
-          val clamped = targetLine.coerceIn(1, lineCount)
-          var startOffset = 0
-          var cur = 1
-          while (cur < clamped && startOffset < rawGutterText.length) {
-            val nl = rawGutterText.indexOf('\n', startOffset)
-            if (nl < 0) break
-            startOffset = nl + 1
-            cur++
-          }
-          val endOffset =
-            rawGutterText.indexOf('\n', startOffset).let { if (it < 0) rawGutterText.length else it }
-          return if (startOffset < endOffset) startOffset until endOffset else null
-        }
 
-        lineSeverityMap.forEach { (lineNum, sev) ->
-          if (lineNum in 1..lineCount && sev != DiagnosticSeverity.INFO) {
-            lineSpan(lineNum)?.let { range ->
-              val color = if (sev == DiagnosticSeverity.ERROR) RoseError else AmberWarn
-              builder.addStyle(
-                SpanStyle(color = color, fontWeight = FontWeight.Bold),
-                range.first,
-                range.last + 1,
-              )
-            }
-          }
-        }
-
-        lineSpan(activeLine)?.let { range ->
-          val activeSev = lineSeverityMap[activeLine.coerceIn(1, lineCount)]
-          val activeColor =
-            when (activeSev) {
-              DiagnosticSeverity.ERROR -> RoseError
-              DiagnosticSeverity.WARNING -> AmberWarn
-              else -> palette.textPrimary
-            }
-          builder.addStyle(
-            SpanStyle(color = activeColor, fontWeight = FontWeight.Bold),
-            range.first,
-            range.last + 1,
-          )
-        }
-        builder.toAnnotatedString()
-      }
-
-    Box(
+    BoxWithConstraints(
       modifier =
         Modifier
           .weight(1f)
           .fillMaxWidth()
+          .clipToBounds()
           .pointerInput(Unit) {
             awaitEachGesture {
-              awaitFirstDown(requireUnconsumed = false)
-              var pinchAccum = 1f
-              var baseZoom = latestZoomPercent.toFloat()
-              var pinching = false
+              awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+              var activePinch = false
+              var localScale = 1f
+              var startPivot = Offset.Zero
+              var lastCentroid = Offset.Zero
               do {
-                val event = awaitPointerEvent()
+                val event = awaitPointerEvent(PointerEventPass.Initial)
                 val pressedCount = event.changes.count { it.pressed }
                 if (pressedCount >= 2) {
-                  if (!pinching) {
-                    pinching = true
-                    pinchAccum = 1f
-                    baseZoom = latestZoomPercent.toFloat()
+                  if (!activePinch) {
+                    activePinch = true
+                    isPinching = true
+                    localScale = 1f
+                    val initialCentroid = event.calculateCentroid(useCurrent = false)
+                    startPivot = if (initialCentroid != Offset.Unspecified) initialCentroid else Offset.Zero
+                    lastCentroid = startPivot
+                    pinchStartPivot = startPivot
+                    pinchCurrentCentroid = startPivot
                   }
                   val zoomDelta = event.calculateZoom()
-                  if (zoomDelta != 1f) {
-                    pinchAccum *= zoomDelta
-                    val nextZoom = (baseZoom * pinchAccum).roundToInt().coerceIn(60, 220)
-                    if (nextZoom != latestZoomPercent) {
-                      onZoomPercentChange(nextZoom)
-                      zoomHudBump++
+                  val centroid = event.calculateCentroid(useCurrent = true)
+                  if (centroid != Offset.Unspecified) {
+                    lastCentroid = centroid
+                    pinchCurrentCentroid = centroid
+                  }
+                  if (zoomDelta != 1f && zoomDelta.isFinite()) {
+                    val anchor = latestCommittedZoom.toFloat().coerceAtLeast(1f)
+                    localScale = (localScale * zoomDelta).coerceIn(60f / anchor, 220f / anchor)
+                    pinchScale = localScale
+                  }
+                  event.changes.forEach { it.consume() }
+                } else if (activePinch) {
+                  val anchor = latestCommittedZoom
+                  val finalZoom = (anchor * localScale).roundToInt().coerceIn(60, 220)
+                  val ratio = finalZoom.toFloat() / anchor.toFloat().coerceAtLeast(1f)
+                  val endPivot = if (lastCentroid != Offset.Unspecified) lastCentroid else startPivot
+                  val curScrollX = horizontalScroll.value
+                  val curScrollY = verticalScroll.value
+                  isPinching = false
+                  pinchScale = 1f
+                  activePinch = false
+                  zoomHudBump++
+                  if (finalZoom != anchor) {
+                    committedZoomPercent = finalZoom
+                    latestOnZoomPercentChange(finalZoom)
+                    scope.launch {
+                      val targetY = ((curScrollY + startPivot.y) * ratio - endPivot.y).roundToInt().coerceAtLeast(0)
+                      val targetX = ((curScrollX + startPivot.x) * ratio - endPivot.x).roundToInt().coerceAtLeast(0)
+                      verticalScroll.scrollTo(targetY)
+                      horizontalScroll.scrollTo(targetX)
                     }
                   }
-                  event.changes.forEach { change ->
-                    if (change.positionChanged()) change.consume()
-                  }
-                } else {
-                  pinching = false
                 }
               } while (event.changes.any { it.pressed })
+
+              if (activePinch) {
+                val anchor = latestCommittedZoom
+                val finalZoom = (anchor * localScale).roundToInt().coerceIn(60, 220)
+                val ratio = finalZoom.toFloat() / anchor.toFloat().coerceAtLeast(1f)
+                val endPivot = if (lastCentroid != Offset.Unspecified) lastCentroid else startPivot
+                val curScrollX = horizontalScroll.value
+                val curScrollY = verticalScroll.value
+                isPinching = false
+                pinchScale = 1f
+                zoomHudBump++
+                if (finalZoom != anchor) {
+                  committedZoomPercent = finalZoom
+                  latestOnZoomPercentChange(finalZoom)
+                  scope.launch {
+                    val targetY = ((curScrollY + startPivot.y) * ratio - endPivot.y).roundToInt().coerceAtLeast(0)
+                    val targetX = ((curScrollX + startPivot.x) * ratio - endPivot.x).roundToInt().coerceAtLeast(0)
+                    verticalScroll.scrollTo(targetY)
+                    horizontalScroll.scrollTo(targetX)
+                  }
+                }
+              }
             }
           },
     ) {
+      val minEditorHeight = maxHeight
       Row(
         modifier =
           Modifier
             .fillMaxSize()
+            .graphicsLayer {
+              if (pinchScale != 1f) {
+                scaleX = pinchScale
+                scaleY = pinchScale
+                transformOrigin = TransformOrigin(0f, 0f)
+                translationX = pinchStartPivot.x * (1f - pinchScale) + (pinchCurrentCentroid.x - pinchStartPivot.x)
+                translationY = pinchStartPivot.y * (1f - pinchScale) + (pinchCurrentCentroid.y - pinchStartPivot.y)
+              }
+            }
             .verticalScroll(verticalScroll),
       ) {
         if (uiState.editorSettings.showLineNumbers) {
-          val scalePad = (zoomPercent / 100f).coerceIn(0.8f, 1.8f)
+          val scalePad = (committedZoomPercent / 100f).coerceIn(0.8f, 1.8f)
           val gutterMinWidth =
             (when {
               lineCount >= 1000 -> 46f
@@ -731,6 +875,7 @@ fun CodeEditorPane(
             modifier =
               Modifier
                 .widthIn(min = gutterMinWidth)
+                .heightIn(min = minEditorHeight)
                 .background(palette.editorGutterBg)
                 .drawBehind {
                   lineSeverityMap.forEach { (lineNum, sev) ->
@@ -764,7 +909,7 @@ fun CodeEditorPane(
             contentAlignment = Alignment.TopEnd,
           ) {
             Text(
-              text = gutterAnnotated,
+              text = rawGutterText,
               style =
                 TextStyle(
                   fontFamily = JetBrainsMono,
@@ -782,43 +927,117 @@ fun CodeEditorPane(
         val editorModifier =
           Modifier
             .weight(1f)
-            .fillMaxHeight()
-            .drawBehind {
-              if (!uiState.editorSettings.wordWrap) {
-                lineSeverityMap.forEach { (lineNum, sev) ->
-                  if (sev != DiagnosticSeverity.INFO) {
-                    val errY = topPaddingPx + (lineNum - 1).coerceAtLeast(0) * lineHeightPx
-                    if (errY < size.height) {
-                      val c = if (sev == DiagnosticSeverity.ERROR) RoseError else AmberWarn
-                      drawRect(
-                        color = c.copy(alpha = 0.08f),
-                        topLeft = Offset(0f, errY),
-                        size = Size(size.width, lineHeightPx),
-                      )
-                    }
-                  }
-                }
-                val y = topPaddingPx + (activeLine - 1).coerceAtLeast(0) * lineHeightPx
-                if (y < size.height) {
-                  drawRect(
-                    color = palette.editorActiveLineBg.copy(alpha = 0.55f),
-                    topLeft = Offset(0f, y),
-                    size = Size(size.width, lineHeightPx),
-                  )
-                }
-              }
-            }
+            .heightIn(min = minEditorHeight)
             .then(
               if (!uiState.editorSettings.wordWrap) Modifier.horizontalScroll(horizontalScroll)
               else Modifier
             )
+            .drawBehind {
+              val layout = textLayoutResult
+              if (layout != null && layout.layoutInput.text.length == tfv.text.length) {
+                val docLen = layout.layoutInput.text.length
+                val safeCursor = tfv.selection.start.coerceIn(0, docLen)
+                val curVisualLine = layout.getLineForOffset(safeCursor)
+                val curTop = topPaddingPx + layout.getLineTop(curVisualLine)
+                val curBottom = topPaddingPx + layout.getLineBottom(curVisualLine)
+                drawRect(
+                  color = palette.editorActiveLineBg.copy(alpha = 0.55f),
+                  topLeft = Offset(0f, curTop),
+                  size = Size(size.width, (curBottom - curTop).coerceAtLeast(1f)),
+                )
+
+                for (diag in fileDiagnostics) {
+                  if (diag.severity == DiagnosticSeverity.INFO) continue
+                  val lineIdx = (diag.line - 1).coerceIn(0, lineStarts.lastIndex)
+                  val lineStart = lineStarts[lineIdx]
+                  val nextStart = if (lineIdx + 1 < lineStarts.size) lineStarts[lineIdx + 1] else docLen
+                  val lineEnd =
+                    if (nextStart > lineStart && tfv.text[nextStart - 1] == '\n') nextStart - 1
+                    else nextStart
+                  val isErr = diag.severity == DiagnosticSeverity.ERROR
+                  val diagColor = if (isErr) RoseError else AmberWarn
+
+                  val visualLine = layout.getLineForOffset(lineStart.coerceIn(0, docLen))
+                  val lTop = topPaddingPx + layout.getLineTop(visualLine)
+                  val lBottom = topPaddingPx + layout.getLineBottom(visualLine)
+                  drawRect(
+                    color = diagColor.copy(alpha = if (isErr) 0.08f else 0.06f),
+                    topLeft = Offset(0f, lTop),
+                    size = Size(size.width, (lBottom - lTop).coerceAtLeast(1f)),
+                  )
+
+                  if (lineStart < lineEnd && docLen > 0) {
+                    val rawStart = (lineStart + (diag.column - 1).coerceAtLeast(0)).coerceIn(lineStart, lineEnd - 1)
+                    val rawEnd = (rawStart + diag.length.coerceAtLeast(1)).coerceIn(rawStart + 1, lineEnd)
+                    val startBox = layout.getBoundingBox(rawStart.coerceIn(0, docLen - 1))
+                    val endBox = layout.getBoundingBox((rawEnd - 1).coerceIn(0, docLen - 1))
+                    val uLeft = hPadPx + startBox.left
+                    val uRight =
+                      if (endBox.top == startBox.top) hPadPx + endBox.right
+                      else hPadPx + startBox.right.coerceAtLeast(startBox.left + 8.dp.toPx())
+                    val uWidth = (uRight - uLeft).coerceAtLeast(6.dp.toPx())
+                    val uY = topPaddingPx + startBox.bottom - 1.5.dp.toPx()
+                    drawRect(
+                      color = diagColor.copy(alpha = 0.20f),
+                      topLeft = Offset(uLeft, topPaddingPx + startBox.top),
+                      size = Size(uWidth, (startBox.bottom - startBox.top).coerceAtLeast(1f)),
+                    )
+                    drawLine(
+                      color = diagColor,
+                      start = Offset(uLeft, uY),
+                      end = Offset(uLeft + uWidth, uY),
+                      strokeWidth = 1.6.dp.toPx(),
+                    )
+                  }
+                }
+
+                bracketMatch?.let { bm ->
+                  if (docLen > 0) {
+                    val boxColor = if (bm.isMismatch) RoseError else palette.activePillFg
+                    val bgAlpha = if (bm.isMismatch) 0.24f else 0.18f
+                    listOfNotNull(bm.primaryOffset, bm.partnerOffset).forEach { off ->
+                      if (off in 0 until docLen) {
+                        val box = layout.getBoundingBox(off)
+                        val left = hPadPx + box.left
+                        val top = topPaddingPx + box.top
+                        val w = (box.right - box.left).coerceAtLeast(4.dp.toPx())
+                        val h = (box.bottom - box.top).coerceAtLeast(1f)
+                        drawRect(
+                          color = boxColor.copy(alpha = bgAlpha),
+                          topLeft = Offset(left, top),
+                          size = Size(w, h),
+                        )
+                        drawLine(
+                          color = boxColor,
+                          start = Offset(left, top + h - 1.dp.toPx()),
+                          end = Offset(left + w, top + h - 1.dp.toPx()),
+                          strokeWidth = 1.5.dp.toPx(),
+                        )
+                      }
+                    }
+                  }
+                }
+              }
+            }
             .padding(horizontal = 10.dp, vertical = 8.dp)
             .testTag("code_editor_input")
 
         BasicTextField(
           value = tfv,
-          onValueChange = { if (!activeFile.isVirtualReadOnly) onCodeChange(it) },
+          onValueChange = { rawNext ->
+            if (!activeFile.isVirtualReadOnly) {
+              localTfv =
+                CodeEditHelper.applySmartCodeEdit(
+                  prev = localTfv,
+                  next = rawNext,
+                  language = activeFile.language,
+                  tabSize = uiState.editorSettings.tabSize,
+                  autoCloseBrackets = uiState.editorSettings.autoCloseBrackets,
+                )
+            }
+          },
           readOnly = activeFile.isVirtualReadOnly,
+          onTextLayout = { textLayoutResult = it },
           textStyle =
             TextStyle(
               fontFamily = JetBrainsMono,
@@ -832,35 +1051,12 @@ fun CodeEditorPane(
         )
       }
 
-      // Floating Pinch-Zoom Indicator HUD
-      androidx.compose.animation.AnimatedVisibility(
-        visible = showZoomHud,
-        enter = fadeIn(),
-        exit = fadeOut(),
+      // Floating Pinch-Zoom Indicator HUD (isolated leaf composable so live pinch doesn't recompose editor)
+      EditorZoomHud(
+        visible = isPinching || showZoomHud,
+        zoomPercentProvider = { (committedZoomPercent * pinchScale).roundToInt().coerceIn(60, 220) },
         modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
-      ) {
-        Surface(
-          color = palette.chromeSurface.copy(alpha = 0.94f),
-          shape = RoundedCornerShape(10.dp),
-          border = BorderStroke(1.dp, palette.activePillFg.copy(alpha = 0.45f)),
-          shadowElevation = 4.dp,
-        ) {
-          Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-          ) {
-            Icon(Icons.Outlined.ZoomIn, contentDescription = null, tint = palette.activePillFg, modifier = Modifier.size(14.dp))
-            Text(
-              text = "${zoomPercent}%",
-              fontFamily = JetBrainsMono,
-              fontSize = 11.5.sp,
-              fontWeight = FontWeight.Bold,
-              color = palette.textPrimary,
-            )
-          }
-        }
-      }
+      )
     }
 
     // Rebuilt Bottom Coding Dock: Compact Status Line + Zoom Controls + Autocomplete + Ergonomic Key Rail
@@ -907,84 +1103,23 @@ fun CodeEditorPane(
       )
       Spacer(Modifier.weight(1f))
 
-      // Compact Editor Zoom Controls (- | 100% | +)
-      Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-        modifier =
-          Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(palette.chromeSurface)
-            .padding(horizontal = 2.dp, vertical = 1.dp),
-      ) {
-        IconButton(
-          onClick = {
-            onZoomPercentChange((zoomPercent - 10).coerceIn(60, 220))
-            zoomHudBump++
-          },
-          enabled = zoomPercent > 60,
-          modifier = Modifier.size(22.dp).testTag("editor_zoom_out"),
-        ) {
-          Icon(
-            Icons.Outlined.Remove,
-            contentDescription = "Zoom out editor",
-            tint = if (zoomPercent > 60) palette.textSecondary else palette.textMuted.copy(alpha = 0.4f),
-            modifier = Modifier.size(13.dp),
-          )
-        }
-        Box {
-          Text(
-            text = "${zoomPercent}%",
-            fontFamily = JetBrainsMono,
-            fontSize = 10.sp,
-            fontWeight = if (zoomPercent != 100) FontWeight.Bold else FontWeight.Medium,
-            color = if (zoomPercent != 100) palette.activePillFg else palette.textSecondary,
-            modifier =
-              Modifier
-                .clip(RoundedCornerShape(4.dp))
-                .clickable { zoomPresetMenuOpen = true }
-                .padding(horizontal = 4.dp, vertical = 1.dp)
-                .testTag("editor_zoom_label"),
-          )
-          DropdownMenu(
-            expanded = zoomPresetMenuOpen,
-            onDismissRequest = { zoomPresetMenuOpen = false },
-          ) {
-            listOf(75, 100, 125, 150, 175, 200).forEach { preset ->
-              DropdownMenuItem(
-                text = {
-                  Text(
-                    text = if (preset == 100) "100% (Default)" else "$preset%",
-                    fontFamily = JetBrainsMono,
-                    fontWeight = if (preset == zoomPercent) FontWeight.Bold else FontWeight.Normal,
-                    color = if (preset == zoomPercent) palette.activePillFg else palette.textPrimary,
-                  )
-                },
-                onClick = {
-                  zoomPresetMenuOpen = false
-                  onZoomPercentChange(preset)
-                  zoomHudBump++
-                },
-              )
-            }
-          }
-        }
-        IconButton(
-          onClick = {
-            onZoomPercentChange((zoomPercent + 10).coerceIn(60, 220))
-            zoomHudBump++
-          },
-          enabled = zoomPercent < 220,
-          modifier = Modifier.size(22.dp).testTag("editor_zoom_in"),
-        ) {
-          Icon(
-            Icons.Outlined.Add,
-            contentDescription = "Zoom in editor",
-            tint = if (zoomPercent < 220) palette.textSecondary else palette.textMuted.copy(alpha = 0.4f),
-            modifier = Modifier.size(13.dp),
-          )
-        }
-      }
+      // Compact Editor Zoom Controls (- | 100% | +) in isolated leaf composable
+      EditorZoomControlCluster(
+        zoomPercentProvider = { (committedZoomPercent * pinchScale).roundToInt().coerceIn(60, 220) },
+        zoomPresetMenuOpen = zoomPresetMenuOpen,
+        onZoomPresetMenuChange = { zoomPresetMenuOpen = it },
+        onSetZoom = { next ->
+          committedZoomPercent = next
+          onZoomPercentChange(next)
+          zoomHudBump++
+        },
+        onStepZoom = { delta ->
+          val next = (committedZoomPercent + delta).coerceIn(60, 220)
+          committedZoomPercent = next
+          onZoomPercentChange(next)
+          zoomHudBump++
+        },
+      )
 
       val errCount = uiState.diagnostics.count { it.severity == DiagnosticSeverity.ERROR }
       val warnCount = uiState.diagnostics.size - errCount
@@ -992,7 +1127,7 @@ fun CodeEditorPane(
         modifier =
           Modifier
             .clip(RoundedCornerShape(6.dp))
-            .clickable(onClick = onOpenProblems)
+            .clickable { flushThen(onOpenProblems) }
             .padding(horizontal = 6.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -1036,8 +1171,14 @@ fun CodeEditorPane(
         val cursorPos = tfv.selection.start.coerceIn(0, tfv.text.length)
         val wordBeforeCursor =
           remember(tfv.text, cursorPos) {
-            val prefixWindow = tfv.text.substring((cursorPos - 40).coerceAtLeast(0), cursorPos)
-            prefixWindow.takeLastWhile { it.isLetterOrDigit() || it == '_' || it == '.' || it == '$' }
+            val start = (cursorPos - 40).coerceAtLeast(0)
+            var idx = cursorPos
+            while (idx > start) {
+              val ch = tfv.text[idx - 1]
+              if (ch.isLetterOrDigit() || ch == '_' || ch == '.' || ch == '$') idx--
+              else break
+            }
+            if (idx == cursorPos) "" else tfv.text.substring(idx, cursorPos)
           }
         val completions =
           remember(uiState.workspace?.bindings, activeFile.language, wordBeforeCursor) {
@@ -1063,9 +1204,11 @@ fun CodeEditorPane(
                     val replaceStart = (cursorPos - wordBeforeCursor.length).coerceAtLeast(0)
                     val nextText = tfv.text.replaceRange(replaceStart, cursorPos, sug.insertText)
                     val nextPos = (replaceStart + sug.insertText.length - sug.cursorBackOffset).coerceIn(0, nextText.length)
-                    onCodeChange(TextFieldValue(nextText, TextRange(nextPos)))
+                    val nextVal = TextFieldValue(nextText, TextRange(nextPos))
+                    localTfv = nextVal
+                    onCodeChange(nextVal)
                   } else {
-                    onInsertText(sug.insertText, sug.cursorBackOffset)
+                    flushThen { onInsertText(sug.insertText, sug.cursorBackOffset) }
                   }
                 },
                 shape = RoundedCornerShape(7.dp),
@@ -1111,10 +1254,10 @@ fun CodeEditorPane(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-          IconButton(onClick = onUndo, modifier = Modifier.size(34.dp).testTag("editor_undo")) {
+          IconButton(onClick = { flushThen(onUndo) }, modifier = Modifier.size(34.dp).testTag("editor_undo")) {
             Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = "Undo", tint = palette.textSecondary, modifier = Modifier.size(17.dp))
           }
-          IconButton(onClick = onRedo, modifier = Modifier.size(34.dp).testTag("editor_redo")) {
+          IconButton(onClick = { flushThen(onRedo) }, modifier = Modifier.size(34.dp).testTag("editor_redo")) {
             Icon(Icons.AutoMirrored.Outlined.Redo, contentDescription = "Redo", tint = palette.textSecondary, modifier = Modifier.size(17.dp))
           }
         }
@@ -1130,19 +1273,19 @@ fun CodeEditorPane(
           horizontalArrangement = Arrangement.spacedBy(5.dp),
           verticalAlignment = Alignment.CenterVertically,
         ) {
-          AccessoryKey("TAB") { onInsertTab() }
-          AccessoryKey("//") { onToggleComment() }
-          AccessoryKey("{ }") { onInsertText("{}", 1) }
-          AccessoryKey("( )") { onInsertText("()", 1) }
-          AccessoryKey("[ ]") { onInsertText("[]", 1) }
-          AccessoryKey("=>") { onInsertText(" => ", 0) }
-          AccessoryKey(";") { onInsertText(";", 0) }
-          AccessoryKey(":") { onInsertText(": ", 0) }
-          AccessoryKey("\"") { onInsertText("\"\"", 1) }
-          AccessoryKey("'") { onInsertText("''", 1) }
-          AccessoryKey("`") { onInsertText("``", 1) }
-          AccessoryKey("=") { onInsertText(" = ", 0) }
-          AccessoryKey(".") { onInsertText(".", 0) }
+          AccessoryKey("TAB") { flushThen(onInsertTab) }
+          AccessoryKey("//") { flushThen(onToggleComment) }
+          AccessoryKey("{ }") { flushThen { onInsertText("{}", 1) } }
+          AccessoryKey("( )") { flushThen { onInsertText("()", 1) } }
+          AccessoryKey("[ ]") { flushThen { onInsertText("[]", 1) } }
+          AccessoryKey("=>") { flushThen { onInsertText(" => ", 0) } }
+          AccessoryKey(";") { flushThen { onInsertText(";", 0) } }
+          AccessoryKey(":") { flushThen { onInsertText(": ", 0) } }
+          AccessoryKey("\"") { flushThen { onInsertText("\"\"", 1) } }
+          AccessoryKey("'") { flushThen { onInsertText("''", 1) } }
+          AccessoryKey("`") { flushThen { onInsertText("``", 1) } }
+          AccessoryKey("=") { flushThen { onInsertText(" = ", 0) } }
+          AccessoryKey(".") { flushThen { onInsertText(".", 0) } }
         }
       }
     }
@@ -1759,3 +1902,124 @@ private fun AllTabsClosedState(
     }
   }
 }
+
+@Composable
+private fun EditorZoomHud(
+  visible: Boolean,
+  zoomPercentProvider: () -> Int,
+  modifier: Modifier = Modifier,
+) {
+  val palette = LocalIdePalette.current
+  AnimatedVisibility(
+    visible = visible,
+    enter = fadeIn(),
+    exit = fadeOut(),
+    modifier = modifier,
+  ) {
+    val zoomPercent = zoomPercentProvider()
+    Surface(
+      color = palette.chromeSurface.copy(alpha = 0.94f),
+      shape = RoundedCornerShape(10.dp),
+      border = BorderStroke(1.dp, palette.activePillFg.copy(alpha = 0.45f)),
+      shadowElevation = 4.dp,
+    ) {
+      Row(
+        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+      ) {
+        Icon(Icons.Outlined.ZoomIn, contentDescription = null, tint = palette.activePillFg, modifier = Modifier.size(14.dp))
+        Text(
+          text = "${zoomPercent}%",
+          fontFamily = JetBrainsMono,
+          fontSize = 11.5.sp,
+          fontWeight = FontWeight.Bold,
+          color = palette.textPrimary,
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun EditorZoomControlCluster(
+  zoomPercentProvider: () -> Int,
+  zoomPresetMenuOpen: Boolean,
+  onZoomPresetMenuChange: (Boolean) -> Unit,
+  onSetZoom: (Int) -> Unit,
+  onStepZoom: (Int) -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  val displayZoomPercent = zoomPercentProvider()
+  Row(
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(2.dp),
+    modifier =
+      Modifier
+        .clip(RoundedCornerShape(6.dp))
+        .background(palette.chromeSurface)
+        .padding(horizontal = 2.dp, vertical = 1.dp),
+  ) {
+    IconButton(
+      onClick = { onStepZoom(-10) },
+      enabled = displayZoomPercent > 60,
+      modifier = Modifier.size(22.dp).testTag("editor_zoom_out"),
+    ) {
+      Icon(
+        Icons.Outlined.Remove,
+        contentDescription = "Zoom out editor",
+        tint = if (displayZoomPercent > 60) palette.textSecondary else palette.textMuted.copy(alpha = 0.4f),
+        modifier = Modifier.size(13.dp),
+      )
+    }
+    Box {
+      Text(
+        text = "${displayZoomPercent}%",
+        fontFamily = JetBrainsMono,
+        fontSize = 10.sp,
+        fontWeight = if (displayZoomPercent != 100) FontWeight.Bold else FontWeight.Medium,
+        color = if (displayZoomPercent != 100) palette.activePillFg else palette.textSecondary,
+        modifier =
+          Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .clickable { onZoomPresetMenuChange(true) }
+            .padding(horizontal = 4.dp, vertical = 1.dp)
+            .testTag("editor_zoom_label"),
+      )
+      DropdownMenu(
+        expanded = zoomPresetMenuOpen,
+        onDismissRequest = { onZoomPresetMenuChange(false) },
+      ) {
+        listOf(75, 100, 125, 150, 175, 200).forEach { preset ->
+          DropdownMenuItem(
+            text = {
+              Text(
+                text = if (preset == 100) "100% (Default)" else "$preset%",
+                fontFamily = JetBrainsMono,
+                fontWeight = if (preset == displayZoomPercent) FontWeight.Bold else FontWeight.Normal,
+                color = if (preset == displayZoomPercent) palette.activePillFg else palette.textPrimary,
+              )
+            },
+            onClick = {
+              onZoomPresetMenuChange(false)
+              onSetZoom(preset)
+            },
+          )
+        }
+      }
+    }
+    IconButton(
+      onClick = { onStepZoom(10) },
+      enabled = displayZoomPercent < 220,
+      modifier = Modifier.size(22.dp).testTag("editor_zoom_in"),
+    ) {
+      Icon(
+        Icons.Outlined.Add,
+        contentDescription = "Zoom in editor",
+        tint = if (displayZoomPercent < 220) palette.textSecondary else palette.textMuted.copy(alpha = 0.4f),
+        modifier = Modifier.size(13.dp),
+      )
+    }
+  }
+}
+

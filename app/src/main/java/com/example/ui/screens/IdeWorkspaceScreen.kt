@@ -304,6 +304,7 @@ fun IdeWorkspaceScreen(
           showProjectSettingsModal = false
           showProjectGitModal = true
         },
+        onClearAutoSavedDrafts = viewModel::clearAllAutoSavedDrafts,
         onNotify = viewModel::showStatus,
       )
       SnackbarHost(
@@ -821,7 +822,7 @@ fun IdeWorkspaceScreen(
                     onNavigateTabForward = viewModel::navigateTabForward,
                     onOpenWorkerPreview = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
                     onCreateNewFile = { newFileDialogPrefix = "" },
-                    onCodeChange = viewModel::updateEditorValue,
+                    onCodeChange = viewModel::syncTypedEditorValue,
                     onInsertText = viewModel::insertTextAtCursor,
                     onInsertTab = viewModel::insertTab,
                     onUndo = viewModel::undo,

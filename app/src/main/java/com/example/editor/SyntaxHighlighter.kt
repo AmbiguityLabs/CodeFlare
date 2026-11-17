@@ -15,23 +15,27 @@ import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.IdePalette
 import com.example.ui.theme.RoseError
 
-class CodeSyntaxVisualTransformation(
-  private val language: WorkerLanguage,
-  private val palette: IdePalette,
-  private val diagnostics: List<DiagnosticItem> = emptyList(),
-  private val cursorOffset: Int = -1,
+data class CodeSyntaxVisualTransformation(
+  val language: WorkerLanguage,
+  val palette: IdePalette,
 ) : VisualTransformation {
   override fun filter(text: AnnotatedString): TransformedText {
-    val highlighted =
-      SyntaxHighlighter.highlightWithDiagnostics(
-        code = text.text,
-        language = language,
-        palette = palette,
-        diagnostics = diagnostics,
-        cursorOffset = cursorOffset,
-      )
+    val highlighted = SyntaxHighlighter.highlight(text.text, language, palette)
     return TransformedText(highlighted, OffsetMapping.Identity)
   }
+}
+
+private class PaletteSpanStyles(palette: IdePalette) {
+  val comment = SpanStyle(color = palette.syntaxComment, fontStyle = FontStyle.Italic)
+  val propertyBold = SpanStyle(color = palette.syntaxProperty, fontWeight = FontWeight.Medium)
+  val property = SpanStyle(color = palette.syntaxProperty)
+  val string = SpanStyle(color = palette.syntaxString)
+  val number = SpanStyle(color = palette.syntaxNumber)
+  val keywordBold = SpanStyle(color = palette.syntaxKeyword, fontWeight = FontWeight.SemiBold)
+  val keyword = SpanStyle(color = palette.syntaxKeyword, fontWeight = FontWeight.Medium)
+  val control = SpanStyle(color = palette.syntaxControl, fontWeight = FontWeight.Medium)
+  val type = SpanStyle(color = palette.syntaxType)
+  val function = SpanStyle(color = palette.syntaxFunction)
 }
 
 object SyntaxHighlighter {
@@ -137,12 +141,19 @@ object SyntaxHighlighter {
   )
 
   private val cacheLock = Any()
+  private val stylesCache = HashMap<IdePalette, PaletteSpanStyles>(4)
   private val highlightCache =
     object : LinkedHashMap<HighlightCacheKey, HighlightCacheEntry>(32, 0.75f, true) {
       override fun removeEldestEntry(eldest: MutableMap.MutableEntry<HighlightCacheKey, HighlightCacheEntry>?): Boolean {
         return size > 24
       }
     }
+
+  private fun stylesFor(palette: IdePalette): PaletteSpanStyles {
+    synchronized(cacheLock) {
+      return stylesCache.getOrPut(palette) { PaletteSpanStyles(palette) }
+    }
+  }
 
   private const val MAX_HIGHLIGHT_CHARS = 30_000
 
@@ -167,9 +178,8 @@ object SyntaxHighlighter {
 
     val builder = AnnotatedString.Builder(base)
 
-    // Precompute line start offsets once when diagnostics exist
     if (actionableDiags.isNotEmpty()) {
-      val lineStarts = computeLineStarts(code)
+      val lineStarts = CodeEditHelper.computeLineStarts(code)
       actionableDiags.forEach { diag ->
         val lineIdx = (diag.line - 1).coerceIn(0, lineStarts.lastIndex)
         val lineStart = lineStarts[lineIdx]
@@ -184,7 +194,6 @@ object SyntaxHighlighter {
             if (diag.length > 1) {
               diag.length
             } else {
-              // Expand single-char span to cover adjacent identifier/token if applicable, or keep 1 char
               var end = rawStart + 1
               if (code[rawStart].isLetterOrDigit() || code[rawStart] == '_' || code[rawStart] == '$') {
                 while (end < lineEnd && (code[end].isLetterOrDigit() || code[end] == '_' || code[end] == '$')) {
@@ -208,7 +217,6 @@ object SyntaxHighlighter {
       }
     }
 
-    // Active bracket pair / mismatch highlight
     bracketMatch?.let { match ->
       if (match.isMismatch) {
         if (match.primaryOffset in code.indices) {
@@ -243,17 +251,6 @@ object SyntaxHighlighter {
     return builder.toAnnotatedString()
   }
 
-  private fun computeLineStarts(code: String): IntArray {
-    val starts = ArrayList<Int>(64)
-    starts.add(0)
-    for (i in code.indices) {
-      if (code[i] == '\n') {
-        starts.add(i + 1)
-      }
-    }
-    return starts.toIntArray()
-  }
-
   fun highlight(code: String, language: WorkerLanguage, palette: IdePalette): AnnotatedString {
     if (code.isEmpty()) return AnnotatedString("")
     if (language == WorkerLanguage.TEXT || code.length > MAX_HIGHLIGHT_CHARS) {
@@ -268,6 +265,7 @@ object SyntaxHighlighter {
       }
     }
 
+    val styles = stylesFor(palette)
     val builder = AnnotatedString.Builder(code)
     val len = code.length
     var i = 0
@@ -278,11 +276,7 @@ object SyntaxHighlighter {
       // Line comment //
       if (c == '/' && i + 1 < len && code[i + 1] == '/') {
         val end = code.indexOf('\n', i).let { if (it == -1) len else it }
-        builder.addStyle(
-          SpanStyle(color = palette.syntaxComment, fontStyle = FontStyle.Italic),
-          i,
-          end,
-        )
+        builder.addStyle(styles.comment, i, end)
         i = end
         continue
       }
@@ -290,11 +284,7 @@ object SyntaxHighlighter {
       // Block comment /* ... */
       if (c == '/' && i + 1 < len && code[i + 1] == '*') {
         val end = code.indexOf("*/", i + 2).let { if (it == -1) len else it + 2 }
-        builder.addStyle(
-          SpanStyle(color = palette.syntaxComment, fontStyle = FontStyle.Italic),
-          i,
-          end,
-        )
+        builder.addStyle(styles.comment, i, end)
         i = end
         continue
       }
@@ -305,7 +295,6 @@ object SyntaxHighlighter {
         var j = i + 1
         while (j < len) {
           if (quote != '`' && code[j] == '\n') {
-            // Stop unclosed single/double quote highlighting at end of line so rest of file stays readable
             break
           }
           if (code[j] == '\\' && j + 1 < len) {
@@ -320,10 +309,7 @@ object SyntaxHighlighter {
         }
         val isJsonKey =
           language == WorkerLanguage.JSON && quote == '"' && isFollowedByColon(code, j)
-        val style =
-          if (isJsonKey) SpanStyle(color = palette.syntaxProperty, fontWeight = FontWeight.Medium)
-          else SpanStyle(color = palette.syntaxString)
-        builder.addStyle(style, i, j)
+        builder.addStyle(if (isJsonKey) styles.propertyBold else styles.string, i, j)
         i = j
         continue
       }
@@ -334,7 +320,7 @@ object SyntaxHighlighter {
         while (j < len && (code[j].isLetterOrDigit() || code[j] == '.' || code[j] == '_')) {
           j++
         }
-        builder.addStyle(SpanStyle(color = palette.syntaxNumber), i, j)
+        builder.addStyle(styles.number, i, j)
         i = j
         continue
       }
@@ -349,14 +335,12 @@ object SyntaxHighlighter {
         val style =
           when {
             language == WorkerLanguage.JSON && (word == "true" || word == "false" || word == "null") ->
-              SpanStyle(color = palette.syntaxKeyword, fontWeight = FontWeight.SemiBold)
-            word in controlKeywords ->
-              SpanStyle(color = palette.syntaxControl, fontWeight = FontWeight.Medium)
-            word in jsKeywords ->
-              SpanStyle(color = palette.syntaxKeyword, fontWeight = FontWeight.Medium)
-            word in cloudflareGlobals -> SpanStyle(color = palette.syntaxType)
-            j < len && code[j] == '(' -> SpanStyle(color = palette.syntaxFunction)
-            i > 0 && code[i - 1] == '.' -> SpanStyle(color = palette.syntaxProperty)
+              styles.keywordBold
+            word in controlKeywords -> styles.control
+            word in jsKeywords -> styles.keyword
+            word in cloudflareGlobals -> styles.type
+            j < len && code[j] == '(' -> styles.function
+            i > 0 && code[i - 1] == '.' -> styles.property
             else -> null
           }
         if (style != null) {

@@ -266,6 +266,7 @@ fun HomeScreen(
           viewModel.setShowHomeSettings(false)
           viewModel.setShowHomeGitHubHub(true)
         },
+        onClearAutoSavedDrafts = viewModel::clearAllAutoSavedDrafts,
         onNotify = viewModel::showStatus,
       )
       SnackbarHost(

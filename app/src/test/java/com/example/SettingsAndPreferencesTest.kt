@@ -34,6 +34,8 @@ class SettingsAndPreferencesTest {
     assertFalse(defaults.defaultNodejsCompat)
     assertTrue(defaults.defaultWorkersDevEnabled)
     assertFalse(defaults.autoOpenPreviewOnDeploy)
+    assertTrue(defaults.autoSaveEnabled)
+    assertEquals(5, defaults.autoSaveIntervalSeconds)
   }
 
   @Test
@@ -54,6 +56,8 @@ class SettingsAndPreferencesTest {
         defaultNodejsCompat = true,
         defaultWorkersDevEnabled = false,
         autoOpenPreviewOnDeploy = true,
+        autoSaveEnabled = false,
+        autoSaveIntervalSeconds = 15,
       )
     }
 
@@ -69,13 +73,29 @@ class SettingsAndPreferencesTest {
     assertTrue(loaded.defaultNodejsCompat)
     assertFalse(loaded.defaultWorkersDevEnabled)
     assertTrue(loaded.autoOpenPreviewOnDeploy)
+    assertFalse(loaded.autoSaveEnabled)
+    assertEquals(15, loaded.autoSaveIntervalSeconds)
 
-    // Blank compatibility date falls back safely to baseline
-    store.updateEditorSettings { it.copy(defaultCompatibilityDate = "   ", fontSizeSp = 30, tabSize = 3) }
-    val normalized = store.editorSettingsFlow.first()
-    assertEquals("2024-11-01", normalized.defaultCompatibilityDate)
-    assertEquals(20, normalized.fontSizeSp)
-    assertEquals(2, normalized.tabSize)
+    // Blank compatibility date falls back safely to baseline and intervals clamp to 3..60s
+    store.updateEditorSettings {
+      it.copy(
+        defaultCompatibilityDate = "   ",
+        fontSizeSp = 30,
+        tabSize = 3,
+        autoSaveEnabled = true,
+        autoSaveIntervalSeconds = 1,
+      )
+    }
+    val normalizedLow = store.editorSettingsFlow.first()
+    assertEquals("2024-11-01", normalizedLow.defaultCompatibilityDate)
+    assertEquals(20, normalizedLow.fontSizeSp)
+    assertEquals(2, normalizedLow.tabSize)
+    assertTrue(normalizedLow.autoSaveEnabled)
+    assertEquals(3, normalizedLow.autoSaveIntervalSeconds)
+
+    store.updateEditorSettings { it.copy(autoSaveIntervalSeconds = 999) }
+    val normalizedHigh = store.editorSettingsFlow.first()
+    assertEquals(60, normalizedHigh.autoSaveIntervalSeconds)
   }
 
   @Test

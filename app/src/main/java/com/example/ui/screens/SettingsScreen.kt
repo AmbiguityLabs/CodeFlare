@@ -108,6 +108,7 @@ fun SettingsScreen(
   onClearCredentialFeedback: () -> Unit,
   onDisconnectCloudflare: () -> Unit,
   onOpenGitHubHub: (() -> Unit)? = null,
+  onClearAutoSavedDrafts: (() -> Unit)? = null,
   onNotify: (String) -> Unit,
 ) {
   val palette = LocalIdePalette.current
@@ -868,6 +869,70 @@ fun SettingsScreen(
             checked = settings.autoCloseBrackets,
             onCheckedChange = { auto -> onUpdateSettings { it.copy(autoCloseBrackets = auto) } },
           )
+
+          HorizontalDivider(color = palette.border.copy(alpha = 0.35f))
+
+          SettingsSwitchRow(
+            title = "Periodic Auto-Save",
+            subtitle = "Persist open editor buffers to DataStore",
+            checked = settings.autoSaveEnabled,
+            onCheckedChange = { enabled -> onUpdateSettings { it.copy(autoSaveEnabled = enabled) } },
+          )
+
+          if (settings.autoSaveEnabled) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Text("Auto-Save Interval", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
+                Text(
+                  text = "Every ${settings.autoSaveIntervalSeconds}s",
+                  fontFamily = JetBrainsMono,
+                  fontSize = 11.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = palette.activePillFg,
+                )
+              }
+              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(3, 5, 15, 30).forEach { seconds ->
+                  val selected = settings.autoSaveIntervalSeconds == seconds
+                  Surface(
+                    onClick = { onUpdateSettings { it.copy(autoSaveIntervalSeconds = seconds) } },
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (selected) palette.activePillBg else palette.editorBg,
+                    border =
+                      BorderStroke(
+                        1.dp,
+                        if (selected) palette.activePillFg.copy(alpha = 0.35f) else palette.border.copy(alpha = 0.5f),
+                      ),
+                    modifier = Modifier.weight(1f).height(36.dp),
+                  ) {
+                    Box(contentAlignment = Alignment.Center) {
+                      Text(
+                        text = "${seconds}s",
+                        fontFamily = JetBrainsMono,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                        color = if (selected) palette.activePillFg else palette.textPrimary,
+                      )
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          if (onClearAutoSavedDrafts != null) {
+            OutlinedButton(
+              onClick = onClearAutoSavedDrafts,
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Text("Clear Saved Editor Drafts")
+            }
+          }
 
           HorizontalDivider(color = palette.border.copy(alpha = 0.35f))
 

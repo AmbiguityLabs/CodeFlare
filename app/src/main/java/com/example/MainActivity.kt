@@ -9,9 +9,13 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.screens.AuthScreen
@@ -27,6 +31,18 @@ class MainActivity : ComponentActivity() {
     setContent {
       val ideViewModel: IdeViewModel = viewModel()
       val uiState by ideViewModel.uiState.collectAsStateWithLifecycle()
+      val lifecycleOwner = LocalLifecycleOwner.current
+
+      DisposableEffect(lifecycleOwner, ideViewModel) {
+        val observer =
+          LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+              ideViewModel.flushAutoSaveNow(clearSessionPointer = false)
+            }
+          }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+      }
 
       EdgeCodeTheme(
         darkTheme = uiState.editorSettings.darkTheme,
