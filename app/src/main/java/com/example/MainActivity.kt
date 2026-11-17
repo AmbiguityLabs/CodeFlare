@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.screens.AuthScreen
+import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.IdeWorkspaceScreen
 import com.example.ui.theme.EdgeCodeTheme
 import com.example.ui.viewmodel.IdeViewModel
@@ -59,7 +60,13 @@ class MainActivity : ComponentActivity() {
               },
               onDisconnectGitHub = ideViewModel::disconnectGitHub,
               onEnterGitHubIde = ideViewModel::enterGitHubIdeMode,
-              onOpenLocalScratchpad = { ideViewModel.enterLocalScratchpad() },
+              onOpenLocalScratchpad = { ideViewModel.enterLocalHome() },
+            )
+          }
+          uiState.workspace == null -> {
+            HomeScreen(
+              uiState = uiState,
+              viewModel = ideViewModel,
             )
           }
           else -> {

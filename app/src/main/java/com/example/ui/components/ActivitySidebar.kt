@@ -1386,7 +1386,7 @@ private fun buildVisibleTreeEntries(
 }
 
 @Composable
-private fun SnippetsPanel(
+fun SnippetsPanel(
   hasActiveFile: Boolean,
   onInsertSnippet: (String) -> Unit,
 ) {
@@ -1422,7 +1422,7 @@ private fun SnippetsPanel(
 }
 
 @Composable
-private fun GlobalSearchPanel(
+fun GlobalSearchPanel(
   uiState: IdeUiState,
   onQueryChange: (String) -> Unit,
   onReplaceAllInWorkspace: (String, String) -> Unit,
@@ -1517,7 +1517,7 @@ private fun GlobalSearchPanel(
 }
 
 @Composable
-private fun SettingsPanel(
+fun SettingsPanel(
   uiState: IdeUiState,
   onUpdateSettings: ((EditorSettings) -> EditorSettings) -> Unit,
   onSignOut: () -> Unit,

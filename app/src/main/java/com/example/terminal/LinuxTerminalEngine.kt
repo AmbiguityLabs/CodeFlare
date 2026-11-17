@@ -1058,9 +1058,29 @@ class LinuxTerminalEngine(
           process.outputStream.close()
         }
 
-        val completed = process.waitFor(15, TimeUnit.SECONDS)
+        val completed =
+          if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            process.waitFor(15, TimeUnit.SECONDS)
+          } else {
+            val deadline = System.currentTimeMillis() + 15_000L
+            var finished = false
+            while (System.currentTimeMillis() < deadline) {
+              try {
+                process.exitValue()
+                finished = true
+                break
+              } catch (_: IllegalThreadStateException) {
+                Thread.sleep(50)
+              }
+            }
+            finished
+          }
         if (!completed) {
-          process.destroyForcibly()
+          if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            process.destroyForcibly()
+          } else {
+            process.destroy()
+          }
           return@withContext ShellExecutionResult(
             output = "Process timed out after 15s",
             isError = true,

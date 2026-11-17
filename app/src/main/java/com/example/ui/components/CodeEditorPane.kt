@@ -370,17 +370,6 @@ fun CodeEditorPane(
           modifier = Modifier.size(16.dp),
         )
       }
-      IconButton(
-        onClick = onOpenWorkerPreview,
-        modifier = Modifier.size(32.dp).testTag("editor_preview_worker_button"),
-      ) {
-        Icon(
-          Icons.Outlined.Visibility,
-          contentDescription = "Open deployed Worker preview & HTTP tester",
-          tint = palette.activePillFg,
-          modifier = Modifier.size(18.dp),
-        )
-      }
       if (!activeFile.isVirtualReadOnly) {
         IconButton(
           onClick = onFormat,
@@ -766,9 +755,34 @@ private fun EditorFileTabBar(
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+      Surface(
+        onClick = onOpenExplorer,
+        shape = RoundedCornerShape(9.dp),
+        color = palette.chromePill,
+        modifier = Modifier.testTag("editor_files_button"),
+      ) {
+        Row(
+          modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+          Icon(
+            Icons.Outlined.FolderOpen,
+            contentDescription = "Open Project Files",
+            tint = palette.activePillFg,
+            modifier = Modifier.size(15.dp),
+          )
+          Text(
+            text = "Files",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = palette.textPrimary,
+          )
+        }
+      }
       if (uiState.openTabPaths.isEmpty()) {
         Text(
-          text = "No open tabs • ${workspaceFiles.size} project files",
+          text = "${workspaceFiles.size} project files",
           style = MaterialTheme.typography.labelSmall,
           color = palette.textMuted,
           modifier = Modifier.weight(1f).padding(horizontal = 6.dp),
@@ -937,34 +951,6 @@ private fun EditorFileTabBar(
               }
             }
           }
-        }
-      }
-
-      // RAM DB Status Pill
-      val dirtyCount = uiState.ramDbStats.dirtyFilesCount
-      Surface(
-        onClick = onOpenExplorer,
-        color = if (dirtyCount > 0) palette.activePillBg else palette.chromePill,
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.testTag("ram_status_chip"),
-      ) {
-        Row(
-          modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
-          Icon(
-            Icons.Outlined.Storage,
-            contentDescription = "On-device RAM database status",
-            tint = if (dirtyCount > 0) EmeraldLive else palette.textSecondary,
-            modifier = Modifier.size(12.dp),
-          )
-          Text(
-            text = if (dirtyCount > 0) "RAM $dirtyCount*" else "RAM",
-            fontSize = 10.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = if (dirtyCount > 0) palette.activePillFg else palette.textSecondary,
-          )
         }
       }
 

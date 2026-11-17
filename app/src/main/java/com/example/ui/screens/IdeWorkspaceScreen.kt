@@ -5,10 +5,9 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -26,30 +25,39 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.Send
+import androidx.compose.material.icons.outlined.AccountTree
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudUpload
-import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Http
-import androidx.compose.material.icons.outlined.Menu
-import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.Sensors
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Terminal
-import androidx.compose.material.icons.outlined.VerticalSplit
-import androidx.compose.material.icons.outlined.Visibility
-import androidx.compose.material.icons.outlined.WarningAmber
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -65,31 +73,45 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.R
-import com.example.ui.components.ActivitySidebar
+import com.example.ui.components.ApiTesterPane
 import com.example.ui.components.BatchUploadOptionsDialog
-import com.example.ui.components.BottomPanel
+import com.example.ui.components.CloudflareInfraPanel
 import com.example.ui.components.CodeEditorPane
 import com.example.ui.components.CommandPaletteDialog
+import com.example.ui.components.ConsoleView
+import com.example.ui.components.DeployedWorkerPreviewPane
+import com.example.ui.components.GitHubAndDiffPanel
+import com.example.ui.components.LinuxTerminalPane
+import com.example.ui.components.LiveTailView
 import com.example.ui.components.NewDirectoryDialog
 import com.example.ui.components.NewModuleFileDialog
 import com.example.ui.components.NewWorkerDialog
 import com.example.ui.components.PaletteCommand
+import com.example.ui.components.ProblemsView
+import com.example.ui.components.ProjectFilesSidebar
 import com.example.ui.components.RenameFileDialog
+import com.example.ui.components.SettingsPanel
+import com.example.ui.components.WorkerTestWindow
+import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
+import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.viewmodel.BottomPanelTab
 import com.example.ui.viewmodel.IdeUiState
 import com.example.ui.viewmodel.IdeViewModel
-import com.example.ui.viewmodel.SidebarSection
+import com.example.ui.viewmodel.ProjectMode
 import kotlinx.coroutines.launch
 
 @Composable
@@ -99,7 +121,7 @@ fun IdeWorkspaceScreen(
 ) {
   val palette = LocalIdePalette.current
   val context = LocalContext.current
-  val drawerState = rememberDrawerState(initialValue = DrawerValue.Open)
+  val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
   val scope = rememberCoroutineScope()
   val snackbarHostState = remember { SnackbarHostState() }
 
@@ -110,69 +132,39 @@ fun IdeWorkspaceScreen(
   var showCommandPalette by remember { mutableStateOf(false) }
   var pendingUploadUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
   var pendingRenamePath by remember { mutableStateOf<String?>(null) }
+  var overflowMenuOpen by remember { mutableStateOf(false) }
+  var showProjectGitModal by remember { mutableStateOf(false) }
+  var showProjectSettingsModal by remember { mutableStateOf(false) }
 
   // Zero-permission Storage Access Framework (SAF) launchers
   val singleFileUploadLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-      if (uri != null) {
-        pendingUploadUris = listOf(uri)
-      }
+      if (uri != null) pendingUploadUris = listOf(uri)
     }
 
   val batchFileUploadLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-      if (uris.isNotEmpty()) {
-        pendingUploadUris = uris
-      }
+      if (uris.isNotEmpty()) pendingUploadUris = uris
     }
 
   val newWorkerFilesLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-      if (uris.isNotEmpty()) {
-        pickedNewWorkerUris = uris
-      }
+      if (uris.isNotEmpty()) pickedNewWorkerUris = uris
     }
 
   val exportFileLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
-      if (uri != null) {
-        viewModel.exportActiveFileToUri(uri)
-      }
+      if (uri != null) viewModel.exportActiveFileToUri(uri)
     }
 
   val exportWorkspaceBundleLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-      if (uri != null) {
-        viewModel.exportWorkspaceBundleToUri(uri)
-      }
+      if (uri != null) viewModel.exportWorkspaceBundleToUri(uri)
     }
 
   val importWorkspaceBundleLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-      if (uri != null) {
-        viewModel.importWorkspaceBundleFromUri(uri)
-      }
-    }
-
-  val pagesFolderLauncher =
-    rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
-      if (treeUri != null) {
-        viewModel.stagePagesFolder(treeUri)
-      }
-    }
-
-  val pagesZipLauncher =
-    rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { zipUri ->
-      if (zipUri != null) {
-        viewModel.stagePagesZip(zipUri)
-      }
-    }
-
-  val pagesFilesLauncher =
-    rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-      if (uris.isNotEmpty()) {
-        viewModel.stagePagesFiles(uris)
-      }
+      if (uri != null) viewModel.importWorkspaceBundleFromUri(uri)
     }
 
   val triggerSingleUpload = { singleFileUploadLauncher.launch(arrayOf("*/*")) }
@@ -201,11 +193,14 @@ fun IdeWorkspaceScreen(
     viewModel.dismissDeployBanner()
   }
 
-  BackHandler(enabled = drawerState.isOpen || uiState.showBottomPanel || uiState.showFindBar) {
+  BackHandler {
     when {
+      showProjectGitModal -> showProjectGitModal = false
+      showProjectSettingsModal -> showProjectSettingsModal = false
       drawerState.isOpen -> scope.launch { drawerState.close() }
       uiState.showFindBar -> viewModel.toggleFindBar(false)
-      uiState.showBottomPanel -> viewModel.hideBottomPanel()
+      uiState.projectMode != ProjectMode.CODE -> viewModel.setProjectMode(ProjectMode.CODE)
+      else -> viewModel.closeWorkspaceToHome()
     }
   }
 
@@ -278,103 +273,221 @@ fun IdeWorkspaceScreen(
     )
   }
 
+  if (showProjectSettingsModal) {
+    Dialog(
+      onDismissRequest = { showProjectSettingsModal = false },
+      properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+      Surface(
+        color = palette.chromeBg,
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 28.dp),
+      ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 8.dp, top = 12.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            Text(
+              text = "IDE Preferences",
+              style = MaterialTheme.typography.titleMedium,
+              fontWeight = FontWeight.SemiBold,
+              color = palette.textPrimary,
+            )
+            IconButton(onClick = { showProjectSettingsModal = false }) {
+              Icon(Icons.Outlined.Close, contentDescription = "Close preferences", tint = palette.textSecondary)
+            }
+          }
+          HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
+          Box(modifier = Modifier.height(480.dp)) {
+            SettingsPanel(
+              uiState = uiState,
+              onUpdateSettings = viewModel::updateSettings,
+              onSignOut = {
+                showProjectSettingsModal = false
+                if (uiState.isLocalScratchpad || uiState.isGitHubIdeOnlyMode) viewModel.exitScratchpadToAuth()
+                else viewModel.signOut()
+              },
+            )
+          }
+        }
+      }
+    }
+  }
+
+  if (showProjectGitModal) {
+    Dialog(
+      onDismissRequest = { showProjectGitModal = false },
+      properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+      Surface(
+        color = palette.chromeBg,
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 20.dp),
+      ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 8.dp, top = 12.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            Column {
+              Text(
+                text = "Git Sync (Optional)",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = palette.textPrimary,
+              )
+              Text(
+                text = "Project: ${uiState.workspace?.scriptName ?: "none"}",
+                style = MaterialTheme.typography.labelSmall,
+                color = palette.textMuted,
+              )
+            }
+            IconButton(onClick = { showProjectGitModal = false }) {
+              Icon(Icons.Outlined.Close, contentDescription = "Close Git Sync", tint = palette.textSecondary)
+            }
+          }
+          HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
+          Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            GitHubAndDiffPanel(
+              uiState = uiState,
+              onStartGitHubOAuth = { clientId ->
+                viewModel.startGitHubDeviceOAuth(clientIdOverride = clientId, enterIdeOnSuccess = false) { verificationUrl ->
+                  runCatching {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(verificationUrl)))
+                  }
+                }
+              },
+              onCancelGitHubOAuth = viewModel::cancelGitHubDeviceOAuth,
+              onConnectGitHubToken = { pat -> viewModel.connectGitHubToken(pat, enterIdeOnSuccess = false) },
+              onDisconnectGitHub = viewModel::disconnectGitHub,
+              onRefreshRepos = viewModel::refreshGitHubRepos,
+              onSelectRepo = viewModel::selectGitHubRepo,
+              onSelectBranch = viewModel::selectGitHubBranch,
+              onCreateBranch = viewModel::createGitHubBranch,
+              onCloneRepository = { url, branch, merge ->
+                viewModel.cloneGitHubRepository(url, branch, merge)
+              },
+              onCreateGitHubRepo = viewModel::createGitHubRepoAndLink,
+              onLinkSelectedRepo = viewModel::linkCurrentWorkerToSelectedGitHubRepo,
+              onPullFilesToWorker = viewModel::pullGitHubPathsIntoWorker,
+              onSyncPullLinkedRepo = viewModel::syncPullLinkedGitRepo,
+              onSetCommitMessage = viewModel::setGitCommitMessage,
+              onToggleStageFile = viewModel::toggleGitFileStaged,
+              onStageAll = viewModel::stageAllGitChanges,
+              onUnstageAll = viewModel::unstageAllGitChanges,
+              onDiscardFileChange = viewModel::discardGitFileChange,
+              onCommitLocally = { viewModel.commitStagedChangesLocally() },
+              onPushToGitHub = { viewModel.pushQueuedAndActiveChangesToGitHub() },
+              onInspectCommit = viewModel::inspectGitHubCommit,
+              onInspectPullRequest = viewModel::inspectPullRequest,
+              onCreatePullRequest = viewModel::createPullRequest,
+              onMergePullRequest = viewModel::mergePullRequest,
+              onCreateIssue = viewModel::createGitHubIssue,
+              onToggleIssueState = viewModel::toggleGitHubIssueState,
+              onCommentOnIssue = viewModel::commentOnGitHubIssue,
+              onDispatchWorkflow = viewModel::dispatchGitHubWorkflow,
+              onRerunWorkflowRun = viewModel::rerunGitHubWorkflowRun,
+              onInspectWorkflowRunJobs = viewModel::inspectWorkflowRunJobs,
+              onSubmitPrReview = viewModel::submitPullRequestReview,
+              onGenerateCfActionWorkflow = viewModel::generateCloudflareGitHubActionWorkflow,
+              onOpenFileInEditor = { path ->
+                viewModel.openFileTab(path, recordHistory = true)
+                viewModel.setProjectMode(ProjectMode.CODE)
+                showProjectGitModal = false
+              },
+              onRenameWorkerTarget = viewModel::renameActiveWorkerTarget,
+              onDeployActiveWorker = viewModel::deployActiveWorker,
+              onRevertFile = viewModel::revertFile,
+              onCloseDrawerIfCompact = { showProjectGitModal = false },
+            )
+          }
+        }
+      }
+    }
+  }
+
   if (showCommandPalette) {
     val commands =
       listOf(
-        PaletteCommand("Open WorkerTestWindow", "Test live deployed Worker URL with methods, headers, body & timing") {
-          viewModel.openWorkerTestWindow(maximizeWindow = true)
+        PaletteCommand("Switch to Code Mode", "Open full-screen editor for current project") {
+          viewModel.setProjectMode(ProjectMode.CODE)
         },
-        PaletteCommand("Deployed Worker Preview Window", "Live WebView + HTTP tester + console for deployed Worker") {
+        PaletteCommand("Open Deployed Worker Preview", "Live WebView & HTTP preview for this Worker") {
           viewModel.openDeployedWorkerPreview(maximizeWindow = true)
         },
-        PaletteCommand("Export / Deploy Worker to Cloudflare", "Publish all local RAM edits, bindings & deletions live") {
-          viewModel.deployActiveWorker()
+        PaletteCommand("Open Worker HTTP Tester", "Test Worker routes with custom methods, headers & body") {
+          viewModel.openWorkerTestWindow(maximizeWindow = true)
         },
-        PaletteCommand("Re-Import Worker from Cloudflare", "Discard local RAM edits and pull fresh Worker code from Cloudflare") {
-          viewModel.reimportActiveWorkerFromCloudflare()
-        },
-        PaletteCommand("Revert Workspace to Imported Baseline", "Restore workspace files in RAM back to imported baseline") {
-          viewModel.revertWorkspaceToImportedBaseline()
-        },
-        PaletteCommand("Export RAM Workspace Bundle (.json)", "Save workspace files and metadata as a local JSON bundle") {
-          if (uiState.workspace != null) triggerExportWorkspaceBundle()
-        },
-        PaletteCommand("Import Workspace Bundle (.json)", "Load saved workspace JSON bundle into on-device RAM DB") {
-          triggerImportWorkspaceBundle()
-        },
-        PaletteCommand("Create New Worker", "Scaffold from template or upload local files") {
-          showNewWorkerDialog = true
-        },
-        PaletteCommand("Upload Single File to Worker", "Pick one local script/asset file via Android picker") {
-          if (uiState.workspace != null) triggerSingleUpload() else showNewWorkerDialog = true
-        },
-        PaletteCommand("Batch Upload Multiple Files", "Import multiple module scripts at once into Worker") {
-          if (uiState.workspace != null) triggerBatchUpload() else showNewWorkerDialog = true
-        },
-        PaletteCommand("Export Active File", "Save current script out to device storage") {
-          if (uiState.activeFile != null) triggerExportActiveFile()
-        },
-        PaletteCommand("Open API Tester (Postman)", "Test HTTP endpoints, headers, auth presets & collections") {
+        PaletteCommand("Open API Tester", "Postman-style API tester with collections & env vars") {
           viewModel.toggleBottomPanel(BottomPanelTab.API_TESTER)
         },
-        PaletteCommand("Open Linux API Terminal", "Run curl, jq, wrangler, and Linux commands") {
+        PaletteCommand("Open Project Config", "Bindings, Env Vars, Secrets, Routes, Cron & Rollback") {
+          viewModel.setProjectMode(ProjectMode.CONFIG)
+        },
+        PaletteCommand("Open Project Terminal", "Run curl, jq, wrangler, and Linux commands") {
           viewModel.toggleBottomPanel(BottomPanelTab.TERMINAL)
-        },
-        PaletteCommand("Sync wrangler.jsonc to Cloudflare", "Apply wrangler.jsonc/.toml bindings, vars & crons to workspace") {
-          viewModel.syncWranglerFileToWorkspace()
-        },
-        PaletteCommand("Generate GitHub Auto-Deploy Action", "Create .github/workflows/deploy-cloudflare.yml for auto-deploy") {
-          viewModel.generateCloudflareGitHubActionWorkflow()
-        },
-        PaletteCommand("Workers Infra (KV, D1, R2, Domains)", "Manage Bindings, KV, D1 SQL, R2, Cron, Rollback") {
-          viewModel.setSidebarSection(SidebarSection.BINDINGS)
-          scope.launch { drawerState.open() }
-        },
-        PaletteCommand("Cloudflare Pages", "Manage Pages projects, deployments, logs & domains") {
-          viewModel.setSidebarSection(SidebarSection.PAGES)
-          scope.launch { drawerState.open() }
-        },
-        PaletteCommand("Git Source Control & Clone", "Clone GitHub repos, stage/commit changes, push & deploy Worker") {
-          viewModel.setSidebarSection(SidebarSection.GITHUB)
-          scope.launch { drawerState.open() }
-        },
-        PaletteCommand("Worker Snippets", "Insert reusable Workers JS snippets") {
-          viewModel.setSidebarSection(SidebarSection.SNIPPETS)
-          scope.launch { drawerState.open() }
         },
         PaletteCommand("Toggle Live Tail Logs", "Stream real-time console.log() via WebSocket") {
           viewModel.toggleLiveTail()
         },
+        PaletteCommand("Export / Deploy Worker to Cloudflare", "Publish all local RAM edits, bindings & deletions live") {
+          viewModel.deployActiveWorker()
+        },
+        PaletteCommand("Re-Import Worker from Cloudflare", "Discard local RAM edits and pull fresh Worker code") {
+          viewModel.reimportActiveWorkerFromCloudflare()
+        },
+        PaletteCommand("Revert Workspace to Baseline", "Restore workspace files in RAM back to imported baseline") {
+          viewModel.revertWorkspaceToImportedBaseline()
+        },
+        PaletteCommand("Export RAM Workspace Bundle (.json)", "Save workspace files and metadata as local JSON") {
+          if (uiState.workspace != null) triggerExportWorkspaceBundle()
+        },
+        PaletteCommand("Import Workspace Bundle (.json)", "Load saved workspace JSON bundle into RAM DB") {
+          triggerImportWorkspaceBundle()
+        },
+        PaletteCommand("Upload Single File", "Pick one local script/asset file into this project") {
+          if (uiState.workspace != null) triggerSingleUpload()
+        },
+        PaletteCommand("Batch Upload Files", "Import multiple module scripts into this project") {
+          if (uiState.workspace != null) triggerBatchUpload()
+        },
+        PaletteCommand("Export Active File", "Save current script out to device storage") {
+          if (uiState.activeFile != null) triggerExportActiveFile()
+        },
+        PaletteCommand("Sync wrangler.jsonc", "Apply wrangler.jsonc/.toml bindings, vars & crons to workspace") {
+          viewModel.syncWranglerFileToWorkspace()
+        },
         PaletteCommand("Format Document", "Auto-indent JavaScript or JSON") {
           viewModel.formatActiveFile()
         },
-        PaletteCommand("Toggle Dark / Light Theme", "Switch Material You theme mode") {
-          viewModel.updateSettings { it.copy(darkTheme = !it.darkTheme) }
+        PaletteCommand("Git Sync (Optional)", "Stage, commit & push project changes to GitHub") {
+          showProjectGitModal = true
+        },
+        PaletteCommand("Back to All Projects (Home)", "Return to the Home Projects Hub") {
+          viewModel.closeWorkspaceToHome()
         },
       )
     CommandPaletteDialog(commands = commands, onDismiss = { showCommandPalette = false })
   }
 
   BoxWithConstraints(
-    modifier =
-      Modifier
-        .fillMaxSize()
-        .background(palette.chromeBg),
+    modifier = Modifier.fillMaxSize().background(palette.chromeBg),
   ) {
     val isExpanded = maxWidth >= 840.dp
     val drawerWidth = (maxWidth * 0.78f).coerceIn(270.dp, 326.dp)
 
-    val sidebarContent: @Composable () -> Unit = {
-      ActivitySidebar(
+    val projectSidebarContent: @Composable () -> Unit = {
+      ProjectFilesSidebar(
         uiState = uiState,
-        onSelectSection = viewModel::setSidebarSection,
-        onSelectAccount = viewModel::selectAccount,
-        onRefreshWorkers = viewModel::refreshWorkers,
-        onOpenWorker = viewModel::openWorker,
-        onShowNewWorkerDialog = { showNewWorkerDialog = true },
-        onDeleteWorker = viewModel::deleteWorker,
-        onOpenFile = { path -> viewModel.openFileTab(path, recordHistory = true) },
-        onOpenWorkerPreview = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
+        onOpenFile = { path ->
+          viewModel.openFileTab(path, recordHistory = true)
+          viewModel.setProjectMode(ProjectMode.CODE)
+        },
         onShowNewFileDialog = { prefix -> newFileDialogPrefix = prefix },
         onShowNewDirectoryDialog = { base -> newDirDialogBase = base },
         onUploadSingleFile = triggerSingleUpload,
@@ -383,119 +496,18 @@ fun IdeWorkspaceScreen(
         onDeleteModuleFile = viewModel::deleteModuleFile,
         onRequestRenameModuleFile = { path -> pendingRenamePath = path },
         onSetEntryModule = viewModel::setEntryModule,
-        onDeployActiveWorker = viewModel::deployActiveWorker,
-        onReimportActiveWorker = viewModel::reimportActiveWorkerFromCloudflare,
         onRevertWorkspaceToImported = viewModel::revertWorkspaceToImportedBaseline,
-        onExportWorkspaceBundle = triggerExportWorkspaceBundle,
-        onImportWorkspaceBundle = triggerImportWorkspaceBundle,
-        onInsertSnippet = { snippet -> viewModel.insertTextAtCursor(snippet, 0) },
-        onJumpToLine = viewModel::jumpToLine,
         onSearchQueryChange = viewModel::setSearchQuery,
         onReplaceInAllFiles = viewModel::replaceInAllFiles,
-        onRevertFile = viewModel::revertFile,
-        onRefreshInfra = viewModel::loadCloudflareInfra,
-        onToggleWorkersDev = viewModel::toggleWorkersDev,
-        onUpdateCompat = viewModel::updateCompatibilitySettings,
-        onAddCronSchedule = viewModel::addCronSchedule,
-        onRemoveCronSchedule = viewModel::removeCronSchedule,
-        onAttachZoneRoute = viewModel::attachZoneRoute,
-        onDeleteZoneRoute = viewModel::deleteZoneRoute,
-        onAttachWorkerDomain = viewModel::attachWorkerCustomDomain,
-        onRemoveWorkerDomain = viewModel::removeWorkerCustomDomain,
-        onRollbackVersion = viewModel::rollbackToVersion,
-        onRefreshWorkerVersions = viewModel::loadWorkerVersions,
-        onDeployGradualSplit = viewModel::deployGradualWorkerSplit,
-        onAddEnvVar = viewModel::addEnvVar,
-        onAddSecret = viewModel::addSecret,
-        onBindResource = viewModel::bindResourceToWorker,
-        onDeleteBinding = viewModel::deleteBindingOrSecret,
-        onCreateKvNamespace = viewModel::createKvNamespace,
-        onDeleteKvNamespace = viewModel::deleteKvNamespace,
-        onSelectKvNamespace = viewModel::selectKvNamespace,
-        onInspectKvKey = viewModel::inspectKvKey,
-        onPutKvEntry = viewModel::putKvEntry,
-        onBulkImportKv = viewModel::bulkImportKvJson,
-        onExportKvJson = viewModel::exportSelectedKvJson,
-        onDeleteKvKey = viewModel::deleteKvKey,
-        onCreateD1Database = viewModel::createD1Database,
-        onDeleteD1Database = viewModel::deleteD1Database,
-        onSelectD1Database = viewModel::selectD1Database,
-        onRunD1Sql = viewModel::runD1SqlQuery,
-        onCreateR2Bucket = viewModel::createR2Bucket,
-        onDeleteR2Bucket = viewModel::deleteR2Bucket,
-        onCreateQueue = viewModel::createQueue,
-        onDeleteQueue = viewModel::deleteQueue,
-        onNotifyStatus = viewModel::showStatus,
-        onRefreshPages = viewModel::loadPagesProjects,
-        onSelectPagesProject = viewModel::selectPagesProject,
-        onCreatePagesProject = viewModel::createPagesProject,
-        onDeletePagesProject = viewModel::deletePagesProject,
-        onTriggerPagesDeploy = viewModel::triggerPagesDeployment,
-        onRetryPagesDeploy = viewModel::retryPagesDeployment,
-        onRollbackPagesDeploy = viewModel::rollbackPagesDeployment,
-        onFetchPagesLogs = viewModel::fetchPagesLogs,
-        onSavePagesEnvVar = viewModel::savePagesEnvVar,
-        onUpdatePagesBuildConfig = viewModel::updatePagesBuildConfig,
-        onUpdatePagesBindings = viewModel::updatePagesBindings,
-        onCreatePagesSpecialFile = viewModel::createPagesSpecialFile,
-        onAddPagesDomain = viewModel::addPagesDomain,
-        onDeletePagesDomain = viewModel::deletePagesDomain,
-        onPickPagesFolder = { pagesFolderLauncher.launch(null) },
-        onPickPagesZip = { pagesZipLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*")) },
-        onPickPagesFiles = { pagesFilesLauncher.launch(arrayOf("*/*")) },
-        onStageWorkspaceForPages = viewModel::stageCurrentWorkspaceForPages,
-        onTogglePagesZipStripRoot = viewModel::togglePagesZipStripRoot,
-        onClearStagedPagesAssets = viewModel::clearStagedPagesAssets,
-        onDeployDirectPages = viewModel::deployStagedPagesAssets,
-        onStartGitHubOAuth = { clientId ->
-          viewModel.startGitHubDeviceOAuth(clientIdOverride = clientId, enterIdeOnSuccess = false) { verificationUrl ->
-            runCatching {
-              context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(verificationUrl)))
-            }
-          }
-        },
-        onCancelGitHubOAuth = viewModel::cancelGitHubDeviceOAuth,
-        onConnectGitHubToken = { pat -> viewModel.connectGitHubToken(pat, enterIdeOnSuccess = false) },
-        onDisconnectGitHub = viewModel::disconnectGitHub,
-        onRefreshGitHubRepos = viewModel::refreshGitHubRepos,
-        onSelectGitHubRepo = viewModel::selectGitHubRepo,
-        onSelectGitHubBranch = viewModel::selectGitHubBranch,
-        onCreateGitHubBranch = viewModel::createGitHubBranch,
-        onCloneRepository = { url, branch, merge ->
-          viewModel.cloneGitHubRepository(url, branch, merge)
-        },
-        onCreateGitHubRepo = viewModel::createGitHubRepoAndLink,
-        onLinkSelectedGitHubRepo = viewModel::linkCurrentWorkerToSelectedGitHubRepo,
-        onPullGitHubFiles = viewModel::pullGitHubPathsIntoWorker,
-        onSyncPullLinkedGitRepo = viewModel::syncPullLinkedGitRepo,
-        onSetGitCommitMessage = viewModel::setGitCommitMessage,
-        onToggleGitFileStaged = viewModel::toggleGitFileStaged,
-        onStageAllGitChanges = viewModel::stageAllGitChanges,
-        onUnstageAllGitChanges = viewModel::unstageAllGitChanges,
-        onDiscardGitFileChange = viewModel::discardGitFileChange,
-        onCommitGitLocally = { viewModel.commitStagedChangesLocally() },
-        onPushGitToGitHub = { viewModel.pushQueuedAndActiveChangesToGitHub() },
-        onInspectGitHubCommit = viewModel::inspectGitHubCommit,
-        onInspectPullRequest = viewModel::inspectPullRequest,
-        onCreatePullRequest = viewModel::createPullRequest,
-        onMergePullRequest = viewModel::mergePullRequest,
-        onCreateGitHubIssue = viewModel::createGitHubIssue,
-        onToggleGitHubIssueState = viewModel::toggleGitHubIssueState,
-        onCommentOnGitHubIssue = viewModel::commentOnGitHubIssue,
-        onDispatchGitHubWorkflow = viewModel::dispatchGitHubWorkflow,
-        onRerunGitHubWorkflowRun = viewModel::rerunGitHubWorkflowRun,
-        onInspectWorkflowRunJobs = viewModel::inspectWorkflowRunJobs,
-        onSubmitPrReview = viewModel::submitPullRequestReview,
-        onGenerateCfActionWorkflow = viewModel::generateCloudflareGitHubActionWorkflow,
-        onRenameWorkerTarget = viewModel::renameActiveWorkerTarget,
-        onUpdateSettings = viewModel::updateSettings,
-        onSignOut = {
-          if (uiState.isLocalScratchpad || uiState.isGitHubIdeOnlyMode) viewModel.exitScratchpadToAuth()
-          else viewModel.signOut()
+        onJumpToLine = viewModel::jumpToLine,
+        onInsertSnippet = { snippet ->
+          viewModel.insertTextAtCursor(snippet, 0)
+          viewModel.setProjectMode(ProjectMode.CODE)
         },
         onCloseDrawerIfCompact = {
           if (!isExpanded) scope.launch { drawerState.close() }
         },
+        showCloseButton = !isExpanded,
       )
     }
 
@@ -510,7 +522,7 @@ fun IdeWorkspaceScreen(
             .imePadding(),
       ) {
         Column(modifier = Modifier.fillMaxSize()) {
-          // Screenshot-matched Olive-Sage Top Toolbar
+          // Clean Single-Project Top Header Bar
           Row(
             modifier =
               Modifier
@@ -520,85 +532,52 @@ fun IdeWorkspaceScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
           ) {
-            if (!isExpanded) {
-              IconButton(
-                onClick = {
-                  scope.launch {
-                    if (drawerState.isOpen) drawerState.close() else drawerState.open()
-                  }
-                },
-                modifier = Modifier.size(38.dp).testTag("toggle_sidebar_button"),
-              ) {
-                Icon(
-                  imageVector =
-                    if (drawerState.isOpen) Icons.AutoMirrored.Outlined.ArrowBack
-                    else Icons.Outlined.Menu,
-                  contentDescription = stringResource(R.string.cd_toggle_sidebar),
-                  tint = palette.textPrimary,
-                )
-              }
-            }
-
-            // Green-Olive Split Layout Pill (matching screenshot top-right icon!)
-            Surface(
-              onClick = { viewModel.toggleBottomPanel(null) },
-              shape = RoundedCornerShape(10.dp),
-              color = palette.activePillBg,
-              modifier = Modifier.size(width = 40.dp, height = 32.dp),
-            ) {
-              Box(contentAlignment = Alignment.Center) {
-                Icon(
-                  imageVector = Icons.Outlined.VerticalSplit,
-                  contentDescription = "Toggle Bottom Panel",
-                  tint = palette.activePillFg,
-                  modifier = Modifier.size(18.dp),
-                )
-              }
-            }
-
-            Spacer(Modifier.weight(1f))
-
             IconButton(
-              onClick = { showCommandPalette = true },
-              modifier = Modifier.size(38.dp).testTag("command_palette_button"),
+              onClick = viewModel::closeWorkspaceToHome,
+              modifier = Modifier.size(38.dp).testTag("back_to_home_button"),
             ) {
               Icon(
-                imageVector = Icons.Outlined.Terminal,
-                contentDescription = stringResource(R.string.cd_command_palette),
-                tint = palette.textSecondary,
-                modifier = Modifier.size(19.dp),
+                imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                contentDescription = "Back to Home",
+                tint = palette.textPrimary,
+                modifier = Modifier.size(20.dp),
+              )
+            }
+
+            Column(
+              modifier = Modifier.weight(1f),
+              verticalArrangement = Arrangement.spacedBy(1.dp),
+            ) {
+              Text(
+                text = uiState.workspace?.scriptName ?: "Project",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = palette.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+              val fileCount = uiState.workspace?.files?.count { !it.isVirtualReadOnly } ?: 0
+              val dirtyCount = uiState.workspace?.files?.count { it.isDirty } ?: 0
+              Text(
+                text =
+                  when {
+                    dirtyCount > 0 -> "$fileCount files · $dirtyCount edited"
+                    uiState.isLocalScratchpad -> "$fileCount files · Local RAM"
+                    else -> "$fileCount files · Synced"
+                  },
+                fontFamily = JetBrainsMono,
+                fontSize = 10.sp,
+                color = if (dirtyCount > 0) AmberWarn else palette.textMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
               )
             }
 
             if (uiState.workspace != null) {
-              IconButton(
-                onClick = { viewModel.openWorkerTestWindow(maximizeWindow = true) },
-                modifier = Modifier.size(38.dp).testTag("top_worker_test_button"),
-              ) {
-                Icon(
-                  imageVector = Icons.Outlined.Http,
-                  contentDescription = "Open WorkerTestWindow",
-                  tint = palette.activePillFg,
-                  modifier = Modifier.size(20.dp),
-                )
-              }
-
-              IconButton(
-                onClick = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
-                modifier = Modifier.size(38.dp).testTag("top_worker_preview_button"),
-              ) {
-                Icon(
-                  imageVector = Icons.Outlined.Visibility,
-                  contentDescription = "Open deployed Worker preview & HTTP tester",
-                  tint = palette.activePillFg,
-                  modifier = Modifier.size(21.dp),
-                )
-              }
-
               if (uiState.isLocalScratchpad) {
                 Surface(
                   onClick = viewModel::exitScratchpadToAuth,
-                  shape = RoundedCornerShape(12.dp),
+                  shape = RoundedCornerShape(10.dp),
                   color = palette.activePillBg,
                   modifier = Modifier.testTag("connect_cloudflare_button"),
                 ) {
@@ -613,10 +592,8 @@ fun IdeWorkspaceScreen(
               } else {
                 Surface(
                   onClick = { if (!uiState.isDeploying) viewModel.deployActiveWorker() },
-                  shape = RoundedCornerShape(12.dp),
-                  color =
-                    if (uiState.hasUnsavedChanges) palette.activePillBg
-                    else palette.chromePill,
+                  shape = RoundedCornerShape(10.dp),
+                  color = if (uiState.hasUnsavedChanges) palette.activePillBg else palette.chromePill,
                   modifier = Modifier.testTag("deploy_worker_button"),
                 ) {
                   Row(
@@ -634,7 +611,7 @@ fun IdeWorkspaceScreen(
                         modifier = Modifier.size(16.dp),
                       )
                       Text(
-                        text = if (uiState.hasUnsavedChanges) "Export*" else "Deploy",
+                        text = if (uiState.hasUnsavedChanges) "Deploy*" else "Deploy",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = if (uiState.hasUnsavedChanges) palette.activePillFg else palette.textPrimary,
@@ -644,179 +621,290 @@ fun IdeWorkspaceScreen(
                 }
               }
             }
+
+            Box {
+              IconButton(
+                onClick = { overflowMenuOpen = true },
+                modifier = Modifier.size(38.dp).testTag("project_overflow_menu_button"),
+              ) {
+                Icon(
+                  imageVector = Icons.Outlined.MoreVert,
+                  contentDescription = "Project actions",
+                  tint = palette.textSecondary,
+                  modifier = Modifier.size(20.dp),
+                )
+              }
+
+              DropdownMenu(
+                expanded = overflowMenuOpen,
+                onDismissRequest = { overflowMenuOpen = false },
+              ) {
+                if (!isExpanded) {
+                  DropdownMenuItem(
+                    text = { Text("Project Files") },
+                    leadingIcon = { Icon(Icons.Outlined.FolderOpen, contentDescription = null) },
+                    onClick = {
+                      overflowMenuOpen = false
+                      scope.launch { drawerState.open() }
+                    },
+                  )
+                }
+                DropdownMenuItem(
+                  text = { Text("Command Palette") },
+                  leadingIcon = { Icon(Icons.Outlined.Terminal, contentDescription = null) },
+                  onClick = {
+                    overflowMenuOpen = false
+                    showCommandPalette = true
+                  },
+                )
+                DropdownMenuItem(
+                  text = { Text("Sync wrangler.jsonc") },
+                  leadingIcon = { Icon(Icons.Outlined.Sync, contentDescription = null) },
+                  onClick = {
+                    overflowMenuOpen = false
+                    viewModel.syncWranglerFileToWorkspace()
+                  },
+                )
+                DropdownMenuItem(
+                  text = { Text("Export Workspace (.json)") },
+                  leadingIcon = { Icon(Icons.Outlined.UploadFile, contentDescription = null) },
+                  onClick = {
+                    overflowMenuOpen = false
+                    if (uiState.workspace != null) triggerExportWorkspaceBundle()
+                  },
+                )
+                DropdownMenuItem(
+                  text = { Text("Import Workspace (.json)") },
+                  leadingIcon = { Icon(Icons.Outlined.FolderOpen, contentDescription = null) },
+                  onClick = {
+                    overflowMenuOpen = false
+                    triggerImportWorkspaceBundle()
+                  },
+                )
+                if (!uiState.isLocalScratchpad && uiState.workspace != null) {
+                  DropdownMenuItem(
+                    text = { Text("Re-Import from Cloudflare") },
+                    leadingIcon = { Icon(Icons.Outlined.Refresh, contentDescription = null) },
+                    onClick = {
+                      overflowMenuOpen = false
+                      viewModel.reimportActiveWorkerFromCloudflare()
+                    },
+                  )
+                }
+                if (uiState.hasUnsavedChanges) {
+                  DropdownMenuItem(
+                    text = { Text("Revert Workspace") },
+                    leadingIcon = { Icon(Icons.Outlined.Restore, contentDescription = null) },
+                    onClick = {
+                      overflowMenuOpen = false
+                      viewModel.revertWorkspaceToImportedBaseline()
+                    },
+                  )
+                }
+                HorizontalDivider()
+                DropdownMenuItem(
+                  text = { Text("Git Sync (Optional)") },
+                  leadingIcon = { Icon(Icons.Outlined.AccountTree, contentDescription = null) },
+                  onClick = {
+                    overflowMenuOpen = false
+                    showProjectGitModal = true
+                  },
+                )
+                DropdownMenuItem(
+                  text = { Text("IDE Preferences") },
+                  leadingIcon = { Icon(Icons.Outlined.Settings, contentDescription = null) },
+                  onClick = {
+                    overflowMenuOpen = false
+                    showProjectSettingsModal = true
+                  },
+                )
+              }
+            }
           }
 
           if (uiState.isOpeningWorker || uiState.isDeploying) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp))
           }
+          HorizontalDivider(color = palette.border.copy(alpha = 0.4f))
 
-          // Main Split Row: Docked Sidebar (Expanded) + Editor + Bottom Panel
+          // Main Content Area: Strictly 1 Clean Mode at a Time
           Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            if (isExpanded) {
-              Box(modifier = Modifier.width(336.dp).fillMaxHeight()) {
-                sidebarContent()
+            if (isExpanded && uiState.projectMode == ProjectMode.CODE) {
+              Box(modifier = Modifier.width(300.dp).fillMaxHeight()) {
+                projectSidebarContent()
               }
-              VerticalDivider(color = palette.border)
+              VerticalDivider(color = palette.border.copy(alpha = 0.5f))
             }
 
-            val terminalMaximized = uiState.showBottomPanel && uiState.isBottomPanelExpanded
-            Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
-              if (!terminalMaximized) {
-                CodeEditorPane(
-                  uiState = uiState,
-                  onSelectTab = { path -> viewModel.openFileTab(path, recordHistory = true) },
-                  onCloseTab = viewModel::closeFileTab,
-                  onSelectAdjacentTab = viewModel::selectAdjacentTab,
-                  onCloseOtherTabs = viewModel::closeOtherTabs,
-                  onCloseSavedTabs = viewModel::closeSavedTabs,
-                  onCloseAllTabs = viewModel::closeAllTabs,
-                  onSetEntryModule = viewModel::setEntryModule,
-                  onRevertFile = viewModel::revertFile,
-                  onNavigateTabBack = viewModel::navigateTabBack,
-                  onNavigateTabForward = viewModel::navigateTabForward,
-                  onOpenWorkerPreview = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
-                  onCreateNewFile = { newFileDialogPrefix = "" },
-                  onCodeChange = viewModel::updateEditorValue,
-                  onInsertText = viewModel::insertTextAtCursor,
-                  onInsertTab = viewModel::insertTab,
-                  onUndo = viewModel::undo,
-                  onRedo = viewModel::redo,
-                  onFormat = viewModel::formatActiveFile,
-                  onToggleComment = viewModel::toggleLineComment,
-                  onToggleFindBar = { viewModel.toggleFindBar() },
-                  onFindQueryChange = viewModel::setFindQuery,
-                  onReplaceQueryChange = viewModel::setReplaceQuery,
-                  onFindNext = viewModel::findNextMatch,
-                  onReplaceAll = viewModel::replaceAllMatches,
-                  onOpenProblems = { viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS) },
-                  onOpenExplorer = {
-                    viewModel.setSidebarSection(SidebarSection.EXPLORER)
-                    if (!isExpanded) scope.launch { drawerState.open() }
-                  },
-                  onShowNewWorkerDialog = { showNewWorkerDialog = true },
-                  onDismissDraftBanner = viewModel::dismissDraftBanner,
-                  onDiscardRestoredDraft = viewModel::discardRestoredDraft,
-                  onJumpToLine = viewModel::jumpToLine,
-                  onSyncWranglerToWorkspace = viewModel::syncWranglerFileToWorkspace,
-                  modifier = Modifier.weight(1f),
-                )
-              }
+            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+              when (uiState.projectMode) {
+                ProjectMode.CODE -> {
+                  CodeEditorPane(
+                    uiState = uiState,
+                    onSelectTab = { path -> viewModel.openFileTab(path, recordHistory = true) },
+                    onCloseTab = viewModel::closeFileTab,
+                    onSelectAdjacentTab = viewModel::selectAdjacentTab,
+                    onCloseOtherTabs = viewModel::closeOtherTabs,
+                    onCloseSavedTabs = viewModel::closeSavedTabs,
+                    onCloseAllTabs = viewModel::closeAllTabs,
+                    onSetEntryModule = viewModel::setEntryModule,
+                    onRevertFile = viewModel::revertFile,
+                    onNavigateTabBack = viewModel::navigateTabBack,
+                    onNavigateTabForward = viewModel::navigateTabForward,
+                    onOpenWorkerPreview = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
+                    onCreateNewFile = { newFileDialogPrefix = "" },
+                    onCodeChange = viewModel::updateEditorValue,
+                    onInsertText = viewModel::insertTextAtCursor,
+                    onInsertTab = viewModel::insertTab,
+                    onUndo = viewModel::undo,
+                    onRedo = viewModel::redo,
+                    onFormat = viewModel::formatActiveFile,
+                    onToggleComment = viewModel::toggleLineComment,
+                    onToggleFindBar = { viewModel.toggleFindBar() },
+                    onFindQueryChange = viewModel::setFindQuery,
+                    onReplaceQueryChange = viewModel::setReplaceQuery,
+                    onFindNext = viewModel::findNextMatch,
+                    onReplaceAll = viewModel::replaceAllMatches,
+                    onOpenProblems = { viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS) },
+                    onOpenExplorer = {
+                      if (!isExpanded) scope.launch { drawerState.open() }
+                    },
+                    onShowNewWorkerDialog = { showNewWorkerDialog = true },
+                    onDismissDraftBanner = viewModel::dismissDraftBanner,
+                    onDiscardRestoredDraft = viewModel::discardRestoredDraft,
+                    onJumpToLine = viewModel::jumpToLine,
+                    onSyncWranglerToWorkspace = viewModel::syncWranglerFileToWorkspace,
+                    modifier = Modifier.fillMaxSize(),
+                  )
+                }
 
-              AnimatedVisibility(
-                visible = uiState.showBottomPanel,
-                modifier = if (terminalMaximized) Modifier.weight(1f) else Modifier,
-              ) {
-                BottomPanel(
-                  uiState = uiState,
-                  onSelectTab = { viewModel.toggleBottomPanel(it) },
-                  onToggleExpand = viewModel::toggleBottomPanelExpanded,
-                  onClose = viewModel::hideBottomPanel,
-                  onPreviewSelectModeTab = viewModel::setPreviewModeTab,
-                  onPreviewUrlChange = viewModel::setPreviewUrl,
-                  onReloadPreview = viewModel::reloadDeployedWorkerPreview,
-                  onTogglePreviewConsoleExpanded = viewModel::togglePreviewConsoleExpanded,
-                  onUpdatePreviewHttp = viewModel::updatePreviewHttpRequest,
-                  onSendPreviewHttp = { viewModel.sendPreviewHttpTest() },
-                  onSelectWorkerTestHistoryRun = viewModel::selectWorkerTestHistoryRun,
-                  onClearWorkerTestHistory = viewModel::clearWorkerTestHistory,
-                  onAppendPreviewConsole = viewModel::appendPreviewConsoleEntry,
-                  onClearPreviewConsole = viewModel::clearPreviewConsole,
-                  onDeployActiveWorker = viewModel::deployActiveWorker,
-                  onUpdateApiRequest = viewModel::updateApiRequest,
-                  onUpdateApiEnvVars = viewModel::updateApiEnvVars,
-                  onRunApiRequest = { viewModel.runApiTesterRequest() },
-                  onSaveApiRequest = viewModel::saveCurrentApiRequestToCollection,
-                  onLoadApiRequest = viewModel::loadApiRequest,
-                  onDeleteApiCollectionItem = viewModel::deleteApiCollectionItem,
-                  onClearApiHistory = viewModel::clearApiHistory,
-                  onTerminalInputChange = viewModel::setTerminalInput,
-                  onRunTerminalCommand = viewModel::runTerminalCommand,
-                  onPasteIntoTerminal = viewModel::pasteIntoTerminal,
-                  onAutocompleteTerminal = viewModel::autocompleteTerminal,
-                  onRecallTerminalHistory = viewModel::recallTerminalHistory,
-                  onClearTerminal = viewModel::clearTerminal,
-                  onSaveTerminalOutputToFile = viewModel::saveTerminalOutputToWorkspaceFile,
-                  onNotifyStatus = viewModel::showStatus,
-                  onJumpToProblem = viewModel::jumpToLine,
-                  onToggleLiveTail = viewModel::toggleLiveTail,
-                  modifier = if (terminalMaximized) Modifier.fillMaxSize() else Modifier,
-                )
+                ProjectMode.TEST -> {
+                  ProjectTestModeWorkspace(
+                    uiState = uiState,
+                    viewModel = viewModel,
+                  )
+                }
+
+                ProjectMode.CONFIG -> {
+                  CloudflareInfraPanel(
+                    uiState = uiState,
+                    onRefreshInfra = viewModel::loadCloudflareInfra,
+                    onToggleWorkersDev = viewModel::toggleWorkersDev,
+                    onUpdateCompat = viewModel::updateCompatibilitySettings,
+                    onAddCronSchedule = viewModel::addCronSchedule,
+                    onRemoveCronSchedule = viewModel::removeCronSchedule,
+                    onAttachZoneRoute = viewModel::attachZoneRoute,
+                    onDeleteZoneRoute = viewModel::deleteZoneRoute,
+                    onAttachWorkerDomain = viewModel::attachWorkerCustomDomain,
+                    onRemoveWorkerDomain = viewModel::removeWorkerCustomDomain,
+                    onRollbackVersion = viewModel::rollbackToVersion,
+                    onRefreshWorkerVersions = viewModel::loadWorkerVersions,
+                    onDeployGradualSplit = viewModel::deployGradualWorkerSplit,
+                    onAddEnvVar = viewModel::addEnvVar,
+                    onAddSecret = viewModel::addSecret,
+                    onBindResource = viewModel::bindResourceToWorker,
+                    onDeleteBinding = viewModel::deleteBindingOrSecret,
+                    onCreateKvNamespace = viewModel::createKvNamespace,
+                    onDeleteKvNamespace = viewModel::deleteKvNamespace,
+                    onSelectKvNamespace = viewModel::selectKvNamespace,
+                    onInspectKvKey = viewModel::inspectKvKey,
+                    onPutKvEntry = viewModel::putKvEntry,
+                    onBulkImportKv = viewModel::bulkImportKvJson,
+                    onExportKvJson = viewModel::exportSelectedKvJson,
+                    onDeleteKvKey = viewModel::deleteKvKey,
+                    onCreateD1Database = viewModel::createD1Database,
+                    onDeleteD1Database = viewModel::deleteD1Database,
+                    onSelectD1Database = viewModel::selectD1Database,
+                    onRunD1Sql = viewModel::runD1SqlQuery,
+                    onCreateR2Bucket = viewModel::createR2Bucket,
+                    onDeleteR2Bucket = viewModel::deleteR2Bucket,
+                    onCreateQueue = viewModel::createQueue,
+                    onDeleteQueue = viewModel::deleteQueue,
+                    onNotifyStatus = viewModel::showStatus,
+                  )
+                }
+
+                ProjectMode.CONSOLE -> {
+                  ProjectConsoleModeWorkspace(
+                    uiState = uiState,
+                    viewModel = viewModel,
+                  )
+                }
               }
             }
           }
 
-          // Bottom Action Bar (Preview, Test, API, Terminal, Tail, Search, Problems, Prefs)
+          // Clean 4-Destination Bottom Navigation Bar
           HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
-          Row(
-            modifier =
-              Modifier
-                .fillMaxWidth()
-                .background(palette.chromeBg)
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 6.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
-            verticalAlignment = Alignment.CenterVertically,
+          NavigationBar(
+            containerColor = palette.chromeBg,
+            tonalElevation = 0.dp,
+            modifier = Modifier.height(62.dp),
           ) {
-            BottomBarToolButton(
-              icon = Icons.Outlined.Visibility,
-              label = "Preview",
-              active = uiState.showBottomPanel && uiState.activeBottomTab == BottomPanelTab.WORKER_PREVIEW,
-              onClick = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
+            val navColors =
+              NavigationBarItemDefaults.colors(
+                selectedIconColor = palette.activePillFg,
+                selectedTextColor = palette.activePillFg,
+                indicatorColor = palette.activePillBg,
+                unselectedIconColor = palette.textSecondary,
+                unselectedTextColor = palette.textSecondary,
+              )
+
+            NavigationBarItem(
+              selected = uiState.projectMode == ProjectMode.CODE,
+              onClick = { viewModel.setProjectMode(ProjectMode.CODE) },
+              icon = { Icon(Icons.Outlined.Code, contentDescription = "Code") },
+              label = { Text("Code", fontSize = 11.sp) },
+              colors = navColors,
+              modifier = Modifier.testTag("project_nav_code"),
             )
-            BottomBarToolButton(
-              icon = Icons.Outlined.Http,
-              label = "Test",
-              active = uiState.showBottomPanel && uiState.activeBottomTab == BottomPanelTab.WORKER_TEST,
-              onClick = { viewModel.openWorkerTestWindow(maximizeWindow = true) },
+
+            NavigationBarItem(
+              selected = uiState.projectMode == ProjectMode.TEST,
+              onClick = { viewModel.setProjectMode(ProjectMode.TEST) },
+              icon = { Icon(Icons.Outlined.PlayArrow, contentDescription = "Test") },
+              label = { Text("Test", fontSize = 11.sp) },
+              colors = navColors,
+              modifier = Modifier.testTag("project_nav_test"),
             )
-            BottomBarToolButton(
-              icon = Icons.AutoMirrored.Outlined.Send,
-              label = "API",
-              active = uiState.showBottomPanel && uiState.activeBottomTab == BottomPanelTab.API_TESTER,
-              onClick = { viewModel.toggleBottomPanel(BottomPanelTab.API_TESTER) },
+
+            NavigationBarItem(
+              selected = uiState.projectMode == ProjectMode.CONFIG,
+              onClick = { viewModel.setProjectMode(ProjectMode.CONFIG) },
+              icon = { Icon(Icons.Outlined.Tune, contentDescription = "Config") },
+              label = { Text("Config", fontSize = 11.sp) },
+              colors = navColors,
+              modifier = Modifier.testTag("project_nav_config"),
             )
-            BottomBarToolButton(
-              icon = Icons.Outlined.Terminal,
-              label = "Terminal",
-              active = uiState.showBottomPanel && uiState.activeBottomTab == BottomPanelTab.TERMINAL,
-              onClick = { viewModel.toggleBottomPanel(BottomPanelTab.TERMINAL) },
-            )
-            BottomBarToolButton(
-              icon = Icons.Outlined.Sensors,
-              label = if (uiState.isTailRunning) "Tail •" else "Tail",
-              active =
-                uiState.isTailRunning ||
-                  (uiState.showBottomPanel && uiState.activeBottomTab == BottomPanelTab.TAIL_LOGS),
-              highlightLive = uiState.isTailRunning,
-              onClick = { viewModel.toggleBottomPanel(BottomPanelTab.TAIL_LOGS) },
-            )
-            BottomBarToolButton(
-              icon = Icons.Outlined.Search,
-              label = "Search",
-              active = uiState.showFindBar,
-              onClick = { viewModel.toggleFindBar() },
-            )
-            BottomBarToolButton(
-              icon = Icons.Outlined.WarningAmber,
-              label = "Problems",
-              active = uiState.showBottomPanel && uiState.activeBottomTab == BottomPanelTab.PROBLEMS,
-              onClick = { viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS) },
-            )
-            BottomBarToolButton(
-              icon = Icons.Outlined.Settings,
-              label = "Prefs",
-              active = uiState.sidebarSection == SidebarSection.SETTINGS && drawerState.isOpen,
-              onClick = {
-                viewModel.setSidebarSection(SidebarSection.SETTINGS)
-                if (!isExpanded) scope.launch { drawerState.open() }
+
+            NavigationBarItem(
+              selected = uiState.projectMode == ProjectMode.CONSOLE,
+              onClick = { viewModel.setProjectMode(ProjectMode.CONSOLE) },
+              icon = {
+                Box {
+                  Icon(Icons.Outlined.Terminal, contentDescription = "Console")
+                  if (uiState.isTailRunning || uiState.diagnostics.isNotEmpty()) {
+                    Box(
+                      modifier =
+                        Modifier
+                          .size(7.dp)
+                          .align(Alignment.TopEnd)
+                          .clip(CircleShape)
+                          .background(if (uiState.isTailRunning) EmeraldLive else AmberWarn),
+                    )
+                  }
+                }
               },
+              label = { Text("Console", fontSize = 11.sp) },
+              colors = navColors,
+              modifier = Modifier.testTag("project_nav_console"),
             )
           }
         }
 
         SnackbarHost(
           hostState = snackbarHostState,
-          modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 58.dp),
+          modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 68.dp),
         )
       }
     }
@@ -832,7 +920,7 @@ fun IdeWorkspaceScreen(
             windowInsets = WindowInsets(0, 0, 0, 0),
             modifier = Modifier.width(drawerWidth).statusBarsPadding().navigationBarsPadding(),
           ) {
-            sidebarContent()
+            projectSidebarContent()
           }
         },
         content = workspaceBody,
@@ -842,40 +930,237 @@ fun IdeWorkspaceScreen(
 }
 
 @Composable
-private fun BottomBarToolButton(
-  icon: ImageVector,
-  label: String,
-  active: Boolean,
-  highlightLive: Boolean = false,
-  onClick: () -> Unit,
+private fun ProjectTestModeWorkspace(
+  uiState: IdeUiState,
+  viewModel: IdeViewModel,
 ) {
   val palette = LocalIdePalette.current
-  val tint =
-    when {
-      highlightLive -> EmeraldLive
-      active -> palette.activePillFg
-      else -> palette.textSecondary
+  val activeTab =
+    when (uiState.activeBottomTab) {
+      BottomPanelTab.WORKER_PREVIEW, BottomPanelTab.WORKER_TEST, BottomPanelTab.API_TESTER ->
+        uiState.activeBottomTab
+      else -> BottomPanelTab.WORKER_PREVIEW
     }
-  Column(
+
+  Column(modifier = Modifier.fillMaxSize().background(palette.chromeBg)) {
+    Surface(
+      color = palette.chromePill,
+      shape = RoundedCornerShape(12.dp),
+      modifier =
+        Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 12.dp, vertical = 8.dp)
+          .height(38.dp),
+    ) {
+      Row(
+        modifier = Modifier.fillMaxSize().padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+      ) {
+        ModeSegmentChip(
+          label = "Preview",
+          selected = activeTab == BottomPanelTab.WORKER_PREVIEW,
+          tag = "test_segment_preview",
+          onClick = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
+          modifier = Modifier.weight(1f),
+        )
+        ModeSegmentChip(
+          label = "Worker HTTP",
+          selected = activeTab == BottomPanelTab.WORKER_TEST,
+          tag = "test_segment_worker_http",
+          onClick = { viewModel.openWorkerTestWindow(maximizeWindow = true) },
+          modifier = Modifier.weight(1f),
+        )
+        ModeSegmentChip(
+          label = "API Tester",
+          selected = activeTab == BottomPanelTab.API_TESTER,
+          tag = "test_segment_api_tester",
+          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.API_TESTER) },
+          modifier = Modifier.weight(1f),
+        )
+      }
+    }
+
+    HorizontalDivider(color = palette.border.copy(alpha = 0.4f))
+
+    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+      when (activeTab) {
+        BottomPanelTab.WORKER_PREVIEW ->
+          DeployedWorkerPreviewPane(
+            uiState = uiState,
+            onSelectModeTab = viewModel::setPreviewModeTab,
+            onUrlChange = viewModel::setPreviewUrl,
+            onReloadPreview = viewModel::reloadDeployedWorkerPreview,
+            onToggleConsoleExpanded = viewModel::togglePreviewConsoleExpanded,
+            onUpdateHttpRequest = viewModel::updatePreviewHttpRequest,
+            onSendHttpTest = { viewModel.sendPreviewHttpTest() },
+            onSelectHistoryRun = viewModel::selectWorkerTestHistoryRun,
+            onClearHistory = viewModel::clearWorkerTestHistory,
+            onAppendConsoleEntry = viewModel::appendPreviewConsoleEntry,
+            onClearConsole = viewModel::clearPreviewConsole,
+            onDeployActiveWorker = viewModel::deployActiveWorker,
+            onNotifyStatus = viewModel::showStatus,
+            modifier = Modifier.fillMaxSize(),
+          )
+
+        BottomPanelTab.WORKER_TEST ->
+          WorkerTestWindow(
+            uiState = uiState,
+            onUrlChange = viewModel::setPreviewUrl,
+            onMethodChange = { method ->
+              viewModel.updatePreviewHttpRequest(method, uiState.previewHttpHeadersJson, uiState.previewHttpBody)
+            },
+            onHeadersJsonChange = { headersJson ->
+              viewModel.updatePreviewHttpRequest(uiState.previewHttpMethod, headersJson, uiState.previewHttpBody)
+            },
+            onBodyChange = { body ->
+              viewModel.updatePreviewHttpRequest(uiState.previewHttpMethod, uiState.previewHttpHeadersJson, body)
+            },
+            onSendRequest = { viewModel.sendPreviewHttpTest() },
+            onSelectHistoryRun = viewModel::selectWorkerTestHistoryRun,
+            onClearHistory = viewModel::clearWorkerTestHistory,
+            onNotifyStatus = viewModel::showStatus,
+            modifier = Modifier.fillMaxSize(),
+          )
+
+        else ->
+          ApiTesterPane(
+            uiState = uiState,
+            onUpdateRequest = viewModel::updateApiRequest,
+            onUpdateEnvVars = viewModel::updateApiEnvVars,
+            onRunRequest = { viewModel.runApiTesterRequest() },
+            onSaveRequest = viewModel::saveCurrentApiRequestToCollection,
+            onLoadRequest = viewModel::loadApiRequest,
+            onDeleteCollectionItem = viewModel::deleteApiCollectionItem,
+            onClearHistory = viewModel::clearApiHistory,
+            onNotifyStatus = viewModel::showStatus,
+            modifier = Modifier.fillMaxSize(),
+          )
+      }
+    }
+  }
+}
+
+@Composable
+private fun ProjectConsoleModeWorkspace(
+  uiState: IdeUiState,
+  viewModel: IdeViewModel,
+) {
+  val palette = LocalIdePalette.current
+  val activeTab =
+    when (uiState.activeBottomTab) {
+      BottomPanelTab.TERMINAL, BottomPanelTab.TAIL_LOGS, BottomPanelTab.PROBLEMS, BottomPanelTab.CONSOLE ->
+        uiState.activeBottomTab
+      else -> BottomPanelTab.TERMINAL
+    }
+
+  Column(modifier = Modifier.fillMaxSize().background(palette.chromeBg)) {
+    Surface(
+      color = palette.chromePill,
+      shape = RoundedCornerShape(12.dp),
+      modifier =
+        Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 12.dp, vertical = 8.dp)
+          .height(38.dp),
+    ) {
+      Row(
+        modifier = Modifier.fillMaxSize().padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+      ) {
+        ModeSegmentChip(
+          label = "Terminal",
+          selected = activeTab == BottomPanelTab.TERMINAL,
+          tag = "console_segment_terminal",
+          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.TERMINAL) },
+          modifier = Modifier.weight(1f),
+        )
+        ModeSegmentChip(
+          label = if (uiState.isTailRunning) "Tail •" else "Live Tail",
+          selected = activeTab == BottomPanelTab.TAIL_LOGS,
+          tag = "console_segment_tail",
+          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.TAIL_LOGS) },
+          modifier = Modifier.weight(1f),
+        )
+        ModeSegmentChip(
+          label = "Problems (${uiState.diagnostics.size})",
+          selected = activeTab == BottomPanelTab.PROBLEMS,
+          tag = "console_segment_problems",
+          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS) },
+          modifier = Modifier.weight(1.1f),
+        )
+        ModeSegmentChip(
+          label = "Log",
+          selected = activeTab == BottomPanelTab.CONSOLE,
+          tag = "console_segment_log",
+          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.CONSOLE) },
+          modifier = Modifier.weight(0.75f),
+        )
+      }
+    }
+
+    HorizontalDivider(color = palette.border.copy(alpha = 0.4f))
+
+    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+      when (activeTab) {
+        BottomPanelTab.TERMINAL ->
+          LinuxTerminalPane(
+            uiState = uiState,
+            onInputChange = viewModel::setTerminalInput,
+            onRunCommand = viewModel::runTerminalCommand,
+            onPasteText = viewModel::pasteIntoTerminal,
+            onAutocomplete = viewModel::autocompleteTerminal,
+            onRecallHistory = viewModel::recallTerminalHistory,
+            onClearTerminal = viewModel::clearTerminal,
+            onSaveEntryToFile = viewModel::saveTerminalOutputToWorkspaceFile,
+            onNotifyCopied = viewModel::showStatus,
+            modifier = Modifier.fillMaxSize(),
+          )
+
+        BottomPanelTab.TAIL_LOGS ->
+          LiveTailView(
+            uiState = uiState,
+            onToggleLiveTail = viewModel::toggleLiveTail,
+          )
+
+        BottomPanelTab.PROBLEMS ->
+          ProblemsView(
+            uiState = uiState,
+            onJumpToProblem = viewModel::jumpToLine,
+          )
+
+        else ->
+          ConsoleView(uiState = uiState)
+      }
+    }
+  }
+}
+
+@Composable
+private fun ModeSegmentChip(
+  label: String,
+  selected: Boolean,
+  tag: String,
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val palette = LocalIdePalette.current
+  Box(
     modifier =
-      Modifier
-        .clip(RoundedCornerShape(10.dp))
+      modifier
+        .fillMaxHeight()
+        .clip(RoundedCornerShape(9.dp))
+        .background(if (selected) palette.activePillBg else Color.Transparent)
         .clickable(onClick = onClick)
-        .padding(horizontal = 8.dp, vertical = 4.dp),
-    horizontalAlignment = Alignment.CenterHorizontally,
-    verticalArrangement = Arrangement.spacedBy(2.dp),
+        .testTag(tag),
+    contentAlignment = Alignment.Center,
   ) {
-    Icon(
-      imageVector = icon,
-      contentDescription = label,
-      tint = tint,
-      modifier = Modifier.size(19.dp),
-    )
     Text(
       text = label,
-      fontSize = 10.sp,
-      color = tint,
+      fontSize = 11.sp,
+      fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+      color = if (selected) palette.activePillFg else palette.textSecondary,
       maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
     )
   }
 }

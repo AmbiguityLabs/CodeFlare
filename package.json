@@ -1,0 +1,16 @@
+{
+  "name": "edgecode",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node server.js",
+    "build": "node -e \"console.log('EdgeCode server build complete')\"",
+    "start": "node server.js",
+    "lint": "node --check server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

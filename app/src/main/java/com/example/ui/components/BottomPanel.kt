@@ -253,7 +253,7 @@ fun BottomPanel(
 }
 
 @Composable
-private fun ProblemsView(
+fun ProblemsView(
   uiState: IdeUiState,
   onJumpToProblem: (String, Int) -> Unit,
 ) {
@@ -306,7 +306,7 @@ private fun ProblemsView(
 }
 
 @Composable
-private fun ConsoleView(uiState: IdeUiState) {
+fun ConsoleView(uiState: IdeUiState) {
   LazyColumn(
     modifier = Modifier.fillMaxSize().padding(10.dp),
     verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -340,7 +340,7 @@ private fun ConsoleView(uiState: IdeUiState) {
 }
 
 @Composable
-private fun LiveTailView(
+fun LiveTailView(
   uiState: IdeUiState,
   onToggleLiveTail: () -> Unit,
 ) {

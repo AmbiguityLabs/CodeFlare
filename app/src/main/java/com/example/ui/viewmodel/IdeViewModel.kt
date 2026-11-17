@@ -16,6 +16,7 @@ import com.example.data.local.PickedDeviceFile
 import com.example.data.local.RamAccountInfraCache
 import com.example.data.local.RamDatabaseStats
 import com.example.data.local.RamWorkspaceDatabase
+import com.example.data.local.RamWorkspaceRecord
 import com.example.data.local.RawPickedAsset
 import com.example.data.local.WorkerTestRunRecord
 import com.example.data.remote.ApiEnvVar
@@ -100,6 +101,19 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+
+enum class HomeTab {
+  PROJECTS,
+  PAGES,
+  INFRA,
+}
+
+enum class ProjectMode {
+  CODE,
+  TEST,
+  CONFIG,
+  CONSOLE,
+}
 
 enum class SidebarSection {
   EXPLORER,
@@ -188,6 +202,11 @@ data class IdeUiState(
   val isPreviewConsoleExpanded: Boolean = true,
   val workerTestHistory: List<WorkerTestRunRecord> = emptyList(),
   val ramDbStats: RamDatabaseStats = RamDatabaseStats(),
+  val ramWorkspaces: List<RamWorkspaceRecord> = emptyList(),
+  val homeTab: HomeTab = HomeTab.PROJECTS,
+  val projectMode: ProjectMode = ProjectMode.CODE,
+  val showHomeGitHubHub: Boolean = false,
+  val showHomeSettings: Boolean = false,
   val activeWorkspaceHasPendingConfig: Boolean = false,
   // Cloudflare Workers Infra: KV, D1, R2, DO, Queues, Zones
   val kvNamespaces: List<CfKvNamespace> = emptyList(),
@@ -401,6 +420,12 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
     viewModelScope.launch {
       prefsStore.editorSettingsFlow.collect { settings ->
         _uiState.update { it.copy(editorSettings = settings) }
+      }
+    }
+
+    viewModelScope.launch {
+      ramDb.stats.collect {
+        _uiState.update { state -> state.copy(ramWorkspaces = ramDb.listWorkspaces()) }
       }
     }
 
@@ -745,11 +770,251 @@ export default {
     appendLog("INFO", "Initialized Local Scratchpad in RAM database (no remote calls)")
   }
 
+  fun enterLocalHome() {
+    val ramKey = ramDb.workspaceKey(null, "local-worker")
+    if (ramDb.getWorkspace(ramKey) == null) {
+      seedDefaultLocalScratchpad(ramKey, WorkerTemplate.HELLO_FETCH)
+    }
+    _uiState.update {
+      it.copy(
+        isLocalScratchpad = true,
+        isGitHubIdeOnlyMode = false,
+        showHomeGitHubHub = false,
+        homeTab = HomeTab.PROJECTS,
+        workspace = null,
+        openTabPaths = emptyList(),
+        activeFilePath = null,
+        authError = null,
+        ramWorkspaces = ramDb.listWorkspaces(),
+        ramDbStats = ramDb.computeStats(null),
+      )
+    }
+    appendLog("INFO", "Opened Local Projects Home")
+  }
+
+  private fun seedDefaultLocalScratchpad(ramKey: String, template: WorkerTemplate): RamWorkspaceRecord {
+    val corsCode =
+      """export const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization"
+};
+"""
+    val indexCode =
+      if (template == WorkerTemplate.HELLO_FETCH) {
+        """import { corsHeaders } from "./utils/cors.js";
+
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        worker: "local-worker",
+        path: url.pathname,
+        colo: request.cf?.colo ?? "EDGE"
+      }, null, 2),
+      {
+        headers: {
+          "content-type": "application/json;charset=UTF-8",
+          ...corsHeaders
+        }
+      }
+    );
+  }
+};
+"""
+      } else {
+        template.code
+      }
+    val wranglerJson =
+      """{
+  "name": "local-worker",
+  "main": "src/index.js",
+  "compatibility_date": "2024-11-01",
+  "workers_dev": true
+}
+"""
+    val indexFile =
+      WorkerFile(
+        path = "src/index.js",
+        content = indexCode,
+        originalContent = indexCode,
+        contentType = "application/javascript+module",
+        isEntryPoint = true,
+      )
+    val corsFile =
+      WorkerFile(
+        path = "src/utils/cors.js",
+        content = corsCode,
+        originalContent = corsCode,
+        contentType = "application/javascript+module",
+        isEntryPoint = false,
+      )
+    val wranglerFile =
+      WorkerFile(
+        path = "wrangler.jsonc",
+        content = wranglerJson,
+        originalContent = wranglerJson,
+        contentType = "application/json",
+        isEntryPoint = false,
+        isVirtualReadOnly = false,
+      )
+    val baseFiles = listOf(indexFile, corsFile, wranglerFile)
+    val ws =
+      WorkerWorkspace(
+        scriptName = "local-worker",
+        isEsModuleFormat = true,
+        entryModulePath = "src/index.js",
+        compatibilityDate = "2024-11-01",
+        files = baseFiles,
+        bindings = emptyList(),
+        routes = emptyList(),
+        workersDevEnabled = false,
+        accountSubdomain = "",
+      )
+    return ramDb.importWorkspace(
+      key = ramKey,
+      workspace = ws,
+      defaultTabs = listOf("src/index.js", "src/utils/cors.js"),
+      defaultActivePath = "src/index.js",
+      isNewUnexported = false,
+    )
+  }
+
+  fun openRamWorkspace(key: String) {
+    val record = ramDb.getWorkspace(key) ?: return
+    stopTailIfRunning()
+    syncActiveStateToRamDb()
+    ramDb.setActiveWorkspaceKey(key)
+    val ws = record.workingWorkspace
+    val diags = ws.files.flatMap { CodeAnalyzer.analyzeFile(it) }
+    terminalEngine.syncWorkspaceToDisk(ws)
+    val isLocal = key.startsWith("local_")
+    val baselineMap =
+      record.importedSnapshot.files
+        .filterNot { it.isVirtualReadOnly || it.path == "wrangler.jsonc" }
+        .associate { it.path to it.content }
+    _uiState.update {
+      it.copy(
+        isLocalScratchpad = isLocal || it.credentials == null,
+        isGitHubIdeOnlyMode = false,
+        showHomeGitHubHub = false,
+        projectMode = ProjectMode.CODE,
+        sidebarSection = SidebarSection.EXPLORER,
+        workspace = ws,
+        openTabPaths = record.openTabPaths,
+        activeFilePath = record.activeFilePath,
+        tabNavHistory = record.tabNavHistory,
+        tabNavIndex = record.tabNavIndex,
+        editorFieldValues = record.fieldValues,
+        diagnostics = diags,
+        restoredDraftBanner = null,
+        activeWorkspaceHasPendingConfig = record.hasPendingChanges,
+        ramDbStats = ramDb.computeStats(key),
+        ramWorkspaces = ramDb.listWorkspaces(),
+        previewUrl = resolveDefaultPreviewUrl(ws),
+        previewHttpResult = null,
+        gitWorkingBaseline = baselineMap,
+        terminalPromptPath = terminalEngine.currentPromptPath(ws),
+      )
+    }
+    appendTerminalWelcome(ws)
+    appendLog("INFO", "Opened project '${ws.scriptName}' from RAM")
+  }
+
+  fun deleteLocalRamWorkspace(key: String) {
+    val activeKey = activeWorkspaceKey()
+    ramDb.removeWorkspace(key)
+    _uiState.update { state ->
+      val wasActive = activeKey == key
+      state.copy(
+        workspace = if (wasActive) null else state.workspace,
+        openTabPaths = if (wasActive) emptyList() else state.openTabPaths,
+        activeFilePath = if (wasActive) null else state.activeFilePath,
+        ramDbStats = ramDb.computeStats(if (wasActive) null else activeKey),
+        ramWorkspaces = ramDb.listWorkspaces(),
+        statusMessage = "Removed local project from RAM",
+      )
+    }
+  }
+
+  fun closeWorkspaceToHome() {
+    stopTailIfRunning()
+    syncActiveStateToRamDb()
+    ramDb.setActiveWorkspaceKey(null)
+    _uiState.update {
+      it.copy(
+        workspace = null,
+        openTabPaths = emptyList(),
+        activeFilePath = null,
+        showFindBar = false,
+        showBottomPanel = false,
+        isBottomPanelExpanded = false,
+        isGitHubIdeOnlyMode = false,
+        projectMode = ProjectMode.CODE,
+        sidebarSection = SidebarSection.EXPLORER,
+        ramWorkspaces = ramDb.listWorkspaces(),
+        ramDbStats = ramDb.computeStats(null),
+      )
+    }
+  }
+
+  fun setHomeTab(tab: HomeTab) {
+    _uiState.update { it.copy(homeTab = tab, showHomeGitHubHub = false) }
+    if (!_uiState.value.isLocalScratchpad && _uiState.value.credentials != null) {
+      when (tab) {
+        HomeTab.INFRA -> loadCloudflareInfra(forceRefresh = false)
+        HomeTab.PAGES -> if (_uiState.value.pagesProjects.isEmpty()) loadPagesProjects()
+        HomeTab.PROJECTS -> Unit
+      }
+    }
+  }
+
+  fun setProjectMode(mode: ProjectMode) {
+    _uiState.update { state ->
+      val nextBottomTab =
+        when (mode) {
+          ProjectMode.TEST ->
+            if (state.activeBottomTab in setOf(BottomPanelTab.WORKER_PREVIEW, BottomPanelTab.WORKER_TEST, BottomPanelTab.API_TESTER)) {
+              state.activeBottomTab
+            } else {
+              BottomPanelTab.WORKER_PREVIEW
+            }
+          ProjectMode.CONSOLE ->
+            if (state.activeBottomTab in setOf(BottomPanelTab.TERMINAL, BottomPanelTab.TAIL_LOGS, BottomPanelTab.PROBLEMS, BottomPanelTab.CONSOLE)) {
+              state.activeBottomTab
+            } else {
+              BottomPanelTab.TERMINAL
+            }
+          else -> state.activeBottomTab
+        }
+      state.copy(projectMode = mode, activeBottomTab = nextBottomTab)
+    }
+    if (mode == ProjectMode.CONFIG && !_uiState.value.isLocalScratchpad && _uiState.value.credentials != null) {
+      loadCloudflareInfra(forceRefresh = false)
+    }
+  }
+
+  fun setShowHomeGitHubHub(show: Boolean) {
+    _uiState.update { it.copy(showHomeGitHubHub = show) }
+  }
+
+  fun setShowHomeSettings(show: Boolean) {
+    _uiState.update { it.copy(showHomeSettings = show) }
+  }
+
   fun exitScratchpadToAuth() {
+    stopTailIfRunning()
+    syncActiveStateToRamDb()
     _uiState.update {
       it.copy(
         isLocalScratchpad = false,
         isGitHubIdeOnlyMode = false,
+        showHomeGitHubHub = false,
+        workspace = null,
+        openTabPaths = emptyList(),
+        activeFilePath = null,
         authError = null,
       )
     }
@@ -834,6 +1099,9 @@ export default {
       _uiState.update {
         it.copy(
           isLocalScratchpad = false,
+          showHomeGitHubHub = false,
+          projectMode = ProjectMode.CODE,
+          sidebarSection = SidebarSection.EXPLORER,
           workspace = ws,
           openTabPaths = cachedRecord.openTabPaths,
           activeFilePath = cachedRecord.activeFilePath,
@@ -842,7 +1110,7 @@ export default {
           editorFieldValues = cachedRecord.fieldValues,
           diagnostics = diags,
           isOpeningWorker = false,
-          statusMessage = "Loaded '${ws.scriptName}' from RAM DB (no network fetch)",
+          statusMessage = "Opened '${ws.scriptName}' from RAM",
           restoredDraftBanner = null,
           activeWorkspaceHasPendingConfig = cachedRecord.hasPendingChanges,
           ramDbStats = ramDb.computeStats(ramKey),
@@ -883,6 +1151,9 @@ export default {
           _uiState.update {
             it.copy(
               isLocalScratchpad = false,
+              showHomeGitHubHub = false,
+              projectMode = ProjectMode.CODE,
+              sidebarSection = SidebarSection.EXPLORER,
               workspace = ws,
               openTabPaths = record.openTabPaths,
               activeFilePath = record.activeFilePath,
@@ -891,7 +1162,7 @@ export default {
               editorFieldValues = record.fieldValues,
               diagnostics = diags,
               isOpeningWorker = false,
-              statusMessage = "Imported '${ws.scriptName}' into on-device RAM DB",
+              statusMessage = "Imported '${ws.scriptName}' (${ws.files.size} files)",
               restoredDraftBanner = null,
               activeWorkspaceHasPendingConfig = false,
               ramDbStats = ramDb.computeStats(ramKey),
@@ -1003,6 +1274,9 @@ export default {
       state.copy(
         workers = updatedWorkers,
         workspace = ws,
+        projectMode = ProjectMode.CODE,
+        sidebarSection = SidebarSection.EXPLORER,
+        showHomeGitHubHub = false,
         openTabPaths = record.openTabPaths,
         activeFilePath = record.activeFilePath,
         tabNavHistory = record.tabNavHistory,
@@ -1092,6 +1366,9 @@ export default {
         state.copy(
           workers = updatedWorkers,
           workspace = ws,
+          projectMode = ProjectMode.CODE,
+          sidebarSection = SidebarSection.EXPLORER,
+          showHomeGitHubHub = false,
           openTabPaths = record.openTabPaths,
           activeFilePath = record.activeFilePath,
           tabNavHistory = record.tabNavHistory,
@@ -1278,6 +1555,9 @@ export default {
             state.copy(
               workers = updatedWorkers,
               workspace = ws,
+              projectMode = ProjectMode.CODE,
+              sidebarSection = SidebarSection.EXPLORER,
+              showHomeGitHubHub = false,
               openTabPaths = record.openTabPaths,
               activeFilePath = record.activeFilePath,
               tabNavHistory = record.tabNavHistory,
@@ -1582,6 +1862,7 @@ export default {
     val safeOffset = offset.coerceIn(0, file.content.length)
     _uiState.update { state ->
       state.copy(
+        projectMode = ProjectMode.CODE,
         editorFieldValues =
           state.editorFieldValues +
             (filePath to TextFieldValue(file.content, TextRange(safeOffset)))
@@ -1732,6 +2013,8 @@ export default {
           ?: state.previewUrl.ifBlank { resolveDefaultPreviewUrl(state.workspace) }
       state.copy(
         previewUrl = resolved,
+        previewModeTab = 0,
+        projectMode = ProjectMode.TEST,
         showBottomPanel = true,
         isBottomPanelExpanded = maximizeWindow,
         activeBottomTab = BottomPanelTab.WORKER_PREVIEW,
@@ -1751,6 +2034,7 @@ export default {
       state.copy(
         previewUrl = resolved,
         previewModeTab = 1,
+        projectMode = ProjectMode.TEST,
         showBottomPanel = true,
         isBottomPanelExpanded = maximizeWindow,
         activeBottomTab = BottomPanelTab.WORKER_TEST,
@@ -2276,8 +2560,18 @@ export default {
 
   fun toggleBottomPanel(tab: BottomPanelTab? = null) {
     _uiState.update { state ->
-      if (tab == null) state.copy(showBottomPanel = !state.showBottomPanel)
-      else state.copy(showBottomPanel = true, activeBottomTab = tab)
+      if (tab == null) {
+        val nextMode =
+          if (state.projectMode == ProjectMode.CODE) ProjectMode.CONSOLE else ProjectMode.CODE
+        state.copy(projectMode = nextMode, showBottomPanel = !state.showBottomPanel)
+      } else {
+        val nextMode =
+          when (tab) {
+            BottomPanelTab.WORKER_PREVIEW, BottomPanelTab.WORKER_TEST, BottomPanelTab.API_TESTER -> ProjectMode.TEST
+            BottomPanelTab.TERMINAL, BottomPanelTab.TAIL_LOGS, BottomPanelTab.PROBLEMS, BottomPanelTab.CONSOLE -> ProjectMode.CONSOLE
+          }
+        state.copy(projectMode = nextMode, showBottomPanel = true, activeBottomTab = tab)
+      }
     }
   }
 
@@ -2634,6 +2928,7 @@ export default {
     viewModelScope.launch {
       _uiState.update {
         it.copy(
+          projectMode = ProjectMode.CONSOLE,
           showBottomPanel = true,
           activeBottomTab = BottomPanelTab.TAIL_LOGS,
         )
@@ -4908,6 +5203,7 @@ jobs:
         terminalHistory = nextHistory,
         terminalHistoryCursor = -1,
         isTerminalBusy = true,
+        projectMode = ProjectMode.CONSOLE,
         showBottomPanel = true,
         activeBottomTab = BottomPanelTab.TERMINAL,
       )
@@ -5290,6 +5586,7 @@ jobs:
     _uiState.update {
       it.copy(
         isRunningHttpTest = true,
+        projectMode = ProjectMode.TEST,
         showBottomPanel = true,
         activeBottomTab = BottomPanelTab.API_TESTER,
       )

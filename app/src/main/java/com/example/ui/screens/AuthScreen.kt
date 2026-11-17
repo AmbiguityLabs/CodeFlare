@@ -525,281 +525,7 @@ fun AuthScreen(
         }
       }
 
-      // Full GitHub Authorization & Direct GitHub IDE Entry Card
-      ElevatedCard(
-        shape = RoundedCornerShape(24.dp),
-        colors =
-          CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-          ),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 1.dp),
-        modifier = Modifier.fillMaxWidth(),
-      ) {
-        Column(
-          modifier = Modifier.padding(18.dp),
-          verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-          Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-          ) {
-            Icon(
-              imageVector = Icons.Outlined.AccountTree,
-              contentDescription = null,
-              tint = MaterialTheme.colorScheme.primary,
-              modifier = Modifier.size(20.dp),
-            )
-            Column(modifier = Modifier.weight(1f)) {
-              Text(
-                text = "GitHub Authorization & Full IDE",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-              )
-              Text(
-                text = "Repos, branches, commits, PRs, Issues & Actions CI",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-              )
-            }
-          }
-
-          if (uiState.gitHubCreds != null) {
-            Surface(
-              color = MaterialTheme.colorScheme.secondaryContainer,
-              shape = RoundedCornerShape(16.dp),
-              modifier = Modifier.fillMaxWidth(),
-            ) {
-              Row(
-                modifier = Modifier.padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-              ) {
-                val avatarUrl = uiState.gitHubUser?.avatarUrl ?: uiState.gitHubCreds.avatarUrl
-                if (avatarUrl.isNotBlank()) {
-                  AsyncImage(
-                    model = avatarUrl,
-                    contentDescription = "GitHub avatar for @${uiState.gitHubCreds.login}",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.size(40.dp).clip(CircleShape),
-                  )
-                } else {
-                  Icon(
-                    imageVector = Icons.Outlined.VerifiedUser,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                  )
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                  Text(
-                    text = "@${uiState.gitHubCreds.login}",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                    fontWeight = FontWeight.Bold,
-                  )
-                  Text(
-                    text = "${uiState.gitHubCreds.method.name} • ${uiState.gitHubCreds.scopes.ifBlank { "repo, workflow" }}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                  )
-                }
-                TextButton(onClick = onDisconnectGitHub) {
-                  Text("Sign Out")
-                }
-              }
-            }
-
-            Button(
-              onClick = onEnterGitHubIde,
-              shape = RoundedCornerShape(14.dp),
-              modifier = Modifier.fillMaxWidth().height(50.dp).testTag("open_github_ide_button"),
-            ) {
-              Icon(Icons.Outlined.AccountTree, contentDescription = null, modifier = Modifier.size(18.dp))
-              Spacer(Modifier.width(8.dp))
-              Text("Open GitHub IDE (@${uiState.gitHubCreds.login})", fontWeight = FontWeight.SemiBold)
-            }
-          } else {
-            val ghModes = listOf("OAuth Device", "Access Token")
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-              ghModes.forEachIndexed { idx, label ->
-                SegmentedButton(
-                  selected = ghAuthMode == idx,
-                  onClick = { ghAuthMode = idx },
-                  shape = SegmentedButtonDefaults.itemShape(index = idx, count = ghModes.size),
-                  modifier = Modifier.testTag("github_auth_mode_$idx"),
-                ) {
-                  Text(label, maxLines = 1)
-                }
-              }
-            }
-
-            if (ghAuthMode == 0) {
-              val deviceSession = uiState.gitHubDeviceSession
-              if (uiState.isWaitingGitHubOAuth && deviceSession != null) {
-                Surface(
-                  color = MaterialTheme.colorScheme.primaryContainer,
-                  shape = RoundedCornerShape(16.dp),
-                  modifier = Modifier.fillMaxWidth(),
-                ) {
-                  Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                  ) {
-                    Text(
-                      text = "Enter this verification code on GitHub:",
-                      style = MaterialTheme.typography.labelMedium,
-                      color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                    Surface(
-                      color = MaterialTheme.colorScheme.surface,
-                      shape = RoundedCornerShape(12.dp),
-                    ) {
-                      Text(
-                        text = deviceSession.userCode,
-                        style = MaterialTheme.typography.headlineSmall.copy(
-                          fontFamily = JetBrainsMono,
-                          letterSpacing = 3.sp,
-                        ),
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
-                      )
-                    }
-                    Row(
-                      modifier = Modifier.fillMaxWidth(),
-                      horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                      FilledTonalButton(
-                        onClick = {
-                          clipboard.setText(AnnotatedString(deviceSession.userCode))
-                          onLaunchUrl(deviceSession.verificationUri)
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f).height(48.dp),
-                      ) {
-                        Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Copy & Open GitHub")
-                      }
-                      TextButton(
-                        onClick = onCancelGitHubOAuth,
-                        modifier = Modifier.height(48.dp),
-                      ) {
-                        Text("Cancel")
-                      }
-                    }
-                    Row(
-                      verticalAlignment = Alignment.CenterVertically,
-                      horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                      CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                      Text(
-                        text = "Waiting for GitHub browser authorization…",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                      )
-                    }
-                  }
-                }
-              } else {
-                TextButton(
-                  onClick = { showGhClientIdField = !showGhClientIdField },
-                  modifier = Modifier.align(Alignment.End),
-                ) {
-                  Text(if (showGhClientIdField) "Hide Custom Client ID" else "Custom GitHub OAuth Client ID")
-                }
-                AnimatedVisibility(visible = showGhClientIdField) {
-                  OutlinedTextField(
-                    value = ghCustomClientId,
-                    onValueChange = { ghCustomClientId = it },
-                    label = { Text("GitHub OAuth App Client ID (optional)") },
-                    placeholder = { Text(GitHubOAuthManager.DEFAULT_CLIENT_ID) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                  )
-                }
-                FilledTonalButton(
-                  onClick = { onStartGitHubOAuth(ghCustomClientId) },
-                  enabled = !uiState.isGitHubBusy,
-                  shape = RoundedCornerShape(14.dp),
-                  modifier = Modifier.fillMaxWidth().height(50.dp).testTag("github_device_oauth_button"),
-                ) {
-                  if (uiState.isWaitingGitHubOAuth) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                  } else {
-                    Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Authorize with GitHub OAuth", fontWeight = FontWeight.SemiBold)
-                  }
-                }
-              }
-            } else {
-              FilledTonalButton(
-                onClick = { onLaunchUrl(GitHubOAuthManager.buildClassicPatCreationUrl()) },
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-              ) {
-                Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Generate GitHub Token (repo + workflow)")
-              }
-              OutlinedTextField(
-                value = ghPatInput,
-                onValueChange = { ghPatInput = it },
-                label = { Text("GitHub PAT (ghp_ or github_pat_)") },
-                placeholder = { Text("ghp_xxxxxxxxxxxxxxxxxxxx") },
-                singleLine = true,
-                leadingIcon = { Icon(Icons.Outlined.Key, contentDescription = null) },
-                trailingIcon = {
-                  Row {
-                    IconButton(onClick = { clipboard.getText()?.text?.let { ghPatInput = it.trim() } }) {
-                      Icon(Icons.Outlined.ContentPaste, contentDescription = "Paste GitHub token")
-                    }
-                    IconButton(onClick = { showGhPat = !showGhPat }) {
-                      Icon(
-                        imageVector = if (showGhPat) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                        contentDescription = "Toggle GitHub token visibility",
-                      )
-                    }
-                  }
-                },
-                visualTransformation = if (showGhPat) VisualTransformation.None else PasswordVisualTransformation(),
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth().testTag("auth_github_pat_input"),
-              )
-              Button(
-                onClick = { onAuthorizeGitHubPat(ghPatInput) },
-                enabled = ghPatInput.isNotBlank() && !uiState.isGitHubBusy,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth().height(50.dp).testTag("auth_github_pat_submit"),
-              ) {
-                if (uiState.isGitHubBusy) {
-                  CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
-                } else {
-                  Text("Authorize & Open GitHub IDE", fontWeight = FontWeight.SemiBold)
-                }
-              }
-            }
-
-            AnimatedVisibility(visible = !uiState.gitHubError.isNullOrBlank()) {
-              Surface(
-                color = MaterialTheme.colorScheme.errorContainer,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-              ) {
-                Text(
-                  text = uiState.gitHubError.orEmpty(),
-                  style = MaterialTheme.typography.bodySmall,
-                  color = MaterialTheme.colorScheme.onErrorContainer,
-                  modifier = Modifier.padding(12.dp),
-                )
-              }
-            }
-          }
-        }
-      }
-
-      // Option to open the VS Code Worker editor locally without signing into Cloudflare
+      // Primary Offline / Local Projects Home Entry
       OutlinedButton(
         onClick = onOpenLocalScratchpad,
         shape = RoundedCornerShape(16.dp),
@@ -811,7 +537,299 @@ fun AuthScreen(
       ) {
         Icon(Icons.Outlined.Code, contentDescription = null, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
-        Text("Open Local Worker Scratchpad (No Sign-In)")
+        Text("Open Local Projects (No Sign-In)", fontWeight = FontWeight.Medium)
+      }
+
+      // Optional, tucked-away GitHub section
+      var showOptionalGitHub by rememberSaveable { mutableStateOf(false) }
+      TextButton(
+        onClick = { showOptionalGitHub = !showOptionalGitHub },
+        modifier = Modifier.align(Alignment.CenterHorizontally).testTag("toggle_optional_github_auth"),
+      ) {
+        Icon(Icons.Outlined.AccountTree, contentDescription = null, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(
+          text =
+            if (uiState.gitHubCreds != null) "GitHub Connected (@${uiState.gitHubCreds.login})"
+            else if (showOptionalGitHub) "Hide GitHub Sign-In"
+            else "GitHub Integration (Optional)",
+          style = MaterialTheme.typography.labelMedium,
+        )
+      }
+
+      AnimatedVisibility(visible = showOptionalGitHub) {
+        ElevatedCard(
+          shape = RoundedCornerShape(24.dp),
+          colors =
+            CardDefaults.elevatedCardColors(
+              containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+            ),
+          elevation = CardDefaults.elevatedCardElevation(defaultElevation = 1.dp),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+          ) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Icon(
+                imageVector = Icons.Outlined.AccountTree,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp),
+              )
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                  text = "GitHub (Optional)",
+                  style = MaterialTheme.typography.titleMedium,
+                  fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                  text = "Repos, branches, commits, PRs & Actions",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+              }
+            }
+
+            if (uiState.gitHubCreds != null) {
+              Surface(
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth(),
+              ) {
+                Row(
+                  modifier = Modifier.padding(12.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                  val avatarUrl = uiState.gitHubUser?.avatarUrl ?: uiState.gitHubCreds.avatarUrl
+                  if (avatarUrl.isNotBlank()) {
+                    AsyncImage(
+                      model = avatarUrl,
+                      contentDescription = "GitHub avatar for @${uiState.gitHubCreds.login}",
+                      contentScale = ContentScale.Crop,
+                      modifier = Modifier.size(40.dp).clip(CircleShape),
+                    )
+                  } else {
+                    Icon(
+                      imageVector = Icons.Outlined.VerifiedUser,
+                      contentDescription = null,
+                      tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                  }
+                  Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                      text = "@${uiState.gitHubCreds.login}",
+                      style = MaterialTheme.typography.titleSmall,
+                      color = MaterialTheme.colorScheme.onSecondaryContainer,
+                      fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                      text = "${uiState.gitHubCreds.method.name} · ${uiState.gitHubCreds.scopes.ifBlank { "repo, workflow" }}",
+                      style = MaterialTheme.typography.labelSmall,
+                      color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                  }
+                  TextButton(onClick = onDisconnectGitHub) {
+                    Text("Sign Out")
+                  }
+                }
+              }
+
+              Button(
+                onClick = onEnterGitHubIde,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth().height(50.dp).testTag("open_github_ide_button"),
+              ) {
+                Icon(Icons.Outlined.AccountTree, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Open GitHub Hub (@${uiState.gitHubCreds.login})", fontWeight = FontWeight.SemiBold)
+              }
+            } else {
+              val ghModes = listOf("OAuth Device", "Access Token")
+              SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                ghModes.forEachIndexed { idx, label ->
+                  SegmentedButton(
+                    selected = ghAuthMode == idx,
+                    onClick = { ghAuthMode = idx },
+                    shape = SegmentedButtonDefaults.itemShape(index = idx, count = ghModes.size),
+                    modifier = Modifier.testTag("github_auth_mode_$idx"),
+                  ) {
+                    Text(label, maxLines = 1)
+                  }
+                }
+              }
+
+              if (ghAuthMode == 0) {
+                val deviceSession = uiState.gitHubDeviceSession
+                if (uiState.isWaitingGitHubOAuth && deviceSession != null) {
+                  Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                  ) {
+                    Column(
+                      modifier = Modifier.padding(14.dp),
+                      verticalArrangement = Arrangement.spacedBy(10.dp),
+                      horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                      Text(
+                        text = "Enter this verification code on GitHub:",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                      )
+                      Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(12.dp),
+                      ) {
+                        Text(
+                          text = deviceSession.userCode,
+                          style = MaterialTheme.typography.headlineSmall.copy(
+                            fontFamily = JetBrainsMono,
+                            letterSpacing = 3.sp,
+                          ),
+                          fontWeight = FontWeight.Bold,
+                          modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                        )
+                      }
+                      Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                      ) {
+                        FilledTonalButton(
+                          onClick = {
+                            clipboard.setText(AnnotatedString(deviceSession.userCode))
+                            onLaunchUrl(deviceSession.verificationUri)
+                          },
+                          shape = RoundedCornerShape(12.dp),
+                          modifier = Modifier.weight(1f).height(48.dp),
+                        ) {
+                          Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                          Spacer(Modifier.width(6.dp))
+                          Text("Copy & Open GitHub")
+                        }
+                        TextButton(
+                          onClick = onCancelGitHubOAuth,
+                          modifier = Modifier.height(48.dp),
+                        ) {
+                          Text("Cancel")
+                        }
+                      }
+                      Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                      ) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Text(
+                          text = "Waiting for GitHub browser authorization…",
+                          style = MaterialTheme.typography.labelSmall,
+                          color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                      }
+                    }
+                  }
+                } else {
+                  TextButton(
+                    onClick = { showGhClientIdField = !showGhClientIdField },
+                    modifier = Modifier.align(Alignment.End),
+                  ) {
+                    Text(if (showGhClientIdField) "Hide Custom Client ID" else "Custom GitHub OAuth Client ID")
+                  }
+                  AnimatedVisibility(visible = showGhClientIdField) {
+                    OutlinedTextField(
+                      value = ghCustomClientId,
+                      onValueChange = { ghCustomClientId = it },
+                      label = { Text("GitHub OAuth App Client ID (optional)") },
+                      placeholder = { Text(GitHubOAuthManager.DEFAULT_CLIENT_ID) },
+                      singleLine = true,
+                      shape = RoundedCornerShape(12.dp),
+                      modifier = Modifier.fillMaxWidth(),
+                    )
+                  }
+                  FilledTonalButton(
+                    onClick = { onStartGitHubOAuth(ghCustomClientId) },
+                    enabled = !uiState.isGitHubBusy,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth().height(50.dp).testTag("github_device_oauth_button"),
+                  ) {
+                    if (uiState.isWaitingGitHubOAuth) {
+                      CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                      Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
+                      Spacer(Modifier.width(8.dp))
+                      Text("Authorize with GitHub OAuth", fontWeight = FontWeight.SemiBold)
+                    }
+                  }
+                }
+              } else {
+                FilledTonalButton(
+                  onClick = { onLaunchUrl(GitHubOAuthManager.buildClassicPatCreationUrl()) },
+                  shape = RoundedCornerShape(14.dp),
+                  modifier = Modifier.fillMaxWidth().height(48.dp),
+                ) {
+                  Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                  Spacer(Modifier.width(6.dp))
+                  Text("Generate GitHub Token (repo + workflow)")
+                }
+                OutlinedTextField(
+                  value = ghPatInput,
+                  onValueChange = { ghPatInput = it },
+                  label = { Text("GitHub PAT (ghp_ or github_pat_)") },
+                  placeholder = { Text("ghp_xxxxxxxxxxxxxxxxxxxx") },
+                  singleLine = true,
+                  leadingIcon = { Icon(Icons.Outlined.Key, contentDescription = null) },
+                  trailingIcon = {
+                    Row {
+                      IconButton(onClick = { clipboard.getText()?.text?.let { ghPatInput = it.trim() } }) {
+                        Icon(Icons.Outlined.ContentPaste, contentDescription = "Paste GitHub token")
+                      }
+                      IconButton(onClick = { showGhPat = !showGhPat }) {
+                        Icon(
+                          imageVector = if (showGhPat) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                          contentDescription = "Toggle GitHub token visibility",
+                        )
+                      }
+                    }
+                  },
+                  visualTransformation = if (showGhPat) VisualTransformation.None else PasswordVisualTransformation(),
+                  shape = RoundedCornerShape(14.dp),
+                  modifier = Modifier.fillMaxWidth().testTag("auth_github_pat_input"),
+                )
+                Button(
+                  onClick = { onAuthorizeGitHubPat(ghPatInput) },
+                  enabled = ghPatInput.isNotBlank() && !uiState.isGitHubBusy,
+                  shape = RoundedCornerShape(14.dp),
+                  modifier = Modifier.fillMaxWidth().height(50.dp).testTag("auth_github_pat_submit"),
+                ) {
+                  if (uiState.isGitHubBusy) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                  } else {
+                    Text("Authorize & Open GitHub Hub", fontWeight = FontWeight.SemiBold)
+                  }
+                }
+              }
+
+              AnimatedVisibility(visible = !uiState.gitHubError.isNullOrBlank()) {
+                Surface(
+                  color = MaterialTheme.colorScheme.errorContainer,
+                  shape = RoundedCornerShape(12.dp),
+                  modifier = Modifier.fillMaxWidth(),
+                ) {
+                  Text(
+                    text = uiState.gitHubError.orEmpty(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.padding(12.dp),
+                  )
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
