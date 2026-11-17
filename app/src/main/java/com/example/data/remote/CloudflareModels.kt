@@ -552,6 +552,7 @@ data class DiagnosticItem(
   val column: Int,
   val message: String,
   val severity: DiagnosticSeverity,
+  val length: Int = 1,
 )
 
 enum class DiffType {

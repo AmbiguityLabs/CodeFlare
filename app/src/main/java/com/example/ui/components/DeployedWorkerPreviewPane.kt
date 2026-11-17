@@ -40,6 +40,8 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Fullscreen
+import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.Http
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
@@ -104,6 +106,8 @@ fun DeployedWorkerPreviewPane(
   onClearConsole: () -> Unit,
   onDeployActiveWorker: () -> Unit,
   onNotifyStatus: (String) -> Unit,
+  isFullScreen: Boolean = false,
+  onToggleFullScreen: (() -> Unit)? = null,
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
@@ -269,6 +273,36 @@ fun DeployedWorkerPreviewPane(
           ) {
             Text("Visit", style = MaterialTheme.typography.labelSmall, color = palette.textPrimary)
             Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = "Visit live Worker URL", tint = palette.activePillFg, modifier = Modifier.size(13.dp))
+          }
+        }
+      }
+
+      if (onToggleFullScreen != null) {
+        Surface(
+          onClick = onToggleFullScreen,
+          color = if (isFullScreen) palette.activePillBg else palette.chromePill,
+          shape = RoundedCornerShape(8.dp),
+          modifier = Modifier.testTag("worker_preview_fullscreen_button"),
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+          ) {
+            Icon(
+              imageVector = if (isFullScreen) Icons.Outlined.FullscreenExit else Icons.Outlined.Fullscreen,
+              contentDescription = if (isFullScreen) "Exit Fullscreen Preview" else "Fullscreen Preview",
+              tint = if (isFullScreen) palette.activePillFg else palette.textPrimary,
+              modifier = Modifier.size(16.dp),
+            )
+            if (isFullScreen) {
+              Text(
+                text = "Exit",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = palette.activePillFg,
+              )
+            }
           }
         }
       }

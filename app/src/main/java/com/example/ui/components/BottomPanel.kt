@@ -198,6 +198,8 @@ fun BottomPanel(
             onClearConsole = onClearPreviewConsole,
             onDeployActiveWorker = onDeployActiveWorker,
             onNotifyStatus = onNotifyStatus,
+            isFullScreen = uiState.isBottomPanelExpanded,
+            onToggleFullScreen = onToggleExpand,
             modifier = Modifier.weight(1f),
           )
         BottomPanelTab.WORKER_TEST ->

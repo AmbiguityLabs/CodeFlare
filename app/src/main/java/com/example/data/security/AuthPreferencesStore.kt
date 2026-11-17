@@ -47,6 +47,7 @@ data class EditorSettings(
   val darkTheme: Boolean = true,
   val dynamicColor: Boolean = false,
   val fontSizeSp: Int = 13,
+  val zoomPercent: Int = 100,
   val tabSize: Int = 2,
   val wordWrap: Boolean = false,
   val showLineNumbers: Boolean = true,
@@ -77,6 +78,7 @@ class AuthPreferencesStore(private val context: Context) {
     val DARK_THEME = booleanPreferencesKey("editor_dark_theme")
     val DYNAMIC_COLOR = booleanPreferencesKey("editor_dynamic_color")
     val FONT_SIZE_SP = intPreferencesKey("editor_font_size_sp")
+    val ZOOM_PERCENT = intPreferencesKey("editor_zoom_percent")
     val TAB_SIZE = intPreferencesKey("editor_tab_size")
     val WORD_WRAP = booleanPreferencesKey("editor_word_wrap")
     val SHOW_LINE_NUMBERS = booleanPreferencesKey("editor_line_numbers")
@@ -127,6 +129,7 @@ class AuthPreferencesStore(private val context: Context) {
         darkTheme = prefs[Keys.DARK_THEME] ?: true,
         dynamicColor = prefs[Keys.DYNAMIC_COLOR] ?: false,
         fontSizeSp = (prefs[Keys.FONT_SIZE_SP] ?: 13).coerceIn(10, 20),
+        zoomPercent = (prefs[Keys.ZOOM_PERCENT] ?: 100).coerceIn(60, 220),
         tabSize = if ((prefs[Keys.TAB_SIZE] ?: 2) == 4) 4 else 2,
         wordWrap = prefs[Keys.WORD_WRAP] ?: false,
         showLineNumbers = prefs[Keys.SHOW_LINE_NUMBERS] ?: true,
@@ -213,7 +216,8 @@ class AuthPreferencesStore(private val context: Context) {
     context.edgeCodeDataStore.edit { prefs ->
       prefs[Keys.DARK_THEME] = next.darkTheme
       prefs[Keys.DYNAMIC_COLOR] = next.dynamicColor
-      prefs[Keys.FONT_SIZE_SP] = next.fontSizeSp
+      prefs[Keys.FONT_SIZE_SP] = next.fontSizeSp.coerceIn(10, 20)
+      prefs[Keys.ZOOM_PERCENT] = next.zoomPercent.coerceIn(60, 220)
       prefs[Keys.TAB_SIZE] = next.tabSize
       prefs[Keys.WORD_WRAP] = next.wordWrap
       prefs[Keys.SHOW_LINE_NUMBERS] = next.showLineNumbers

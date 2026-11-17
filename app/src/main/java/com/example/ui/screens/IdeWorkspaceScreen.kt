@@ -34,6 +34,8 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Fullscreen
+import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.Http
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -197,6 +199,8 @@ fun IdeWorkspaceScreen(
       showProjectGitModal -> showProjectGitModal = false
       showProjectSettingsModal -> showProjectSettingsModal = false
       drawerState.isOpen -> scope.launch { drawerState.close() }
+      uiState.projectMode == ProjectMode.TEST && uiState.isPreviewFullScreen ->
+        viewModel.setPreviewFullScreen(false)
       uiState.showFindBar -> viewModel.toggleFindBar(false)
       uiState.projectMode != ProjectMode.CODE -> viewModel.setProjectMode(ProjectMode.CODE)
       else -> viewModel.closeWorkspaceToHome()
@@ -423,6 +427,14 @@ fun IdeWorkspaceScreen(
         PaletteCommand("Open Deployed Worker Preview", "Live WebView & HTTP preview for this Worker") {
           viewModel.openDeployedWorkerPreview(maximizeWindow = true)
         },
+        PaletteCommand("Toggle Preview Fullscreen", "Expand or restore the live Worker preview window") {
+          if (uiState.projectMode != ProjectMode.TEST) {
+            viewModel.openDeployedWorkerPreview(maximizeWindow = true)
+            viewModel.setPreviewFullScreen(true)
+          } else {
+            viewModel.togglePreviewFullScreen()
+          }
+        },
         PaletteCommand("Open Worker HTTP Tester", "Test Worker routes with custom methods, headers & body") {
           viewModel.openWorkerTestWindow(maximizeWindow = true)
         },
@@ -437,6 +449,15 @@ fun IdeWorkspaceScreen(
         },
         PaletteCommand("Open Problems (${uiState.diagnostics.size})", "Inspect syntax & Worker diagnostics") {
           viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS)
+        },
+        PaletteCommand("Zoom In Editor", "Increase editor code magnification (+15%)") {
+          viewModel.adjustEditorZoom(15)
+        },
+        PaletteCommand("Zoom Out Editor", "Decrease editor code magnification (-15%)") {
+          viewModel.adjustEditorZoom(-15)
+        },
+        PaletteCommand("Reset Editor Zoom (100%)", "Restore default editor magnification") {
+          viewModel.resetEditorZoom()
         },
         PaletteCommand("Toggle Live Tail Logs", "Stream real-time console.log() via WebSocket") {
           viewModel.toggleLiveTail()
@@ -523,6 +544,8 @@ fun IdeWorkspaceScreen(
       )
     }
 
+    val isFullScreenPreview = uiState.projectMode == ProjectMode.TEST && uiState.isPreviewFullScreen
+
     val workspaceBody: @Composable () -> Unit = {
       Box(
         modifier =
@@ -534,7 +557,8 @@ fun IdeWorkspaceScreen(
             .imePadding(),
       ) {
         Column(modifier = Modifier.fillMaxSize()) {
-          // Clean Single-Project Top Header Bar
+          // Clean Single-Project Top Header Bar (hidden in Fullscreen Preview)
+          if (!isFullScreenPreview) {
           Row(
             modifier =
               Modifier
@@ -769,6 +793,7 @@ fun IdeWorkspaceScreen(
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp))
           }
           HorizontalDivider(color = palette.border.copy(alpha = 0.4f))
+          }
 
           // Main Content Area: Strictly 1 Clean Mode at a Time
           Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -817,6 +842,8 @@ fun IdeWorkspaceScreen(
                     onDiscardRestoredDraft = viewModel::discardRestoredDraft,
                     onJumpToLine = viewModel::jumpToLine,
                     onSyncWranglerToWorkspace = viewModel::syncWranglerFileToWorkspace,
+                    onZoomPercentChange = viewModel::setEditorZoomPercent,
+                    onJumpToLocation = viewModel::jumpToLine,
                     modifier = Modifier.fillMaxSize(),
                   )
                 }
@@ -877,7 +904,8 @@ fun IdeWorkspaceScreen(
             }
           }
 
-          // Sleek 4-Destination Bottom Dock
+          // Sleek 4-Destination Bottom Dock (hidden in Fullscreen Preview)
+          if (!isFullScreenPreview) {
           EdgeBottomDock(
             items =
               listOf(
@@ -918,6 +946,7 @@ fun IdeWorkspaceScreen(
                 ),
               ),
           )
+          }
         }
 
         SnackbarHost(
@@ -961,39 +990,84 @@ private fun ProjectTestModeWorkspace(
     }
 
   Column(modifier = Modifier.fillMaxSize().background(palette.chromeBg)) {
-    Row(
-      modifier =
-        Modifier
-          .fillMaxWidth()
-          .background(palette.chromeSurface)
-          .padding(horizontal = 10.dp, vertical = 6.dp),
-      horizontalArrangement = Arrangement.spacedBy(6.dp),
-      verticalAlignment = Alignment.CenterVertically,
-    ) {
-      ModeSegmentChip(
-        label = "Preview",
-        selected = activeTab == BottomPanelTab.WORKER_PREVIEW,
-        tag = "test_segment_preview",
-        onClick = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
-        modifier = Modifier.weight(1f),
-      )
-      ModeSegmentChip(
-        label = "Worker HTTP",
-        selected = activeTab == BottomPanelTab.WORKER_TEST,
-        tag = "test_segment_worker_http",
-        onClick = { viewModel.openWorkerTestWindow(maximizeWindow = true) },
-        modifier = Modifier.weight(1f),
-      )
-      ModeSegmentChip(
-        label = "API Tester",
-        selected = activeTab == BottomPanelTab.API_TESTER,
-        tag = "test_segment_api_tester",
-        onClick = { viewModel.toggleBottomPanel(BottomPanelTab.API_TESTER) },
-        modifier = Modifier.weight(1f),
-      )
-    }
+    if (!uiState.isPreviewFullScreen) {
+      Row(
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .background(palette.chromeSurface)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        ModeSegmentChip(
+          label = "Preview",
+          selected = activeTab == BottomPanelTab.WORKER_PREVIEW,
+          tag = "test_segment_preview",
+          onClick = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
+          modifier = Modifier.weight(1f),
+        )
+        ModeSegmentChip(
+          label = "Worker HTTP",
+          selected = activeTab == BottomPanelTab.WORKER_TEST,
+          tag = "test_segment_worker_http",
+          onClick = { viewModel.openWorkerTestWindow(maximizeWindow = true) },
+          modifier = Modifier.weight(1f),
+        )
+        ModeSegmentChip(
+          label = "API Tester",
+          selected = activeTab == BottomPanelTab.API_TESTER,
+          tag = "test_segment_api_tester",
+          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.API_TESTER) },
+          modifier = Modifier.weight(1f),
+        )
+        IconButton(
+          onClick = { viewModel.setPreviewFullScreen(true) },
+          modifier = Modifier.size(30.dp).testTag("test_workspace_fullscreen_button"),
+        ) {
+          Icon(
+            imageVector = Icons.Outlined.Fullscreen,
+            contentDescription = "Fullscreen Preview",
+            tint = palette.textSecondary,
+            modifier = Modifier.size(18.dp),
+          )
+        }
+      }
 
-    HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
+      HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
+    } else if (activeTab != BottomPanelTab.WORKER_PREVIEW) {
+      Row(
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .background(palette.chromeSurface)
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+      ) {
+        Text(
+          text = if (activeTab == BottomPanelTab.WORKER_TEST) "Worker HTTP Tester" else "API Tester",
+          style = MaterialTheme.typography.labelMedium,
+          fontWeight = FontWeight.SemiBold,
+          color = palette.textPrimary,
+        )
+        Surface(
+          onClick = { viewModel.setPreviewFullScreen(false) },
+          color = palette.activePillBg,
+          shape = RoundedCornerShape(8.dp),
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+          ) {
+            Icon(Icons.Outlined.FullscreenExit, contentDescription = "Exit Fullscreen", tint = palette.activePillFg, modifier = Modifier.size(15.dp))
+            Text("Exit", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, color = palette.activePillFg)
+          }
+        }
+      }
+      HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
+    }
 
     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
       when (activeTab) {
@@ -1012,6 +1086,8 @@ private fun ProjectTestModeWorkspace(
             onClearConsole = viewModel::clearPreviewConsole,
             onDeployActiveWorker = viewModel::deployActiveWorker,
             onNotifyStatus = viewModel::showStatus,
+            isFullScreen = uiState.isPreviewFullScreen,
+            onToggleFullScreen = viewModel::togglePreviewFullScreen,
             modifier = Modifier.fillMaxSize(),
           )
 

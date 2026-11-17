@@ -202,6 +202,7 @@ data class IdeUiState(
   val previewConsoleEntries: List<WorkerPreviewConsoleEntry> = emptyList(),
   val previewReloadNonce: Long = 0L,
   val isPreviewConsoleExpanded: Boolean = true,
+  val isPreviewFullScreen: Boolean = false,
   val workerTestHistory: List<WorkerTestRunRecord> = emptyList(),
   val ramDbStats: RamDatabaseStats = RamDatabaseStats(),
   val ramWorkspaces: List<RamWorkspaceRecord> = emptyList(),
@@ -958,6 +959,7 @@ export default {
         showFindBar = false,
         showBottomPanel = false,
         isBottomPanelExpanded = false,
+        isPreviewFullScreen = false,
         isGitHubIdeOnlyMode = false,
         projectMode = ProjectMode.CODE,
         sidebarSection = SidebarSection.EXPLORER,
@@ -996,7 +998,11 @@ export default {
             }
           else -> state.activeBottomTab
         }
-      state.copy(projectMode = mode, activeBottomTab = nextBottomTab)
+      state.copy(
+        projectMode = mode,
+        activeBottomTab = nextBottomTab,
+        isPreviewFullScreen = if (mode == ProjectMode.TEST) state.isPreviewFullScreen else false,
+      )
     }
     if (mode == ProjectMode.CONFIG && !_uiState.value.isLocalScratchpad && _uiState.value.credentials != null) {
       loadCloudflareInfra(forceRefresh = false)
@@ -1767,7 +1773,7 @@ export default {
         diagnosticsJob?.cancel()
         diagnosticsJob =
           viewModelScope.launch {
-            delay(260L)
+            delay(160L)
             val diags =
               withContext(Dispatchers.Default) {
                 filesSnapshot.flatMap { CodeAnalyzer.analyzeFile(it) }
@@ -1892,7 +1898,7 @@ export default {
     updateEditorValue(TextFieldValue(nextText, TextRange(nextCursor)))
   }
 
-  fun jumpToLine(filePath: String, line: Int) {
+  fun jumpToLine(filePath: String, line: Int, column: Int = 1) {
     openFileTab(filePath)
     val file = _uiState.value.workspace?.files?.firstOrNull { it.path == filePath } ?: return
     var offset = 0
@@ -1901,10 +1907,12 @@ export default {
     for (i in 0 until targetIdx) {
       offset += lines[i].length + 1
     }
-    val safeOffset = offset.coerceIn(0, file.content.length)
+    val colOffset = (column - 1).coerceIn(0, lines.getOrNull(targetIdx)?.length ?: 0)
+    val safeOffset = (offset + colOffset).coerceIn(0, file.content.length)
     _uiState.update { state ->
       state.copy(
         projectMode = ProjectMode.CODE,
+        isPreviewFullScreen = false,
         editorFieldValues =
           state.editorFieldValues +
             (filePath to TextFieldValue(file.content, TextRange(safeOffset)))
@@ -2104,6 +2112,20 @@ export default {
 
   fun togglePreviewConsoleExpanded() {
     _uiState.update { it.copy(isPreviewConsoleExpanded = !it.isPreviewConsoleExpanded) }
+  }
+
+  fun setPreviewFullScreen(fullScreen: Boolean) {
+    _uiState.update { state ->
+      state.copy(
+        isPreviewFullScreen = fullScreen,
+        isPreviewConsoleExpanded = if (fullScreen) false else state.isPreviewConsoleExpanded,
+      )
+    }
+  }
+
+  fun togglePreviewFullScreen() {
+    val next = !_uiState.value.isPreviewFullScreen
+    setPreviewFullScreen(next)
   }
 
   fun updatePreviewHttpRequest(
@@ -5813,6 +5835,24 @@ jobs:
   // Settings & Cloudflare Credentials
   fun updateSettings(transform: (EditorSettings) -> EditorSettings) {
     viewModelScope.launch { prefsStore.updateEditorSettings(transform) }
+  }
+
+  fun setEditorZoomPercent(zoomPercent: Int) {
+    val clamped = zoomPercent.coerceIn(60, 220)
+    _uiState.update { state ->
+      state.copy(editorSettings = state.editorSettings.copy(zoomPercent = clamped))
+    }
+    viewModelScope.launch {
+      prefsStore.updateEditorSettings { it.copy(zoomPercent = clamped) }
+    }
+  }
+
+  fun adjustEditorZoom(deltaPercent: Int) {
+    setEditorZoomPercent(_uiState.value.editorSettings.zoomPercent + deltaPercent)
+  }
+
+  fun resetEditorZoom() {
+    setEditorZoomPercent(100)
   }
 
   fun clearCloudflareCredentialTestMessage() {

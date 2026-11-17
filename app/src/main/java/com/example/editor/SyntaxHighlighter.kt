@@ -7,15 +7,29 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextDecoration
+import com.example.data.remote.DiagnosticItem
+import com.example.data.remote.DiagnosticSeverity
 import com.example.data.remote.WorkerLanguage
+import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.IdePalette
+import com.example.ui.theme.RoseError
 
 class CodeSyntaxVisualTransformation(
   private val language: WorkerLanguage,
   private val palette: IdePalette,
+  private val diagnostics: List<DiagnosticItem> = emptyList(),
+  private val cursorOffset: Int = -1,
 ) : VisualTransformation {
   override fun filter(text: AnnotatedString): TransformedText {
-    val highlighted = SyntaxHighlighter.highlight(text.text, language, palette)
+    val highlighted =
+      SyntaxHighlighter.highlightWithDiagnostics(
+        code = text.text,
+        language = language,
+        palette = palette,
+        diagnostics = diagnostics,
+        cursorOffset = cursorOffset,
+      )
     return TransformedText(highlighted, OffsetMapping.Identity)
   }
 }
@@ -132,6 +146,114 @@ object SyntaxHighlighter {
 
   private const val MAX_HIGHLIGHT_CHARS = 30_000
 
+  fun highlightWithDiagnostics(
+    code: String,
+    language: WorkerLanguage,
+    palette: IdePalette,
+    diagnostics: List<DiagnosticItem> = emptyList(),
+    cursorOffset: Int = -1,
+  ): AnnotatedString {
+    val base = highlight(code, language, palette)
+    if (code.isEmpty() || code.length > MAX_HIGHLIGHT_CHARS) return base
+
+    val bracketMatch =
+      if (cursorOffset >= 0) CodeAnalyzer.findMatchingBracket(code, cursorOffset, language)
+      else null
+
+    val actionableDiags = diagnostics.filter { it.severity != DiagnosticSeverity.INFO }
+    if (actionableDiags.isEmpty() && bracketMatch == null) {
+      return base
+    }
+
+    val builder = AnnotatedString.Builder(base)
+
+    // Precompute line start offsets once when diagnostics exist
+    if (actionableDiags.isNotEmpty()) {
+      val lineStarts = computeLineStarts(code)
+      actionableDiags.forEach { diag ->
+        val lineIdx = (diag.line - 1).coerceIn(0, lineStarts.lastIndex)
+        val lineStart = lineStarts[lineIdx]
+        val nextLineStart = if (lineIdx + 1 < lineStarts.size) lineStarts[lineIdx + 1] else code.length
+        val lineEnd =
+          if (nextLineStart > lineStart && code[nextLineStart - 1] == '\n') nextLineStart - 1
+          else nextLineStart
+
+        if (lineStart < lineEnd) {
+          val rawStart = (lineStart + (diag.column - 1).coerceAtLeast(0)).coerceIn(lineStart, lineEnd - 1)
+          val spanLen =
+            if (diag.length > 1) {
+              diag.length
+            } else {
+              // Expand single-char span to cover adjacent identifier/token if applicable, or keep 1 char
+              var end = rawStart + 1
+              if (code[rawStart].isLetterOrDigit() || code[rawStart] == '_' || code[rawStart] == '$') {
+                while (end < lineEnd && (code[end].isLetterOrDigit() || code[end] == '_' || code[end] == '$')) {
+                  end++
+                }
+              }
+              (end - rawStart).coerceAtLeast(1)
+            }
+          val rawEnd = (rawStart + spanLen).coerceIn(rawStart + 1, lineEnd)
+          val isErr = diag.severity == DiagnosticSeverity.ERROR
+          val color = if (isErr) RoseError else AmberWarn
+          builder.addStyle(
+            SpanStyle(
+              background = color.copy(alpha = if (isErr) 0.18f else 0.14f),
+              textDecoration = TextDecoration.Underline,
+            ),
+            rawStart,
+            rawEnd,
+          )
+        }
+      }
+    }
+
+    // Active bracket pair / mismatch highlight
+    bracketMatch?.let { match ->
+      if (match.isMismatch) {
+        if (match.primaryOffset in code.indices) {
+          builder.addStyle(
+            SpanStyle(
+              color = RoseError,
+              background = RoseError.copy(alpha = 0.25f),
+              fontWeight = FontWeight.Bold,
+              textDecoration = TextDecoration.Underline,
+            ),
+            match.primaryOffset,
+            match.primaryOffset + 1,
+          )
+        }
+      } else {
+        val style =
+          SpanStyle(
+            color = palette.activePillFg,
+            background = palette.activePillBg.copy(alpha = 0.85f),
+            fontWeight = FontWeight.Bold,
+          )
+        if (match.primaryOffset in code.indices) {
+          builder.addStyle(style, match.primaryOffset, match.primaryOffset + 1)
+        }
+        val partner = match.partnerOffset
+        if (partner != null && partner in code.indices) {
+          builder.addStyle(style, partner, partner + 1)
+        }
+      }
+    }
+
+    return builder.toAnnotatedString()
+  }
+
+  private fun computeLineStarts(code: String): IntArray {
+    val starts = ArrayList<Int>(64)
+    starts.add(0)
+    for (i in code.indices) {
+      if (code[i] == '\n') {
+        starts.add(i + 1)
+      }
+    }
+    return starts.toIntArray()
+  }
+
   fun highlight(code: String, language: WorkerLanguage, palette: IdePalette): AnnotatedString {
     if (code.isEmpty()) return AnnotatedString("")
     if (language == WorkerLanguage.TEXT || code.length > MAX_HIGHLIGHT_CHARS) {
@@ -182,6 +304,10 @@ object SyntaxHighlighter {
         val quote = c
         var j = i + 1
         while (j < len) {
+          if (quote != '`' && code[j] == '\n') {
+            // Stop unclosed single/double quote highlighting at end of line so rest of file stays readable
+            break
+          }
           if (code[j] == '\\' && j + 1 < len) {
             j += 2
             continue
