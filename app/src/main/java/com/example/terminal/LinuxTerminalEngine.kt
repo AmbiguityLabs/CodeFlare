@@ -43,7 +43,8 @@ class LinuxTerminalEngine(
   private val repository: CloudflareRepository,
   rootDirOverride: File? = null,
 ) {
-  private val rootWorkspacesDir =
+  @Volatile
+  private var rootWorkspacesDir: File =
     (rootDirOverride ?: File(context.filesDir, "edgecode_workspaces")).apply { mkdirs() }
   private var currentDir: File = rootWorkspacesDir
   private var lastSyncedScript: String? = null
@@ -55,6 +56,16 @@ class LinuxTerminalEngine(
       "SHELL" to "/system/bin/sh",
       "HOME" to rootWorkspacesDir.absolutePath,
     )
+
+  fun updateRootWorkspacesDir(newRoot: File) {
+    val prepared = newRoot.apply { mkdirs() }
+    if (prepared.absolutePath != rootWorkspacesDir.absolutePath) {
+      rootWorkspacesDir = prepared
+      currentDir = prepared
+      lastSyncedScript = null
+      sessionEnv["HOME"] = prepared.absolutePath
+    }
+  }
 
   fun currentPromptPath(workspace: WorkerWorkspace?): String {
     val wsName = workspace?.scriptName ?: "scratch"

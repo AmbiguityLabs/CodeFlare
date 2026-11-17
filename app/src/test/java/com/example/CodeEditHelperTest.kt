@@ -123,4 +123,33 @@ class CodeEditHelperTest {
     assertEquals(vt1, vt2)
     assertEquals(vt1.hashCode(), vt2.hashCode())
   }
+
+  @Test
+  fun backspaceEmptyPairAtStartAndEndDoesNotGoOutOfBounds() {
+    val pairAtStart = TextFieldValue("()", TextRange(1))
+    val afterDeleteOpen = TextFieldValue(")", TextRange(0))
+    val deletedAtStart =
+      CodeEditHelper.applySmartCodeEdit(
+        prev = pairAtStart,
+        next = afterDeleteOpen,
+        language = WorkerLanguage.JAVASCRIPT,
+        tabSize = 2,
+        autoCloseBrackets = true,
+      )
+    assertEquals("", deletedAtStart.text)
+    assertEquals(TextRange(0), deletedAtStart.selection)
+
+    val atEnd = TextFieldValue("const x = 1", TextRange(11))
+    val afterBackspaceAtEnd = TextFieldValue("const x = ", TextRange(10))
+    val safeResult =
+      CodeEditHelper.applySmartCodeEdit(
+        prev = atEnd,
+        next = afterBackspaceAtEnd,
+        language = WorkerLanguage.JAVASCRIPT,
+        tabSize = 2,
+        autoCloseBrackets = true,
+      )
+    assertEquals("const x = ", safeResult.text)
+    assertEquals(TextRange(10), safeResult.selection)
+  }
 }

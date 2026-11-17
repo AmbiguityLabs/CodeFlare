@@ -487,12 +487,15 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
     viewModelScope.launch {
       val (diskWorkspaces, initialSummary, restoredDrafts, lastPointer) =
         withContext(Dispatchers.IO) {
+          projectDirManager.refreshRootDirectoryAndMigrate()
+          terminalEngine.updateRootWorkspacesDir(projectDirManager.projectsDir)
           val diskList = projectDirManager.loadAllWorkspaces()
           val drafts = autoSaveStore.loadAllDrafts()
           val pointer = autoSaveStore.loadLastSessionPointer()
           val summary = projectDirManager.computeStorageSummary()
           Quadruple(diskList, summary, drafts, pointer)
         }
+      // Phone directory files on disk are the primary source of truth
       diskWorkspaces.forEach { rec ->
         ramDb.restoreRecord(rec, setActive = false)
       }
@@ -500,21 +503,16 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
       restoredDrafts.forEach { draft ->
         lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
         if (draft.isLocalScratchpad || draft.workspaceKey.startsWith("local_")) {
-          val existingOnDisk = ramDb.getWorkspace(draft.workspaceKey)
-          if (existingOnDisk == null || draft.savedAtEpochMs > existingOnDisk.importedAtEpochMs) {
-            val ws =
-              if (existingOnDisk != null) {
-                AutoSaveDraftStore.mergeDraftIntoWorkspace(existingOnDisk.workingWorkspace, draft).first
-              } else {
-                draft.toWorkspace()
-              }
+          // Only materialize from AutoSaveDraftStore if no folder exists on disk yet
+          if (!ramDb.hasWorkspace(draft.workspaceKey)) {
+            val ws = draft.toWorkspace()
             val record =
               ramDb.importWorkspace(
                 key = draft.workspaceKey,
                 workspace = ws,
                 defaultTabs = draft.openTabs,
                 defaultActivePath = draft.activeFilePath,
-                isNewUnexported = existingOnDisk?.isNewUnexportedWorker ?: false,
+                isNewUnexported = false,
               )
             val selections = draft.toFieldValues()
             val finalRecord =
@@ -1014,13 +1012,62 @@ export default {
     return record
   }
 
+  fun refreshStoragePermissionAndReload() {
+    viewModelScope.launch {
+      val migrated =
+        withContext(Dispatchers.IO) {
+          projectDirManager.refreshRootDirectoryAndMigrate()
+        }
+      terminalEngine.updateRootWorkspacesDir(projectDirManager.projectsDir)
+      if (migrated) {
+        val activeKey = activeWorkspaceKey()
+        syncActiveStateToRamDb()
+        val diskList = withContext(Dispatchers.IO) { projectDirManager.loadAllWorkspaces() }
+        diskList.forEach { rec ->
+          if (rec.key != activeKey) {
+            ramDb.restoreRecord(rec, setActive = false)
+          }
+        }
+        if (activeKey != null) {
+          ramDb.getWorkspace(activeKey)?.let { activeRec ->
+            withContext(Dispatchers.IO) { projectDirManager.saveWorkspaceRecord(activeRec) }
+          }
+        }
+      }
+      val summary = withContext(Dispatchers.IO) { projectDirManager.computeStorageSummary() }
+      _uiState.update { state ->
+        val activeWs = state.workspace
+        state.copy(
+          projectStorageSummary = summary,
+          ramWorkspaces = ramDb.listWorkspaces(),
+          ramDbStats = ramDb.computeStats(activeWorkspaceKey(state)),
+          terminalPromptPath = if (activeWs != null) terminalEngine.currentPromptPath(activeWs) else state.terminalPromptPath,
+          statusMessage =
+            if (migrated && summary.isUsingNativeDeviceStorage) {
+              "Dedicated folder active: ${summary.rootAbsolutePath}"
+            } else {
+              state.statusMessage
+            },
+        )
+      }
+    }
+  }
+
   fun openRamWorkspace(key: String) {
     val record = ramDb.getWorkspace(key) ?: return
     stopTailIfRunning()
     flushAutoSaveNow()
     syncActiveStateToRamDb()
     ramDb.setActiveWorkspaceKey(key)
-    val ws = record.workingWorkspace
+    val cachedSub =
+      _uiState.value.selectedAccount?.id?.let { ramDb.getInfraCache(it)?.subdomain }.orEmpty()
+    val rawWs = record.workingWorkspace
+    val ws =
+      if (rawWs.accountSubdomain.isBlank() && cachedSub.isNotBlank()) {
+        rawWs.copy(accountSubdomain = cachedSub)
+      } else {
+        rawWs
+      }
     val diags = rebuildDiagnosticsFull(ws.files)
     terminalEngine.syncWorkspaceToDisk(ws)
     val isLocal = key.startsWith("local_")
@@ -1028,9 +1075,10 @@ export default {
       record.importedSnapshot.files
         .filterNot { it.isVirtualReadOnly || it.path == "wrangler.jsonc" }
         .associate { it.path to it.content }
-    _uiState.update {
-      it.copy(
-        isLocalScratchpad = isLocal || it.credentials == null,
+    val resolvedPreview = resolveDefaultPreviewUrl(ws)
+    _uiState.update { state ->
+      state.copy(
+        isLocalScratchpad = isLocal || state.credentials == null,
         isGitHubIdeOnlyMode = false,
         showHomeGitHubHub = false,
         projectMode = ProjectMode.CODE,
@@ -1041,14 +1089,20 @@ export default {
         tabNavHistory = record.tabNavHistory,
         tabNavIndex = record.tabNavIndex,
         editorFieldValues = record.fieldValues,
-        editorRevision = it.editorRevision + 1L,
+        editorRevision = state.editorRevision + 1L,
         diagnostics = diags,
         restoredDraftBanner = null,
         activeWorkspaceHasPendingConfig = record.hasPendingChanges,
         ramDbStats = ramDb.computeStats(key),
         ramWorkspaces = ramDb.listWorkspaces(),
-        previewUrl = resolveDefaultPreviewUrl(ws),
+        previewUrl = resolvedPreview,
         previewHttpResult = null,
+        apiRequest =
+          if (resolvedPreview.isNotBlank()) {
+            ApiRequestUtils.applyDeployedWorkerUrl(state.apiRequest, resolvedPreview, forceReplace = false)
+          } else {
+            state.apiRequest
+          },
         gitWorkingBaseline = baselineMap,
         terminalPromptPath = terminalEngine.currentPromptPath(ws),
       )
@@ -1217,7 +1271,16 @@ export default {
     repository
       .loadWorkers(accountId)
       .onSuccess { list ->
-        ramDb.updateInfraCache(accountId) { it.copy(workers = list) }
+        var cachedSub = ramDb.getInfraCache(accountId)?.subdomain.orEmpty()
+        if (cachedSub.isBlank()) {
+          cachedSub = repository.getAccountSubdomain(accountId)
+        }
+        ramDb.updateInfraCache(accountId) {
+          it.copy(
+            workers = list,
+            subdomain = cachedSub.ifBlank { it.subdomain },
+          )
+        }
         _uiState.update { it.copy(workers = list, isLoadingWorkers = false) }
         appendLog("INFO", "Loaded ${list.size} Worker(s) from Cloudflare")
 
@@ -1261,15 +1324,23 @@ export default {
     val cachedRecord = ramDb.getWorkspace(ramKey)
     if (!forceRefreshFromCloudflare && cachedRecord != null) {
       ramDb.setActiveWorkspaceKey(ramKey)
-      val ws = cachedRecord.workingWorkspace
+      val cachedSub = ramDb.getInfraCache(accountId)?.subdomain.orEmpty()
+      val rawWs = cachedRecord.workingWorkspace
+      val ws =
+        if (rawWs.accountSubdomain.isBlank() && cachedSub.isNotBlank()) {
+          rawWs.copy(accountSubdomain = cachedSub)
+        } else {
+          rawWs
+        }
       val diags = rebuildDiagnosticsFull(ws.files)
       terminalEngine.syncWorkspaceToDisk(ws)
       val baselineMap =
         cachedRecord.importedSnapshot.files
           .filterNot { it.isVirtualReadOnly || it.path == "wrangler.jsonc" }
           .associate { it.path to it.content }
-      _uiState.update {
-        it.copy(
+      val resolvedPreview = resolveDefaultPreviewUrl(ws)
+      _uiState.update { state ->
+        state.copy(
           isLocalScratchpad = false,
           showHomeGitHubHub = false,
           projectMode = ProjectMode.CODE,
@@ -1280,16 +1351,22 @@ export default {
           tabNavHistory = cachedRecord.tabNavHistory,
           tabNavIndex = cachedRecord.tabNavIndex,
           editorFieldValues = cachedRecord.fieldValues,
-          editorRevision = it.editorRevision + 1L,
+          editorRevision = state.editorRevision + 1L,
           diagnostics = diags,
           isOpeningWorker = false,
           statusMessage = "Opened '${ws.scriptName}' from local project folder",
           restoredDraftBanner = null,
           activeWorkspaceHasPendingConfig = cachedRecord.hasPendingChanges,
           ramDbStats = ramDb.computeStats(ramKey),
-          previewUrl = resolveDefaultPreviewUrl(ws),
+          previewUrl = resolvedPreview,
           previewHttpResult = null,
-          previewReloadNonce = it.previewReloadNonce + 1L,
+          previewReloadNonce = state.previewReloadNonce + 1L,
+          apiRequest =
+            if (resolvedPreview.isNotBlank()) {
+              ApiRequestUtils.applyDeployedWorkerUrl(state.apiRequest, resolvedPreview, forceReplace = false)
+            } else {
+              state.apiRequest
+            },
           gitWorkingBaseline = baselineMap,
           terminalPromptPath = terminalEngine.currentPromptPath(ws),
         )
@@ -1372,8 +1449,9 @@ export default {
               val timeStr = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(savedDraft.savedAtEpochMs))
               "Restored auto-saved draft from $timeStr (${ws.files.count { it.isDirty }} edited)"
             } else null
-          _uiState.update {
-            it.copy(
+          val resolvedPreview = resolveDefaultPreviewUrl(ws)
+          _uiState.update { state ->
+            state.copy(
               isLocalScratchpad = false,
               showHomeGitHubHub = false,
               projectMode = ProjectMode.CODE,
@@ -1384,7 +1462,7 @@ export default {
               tabNavHistory = activeRecord.tabNavHistory,
               tabNavIndex = activeRecord.tabNavIndex,
               editorFieldValues = activeRecord.fieldValues,
-              editorRevision = it.editorRevision + 1L,
+              editorRevision = state.editorRevision + 1L,
               diagnostics = diags,
               isOpeningWorker = false,
               statusMessage = "Synced '${ws.scriptName}' (${ws.files.size} files) to project folder",
@@ -1392,10 +1470,16 @@ export default {
               activeWorkspaceHasPendingConfig = activeRecord.hasPendingChanges,
               ramDbStats = ramDb.computeStats(ramKey),
               workerVersions = emptyList(),
-              previewUrl = resolveDefaultPreviewUrl(ws),
+              previewUrl = resolvedPreview,
               previewHttpResult = null,
               previewConsoleEntries = emptyList(),
-              previewReloadNonce = it.previewReloadNonce + 1L,
+              previewReloadNonce = state.previewReloadNonce + 1L,
+              apiRequest =
+                if (resolvedPreview.isNotBlank()) {
+                  ApiRequestUtils.applyDeployedWorkerUrl(state.apiRequest, resolvedPreview, forceReplace = false)
+                } else {
+                  state.apiRequest
+                },
               httpTestResult = null,
               tailLogs = emptyList(),
               linkedGitRepo = null,
@@ -1502,8 +1586,8 @@ export default {
         isNewUnexported = !isScratchpad,
       )
     terminalEngine.syncWorkspaceToDisk(ws)
-    persistWorkspaceToProjectDirAsync(key)
     val diags = rebuildDiagnosticsFull(ws.files)
+    val initialPreview = resolveDefaultPreviewUrl(ws)
     _uiState.update { state ->
       val updatedWorkers =
         if (!isScratchpad && state.workers.none { it.id == cleanName }) {
@@ -1523,20 +1607,36 @@ export default {
         tabNavIndex = record.tabNavIndex,
         editorFieldValues = record.fieldValues,
         diagnostics = diags,
-        previewUrl = resolveDefaultPreviewUrl(ws),
+        previewUrl = initialPreview,
+        apiRequest =
+          if (initialPreview.isNotBlank()) {
+            ApiRequestUtils.applyDeployedWorkerUrl(state.apiRequest, initialPreview, forceReplace = true)
+          } else {
+            state.apiRequest
+          },
         activeWorkspaceHasPendingConfig = record.hasPendingChanges,
         ramDbStats = ramDb.computeStats(key),
         statusMessage =
           if (isScratchpad) "Created '$cleanName' in ${projectDirManager.displayRootPath()}"
-          else "Scaffolded '$cleanName' locally — tap Deploy to publish",
+          else "Created '$cleanName' — deploying to Cloudflare…",
         terminalPromptPath = terminalEngine.currentPromptPath(ws),
       )
     }
     appendTerminalWelcome(ws)
     appendLog("INFO", "Created '$cleanName' in ${projectDirManager.displayRootPath()}")
     recordActiveSessionPointer()
-    scheduleDraftSave()
     syncPeriodicAutoSaveLoop()
+
+    viewModelScope.launch {
+      withContext(Dispatchers.IO) {
+        projectDirManager.saveWorkspaceRecord(record)
+        val summary = projectDirManager.computeStorageSummary()
+        _uiState.update { it.copy(projectStorageSummary = summary) }
+      }
+      if (!isScratchpad && accountId != null) {
+        deployWorkspaceInternal(accountId = accountId, workspaceKey = key, isNewWorker = true)
+      }
+    }
   }
 
   fun createNewWorkerFromUris(
@@ -1608,13 +1708,14 @@ export default {
           isNewUnexported = !isScratchpad,
         )
       terminalEngine.syncWorkspaceToDisk(ws)
-      autoSaveIoScope.launch {
+      withContext(Dispatchers.IO) {
         projectDirManager.recordOrganizedImport(cleanName, finalFiles)
         projectDirManager.saveWorkspaceRecord(record)
         val summary = projectDirManager.computeStorageSummary()
         _uiState.update { it.copy(projectStorageSummary = summary) }
       }
       val diags = rebuildDiagnosticsFull(ws.files)
+      val initialPreview = resolveDefaultPreviewUrl(ws)
       _uiState.update { state ->
         val updatedWorkers =
           if (!isScratchpad && state.workers.none { it.id == cleanName }) {
@@ -1634,18 +1735,29 @@ export default {
           tabNavIndex = record.tabNavIndex,
           editorFieldValues = record.fieldValues,
           diagnostics = diags,
-          previewUrl = resolveDefaultPreviewUrl(ws),
+          previewUrl = initialPreview,
+          apiRequest =
+            if (initialPreview.isNotBlank()) {
+              ApiRequestUtils.applyDeployedWorkerUrl(state.apiRequest, initialPreview, forceReplace = true)
+            } else {
+              state.apiRequest
+            },
           activeWorkspaceHasPendingConfig = record.hasPendingChanges,
           ramDbStats = ramDb.computeStats(key),
-          statusMessage = "Organized & imported ${finalFiles.size} file(s) into '$cleanName'",
+          statusMessage =
+            if (isScratchpad) "Imported ${finalFiles.size} file(s) into '$cleanName'"
+            else "Imported ${finalFiles.size} file(s) — deploying '$cleanName'…",
           terminalPromptPath = terminalEngine.currentPromptPath(ws),
         )
       }
       appendTerminalWelcome(ws)
       appendLog("INFO", "Organized & imported ${finalFiles.size} file(s) into '$cleanName'")
       recordActiveSessionPointer()
-      scheduleDraftSave()
       syncPeriodicAutoSaveLoop()
+
+      if (!isScratchpad && accountId != null) {
+        deployWorkspaceInternal(accountId = accountId, workspaceKey = key, isNewWorker = true)
+      }
     }
   }
 
@@ -2775,7 +2887,7 @@ export default {
     if (_uiState.value.isLocalScratchpad) {
       _uiState.update {
         it.copy(
-          deployBannerMessage = "Local Scratchpad mode — tap Connect to authorize Cloudflare & export/deploy live.",
+          deployBannerMessage = "Local mode — connect Cloudflare to deploy live and obtain a workers.dev URL.",
           isDeployError = false,
         )
       }
@@ -2785,95 +2897,185 @@ export default {
     val ws = _uiState.value.workspace ?: return
     val ramKey = ramDb.workspaceKey(accountId, ws.scriptName)
     val ramRecord = ramDb.getWorkspace(ramKey)
+    val isNew = ramRecord?.isNewUnexportedWorker == true
     viewModelScope.launch {
-      _uiState.update { it.copy(isDeploying = true, deployBannerMessage = null, statusMessage = "Exporting '${ws.scriptName}' from RAM to Cloudflare…") }
-      repository
-        .deployWorkerWorkspace(accountId, ws)
-        .onSuccess {
-          val pendingErrors = mutableListOf<String>()
-          val shouldSyncConfig =
-            ramRecord?.hasPendingConfigSync == true ||
-              ramRecord?.isNewUnexportedWorker == true ||
-              ws.hasModuleSetChanged
-          if (shouldSyncConfig) {
-            repository.saveBindingsAndCompat(
-              accountId = accountId,
-              scriptName = ws.scriptName,
-              compatibilityDate = ws.compatibilityDate,
-              compatibilityFlags = ws.compatibilityFlags,
-              bindings = ws.bindings.filterNot { it.type == "secret_text" },
-            ).onFailure { err -> pendingErrors.add("settings: ${err.localizedMessage}") }
-
-            repository.toggleWorkersDev(accountId, ws.scriptName, ws.workersDevEnabled)
-              .onFailure { err -> pendingErrors.add("workers.dev: ${err.localizedMessage}") }
-
-            if (ws.schedules.isNotEmpty() || ramRecord?.hasPendingConfigSync == true) {
-              repository.updateCronSchedules(accountId, ws.scriptName, ws.schedules.map { it.cron })
-                .onFailure { err -> pendingErrors.add("cron: ${err.localizedMessage}") }
-            }
-          }
-          ramRecord?.deletedSecrets?.forEach { secretName ->
-            repository.deleteSecret(accountId, ws.scriptName, secretName)
-              .onFailure { err -> pendingErrors.add("delete secret $secretName: ${err.localizedMessage}") }
-          }
-          ramRecord?.stagedSecrets?.forEach { (secretName, secretVal) ->
-            repository.putSecret(accountId, ws.scriptName, secretName, secretVal)
-              .onFailure { err -> pendingErrors.add("put secret $secretName: ${err.localizedMessage}") }
-          }
-
-          val cleanFiles = ws.files.map { it.copy(originalContent = it.content) }
-          val refreshedDeployments =
-            repository.listDeployments(accountId, ws.scriptName).getOrDefault(ws.deployments)
-          val updatedWs =
-            ws.copy(
-              files = cleanFiles,
-              deployments = refreshedDeployments,
-              hasModuleSetChanged = false,
-            )
-          ramDb.markExported(ramKey, updatedWs)
-          persistWorkspaceToProjectDirAsync(ramKey)
-          lastPersistedDraftDigests.remove(ramKey)
-          pendingCloudDrafts.remove(ramKey)
-          autoSaveIoScope.launch { autoSaveStore.clearWorkspaceDraft(ramKey) }
-          _uiState.update { state ->
-            val resolvedPreview = state.previewUrl.ifBlank { resolveDefaultPreviewUrl(updatedWs) }
-            state.copy(
-              workspace = updatedWs,
-              restoredDraftBanner = null,
-              isDeploying = false,
-              isDeployError = pendingErrors.isNotEmpty(),
-              activeWorkspaceHasPendingConfig = false,
-              ramDbStats = ramDb.computeStats(ramKey),
-              deployBannerMessage =
-                if (pendingErrors.isEmpty()) "Exported & deployed '${ws.scriptName}' to Cloudflare Edge"
-                else "Deployed script with partial config warnings: ${pendingErrors.joinToString("; ")}",
-              statusMessage = null,
-              previewUrl = resolvedPreview,
-              previewReloadNonce = state.previewReloadNonce + 1L,
-              projectMode =
-                if (pendingErrors.isEmpty() && state.editorSettings.autoOpenPreviewOnDeploy) ProjectMode.TEST
-                else state.projectMode,
-              activeBottomTab =
-                if (pendingErrors.isEmpty() && state.editorSettings.autoOpenPreviewOnDeploy) BottomPanelTab.WORKER_PREVIEW
-                else state.activeBottomTab,
-            )
-          }
-          appendLog("DEPLOY", "Exported '${ws.scriptName}' (${cleanFiles.count { !it.isVirtualReadOnly }} files) from RAM DB to Cloudflare")
-          appendPreviewConsoleEntry("DEPLOY", "LIVE", "Exported '${ws.scriptName}' -> ${resolveDefaultPreviewUrl(updatedWs).ifBlank { "Cloudflare Edge" }}")
-          refreshWorkersInternal(accountId)
-        }
-        .onFailure { err ->
-          _uiState.update {
-            it.copy(
-              isDeploying = false,
-              isDeployError = true,
-              statusMessage = null,
-              deployBannerMessage = err.localizedMessage ?: "Export/Deploy failed",
-            )
-          }
-          appendLog("ERROR", err.localizedMessage ?: "Export/Deploy failed")
-        }
+      deployWorkspaceInternal(accountId = accountId, workspaceKey = ramKey, isNewWorker = isNew)
     }
+  }
+
+  private suspend fun deployWorkspaceInternal(
+    accountId: String,
+    workspaceKey: String,
+    isNewWorker: Boolean,
+  ) {
+    val stateSnapshot = _uiState.value
+    val ramRecord = ramDb.getWorkspace(workspaceKey)
+    val ws =
+      if (activeWorkspaceKey(stateSnapshot) == workspaceKey) {
+        stateSnapshot.workspace ?: ramRecord?.workingWorkspace
+      } else {
+        ramRecord?.workingWorkspace
+      } ?: return
+
+    _uiState.update {
+      it.copy(
+        isDeploying = true,
+        deployBannerMessage = null,
+        statusMessage = "Deploying '${ws.scriptName}' to Cloudflare…",
+      )
+    }
+
+    repository
+      .deployWorkerWorkspace(accountId, ws)
+      .onSuccess {
+        val pendingErrors = mutableListOf<String>()
+        val shouldSyncConfig =
+          isNewWorker ||
+            ramRecord?.hasPendingConfigSync == true ||
+            ramRecord?.isNewUnexportedWorker == true ||
+            ws.hasModuleSetChanged
+        if (shouldSyncConfig) {
+          repository.saveBindingsAndCompat(
+            accountId = accountId,
+            scriptName = ws.scriptName,
+            compatibilityDate = ws.compatibilityDate,
+            compatibilityFlags = ws.compatibilityFlags,
+            bindings = ws.bindings.filterNot { it.type == "secret_text" },
+          ).onFailure { err -> pendingErrors.add("settings: ${err.localizedMessage}") }
+        }
+
+        val targetWorkersDev =
+          if (isNewWorker) _uiState.value.editorSettings.defaultWorkersDevEnabled || ws.workersDevEnabled
+          else ws.workersDevEnabled
+        var confirmedWorkersDev = targetWorkersDev
+        if (shouldSyncConfig || targetWorkersDev) {
+          repository.toggleWorkersDev(accountId, ws.scriptName, targetWorkersDev)
+            .onSuccess { enabled -> confirmedWorkersDev = enabled }
+            .onFailure { err -> pendingErrors.add("workers.dev: ${err.localizedMessage}") }
+        }
+
+        if (shouldSyncConfig && (ws.schedules.isNotEmpty() || ramRecord?.hasPendingConfigSync == true)) {
+          repository.updateCronSchedules(accountId, ws.scriptName, ws.schedules.map { it.cron })
+            .onFailure { err -> pendingErrors.add("cron: ${err.localizedMessage}") }
+        }
+
+        ramRecord?.deletedSecrets?.forEach { secretName ->
+          repository.deleteSecret(accountId, ws.scriptName, secretName)
+            .onFailure { err -> pendingErrors.add("delete secret $secretName: ${err.localizedMessage}") }
+        }
+        ramRecord?.stagedSecrets?.forEach { (secretName, secretVal) ->
+          repository.putSecret(accountId, ws.scriptName, secretName, secretVal)
+            .onFailure { err -> pendingErrors.add("put secret $secretName: ${err.localizedMessage}") }
+        }
+
+        val cachedSubdomain = ramDb.getInfraCache(accountId)?.subdomain.orEmpty()
+        val resolvedSubdomain =
+          ws.accountSubdomain.ifBlank { cachedSubdomain }.ifBlank {
+            repository.getAccountSubdomain(accountId)
+          }
+        if (resolvedSubdomain.isNotBlank()) {
+          ramDb.updateInfraCache(accountId) { it.copy(subdomain = resolvedSubdomain) }
+        } else if (confirmedWorkersDev) {
+          pendingErrors.add("workers.dev subdomain is not yet enabled on your Cloudflare account")
+        }
+
+        val cleanFiles = ws.files.map { it.copy(originalContent = it.content) }
+        val refreshedDeployments =
+          repository.listDeployments(accountId, ws.scriptName).getOrDefault(ws.deployments)
+        val baseUpdatedWs =
+          ws.copy(
+            files = cleanFiles,
+            deployments = refreshedDeployments,
+            workersDevEnabled = confirmedWorkersDev,
+            accountSubdomain = resolvedSubdomain,
+            hasModuleSetChanged = false,
+          )
+        val updatedWs =
+          regenerateWranglerFileInWorkspace(baseUpdatedWs).let { built ->
+            built.copy(
+              files =
+                ProjectDirectoryManager.organizeWorkspaceFiles(
+                  built.files.map { f -> f.copy(originalContent = f.content) },
+                ),
+            )
+          }
+
+        ramDb.markExported(workspaceKey, updatedWs)
+        val updatedRec = ramDb.getWorkspace(workspaceKey)
+        withContext(Dispatchers.IO) {
+          if (updatedRec != null) {
+            projectDirManager.saveWorkspaceRecord(updatedRec)
+          }
+          autoSaveStore.clearWorkspaceDraft(workspaceKey)
+        }
+        lastPersistedDraftDigests.remove(workspaceKey)
+        pendingCloudDrafts.remove(workspaceKey)
+        terminalEngine.syncWorkspaceToDisk(updatedWs)
+        val summary = withContext(Dispatchers.IO) { projectDirManager.computeStorageSummary() }
+        val liveUrl = resolveDefaultPreviewUrl(updatedWs)
+
+        _uiState.update { state ->
+          val resolvedPreview = liveUrl.ifBlank { state.previewUrl }
+          val updatedApiRequest =
+            if (liveUrl.isNotBlank()) {
+              ApiRequestUtils.applyDeployedWorkerUrl(
+                current = state.apiRequest,
+                deployedUrl = liveUrl,
+                forceReplace = isNewWorker,
+              )
+            } else {
+              state.apiRequest
+            }
+          val banner =
+            when {
+              pendingErrors.isEmpty() && liveUrl.isNotBlank() ->
+                "Deployed '${ws.scriptName}' live: $liveUrl"
+              pendingErrors.isEmpty() ->
+                "Deployed '${ws.scriptName}' to Cloudflare Edge"
+              else ->
+                "Deployed '${ws.scriptName}' with warnings: ${pendingErrors.joinToString("; ")}"
+            }
+          state.copy(
+            workspace = if (activeWorkspaceKey(state) == workspaceKey) updatedWs else state.workspace,
+            restoredDraftBanner = null,
+            isDeploying = false,
+            isDeployError = pendingErrors.isNotEmpty(),
+            activeWorkspaceHasPendingConfig = false,
+            ramDbStats = ramDb.computeStats(workspaceKey),
+            ramWorkspaces = ramDb.listWorkspaces(),
+            projectStorageSummary = summary,
+            deployBannerMessage = banner,
+            statusMessage = null,
+            previewUrl = resolvedPreview,
+            previewReloadNonce = state.previewReloadNonce + 1L,
+            apiRequest = updatedApiRequest,
+            projectMode =
+              if (pendingErrors.isEmpty() && state.editorSettings.autoOpenPreviewOnDeploy) ProjectMode.TEST
+              else state.projectMode,
+            activeBottomTab =
+              if (pendingErrors.isEmpty() && state.editorSettings.autoOpenPreviewOnDeploy) BottomPanelTab.WORKER_PREVIEW
+              else state.activeBottomTab,
+          )
+        }
+        appendLog(
+          "DEPLOY",
+          "Deployed '${ws.scriptName}' (${cleanFiles.count { !it.isVirtualReadOnly }} files)" +
+            if (liveUrl.isNotBlank()) " -> $liveUrl" else "",
+        )
+        appendPreviewConsoleEntry("DEPLOY", "LIVE", "Deployed '${ws.scriptName}' -> ${liveUrl.ifBlank { "Cloudflare Edge" }}")
+        refreshWorkersInternal(accountId)
+      }
+      .onFailure { err ->
+        _uiState.update {
+          it.copy(
+            isDeploying = false,
+            isDeployError = true,
+            statusMessage = null,
+            deployBannerMessage = err.localizedMessage ?: "Deploy failed",
+          )
+        }
+        appendLog("ERROR", err.localizedMessage ?: "Deploy failed")
+      }
   }
 
   fun dismissDeployBanner() {
@@ -6208,7 +6410,7 @@ jobs:
     draftSaveJob?.cancel()
     draftSaveJob =
       viewModelScope.launch {
-        delay(1_400L)
+        delay(200L)
         val state = _uiState.value
         val activeKey = activeWorkspaceKey(state)
         if (state.workspace == null) return@launch

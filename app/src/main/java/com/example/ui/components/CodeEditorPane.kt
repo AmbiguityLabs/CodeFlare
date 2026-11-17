@@ -95,11 +95,10 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.Lifecycle
@@ -107,11 +106,13 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -667,25 +668,37 @@ fun CodeEditorPane(
       HorizontalDivider(color = stripFg.copy(alpha = 0.35f))
     }
 
-    // Hardware-accelerated Pinch-to-Zoom + Pure VisualTransformation + GPU TextLayoutResult Overlays
+    // Real Vector Typographic Pinch-to-Zoom + Pure VisualTransformation + TextLayoutResult Overlays
     var committedZoomPercent by remember {
       mutableIntStateOf(uiState.editorSettings.zoomPercent.coerceIn(60, 220))
     }
-    var pinchScale by remember { mutableFloatStateOf(1f) }
+    var liveZoomPercent by remember {
+      mutableFloatStateOf(committedZoomPercent.toFloat())
+    }
     var isPinching by remember { mutableStateOf(false) }
-    var pinchStartPivot by remember { mutableStateOf(Offset.Zero) }
-    var pinchCurrentCentroid by remember { mutableStateOf(Offset.Zero) }
+    var gutterWidthPx by remember { mutableFloatStateOf(0f) }
 
     LaunchedEffect(uiState.editorSettings.zoomPercent) {
       if (!isPinching) {
-        committedZoomPercent = uiState.editorSettings.zoomPercent.coerceIn(60, 220)
+        val next = uiState.editorSettings.zoomPercent.coerceIn(60, 220)
+        committedZoomPercent = next
+        liveZoomPercent = next.toFloat()
       }
     }
 
-    val effectiveFontSizeSp = (uiState.editorSettings.fontSizeSp * (committedZoomPercent / 100f)).coerceIn(8f, 34f)
+    val activeZoomPercent = if (isPinching) liveZoomPercent.coerceIn(60f, 220f) else committedZoomPercent.toFloat()
+    val effectiveFontSizeSp = (uiState.editorSettings.fontSizeSp * (activeZoomPercent / 100f)).coerceIn(8f, 34f)
     val effectiveLineHeightSp = effectiveFontSizeSp * 1.48f
     val fontSize = effectiveFontSizeSp.sp
     val lineHeight = effectiveLineHeightSp.sp
+    val sharedLineHeightStyle =
+      remember {
+        LineHeightStyle(
+          alignment = LineHeightStyle.Alignment.Center,
+          trim = LineHeightStyle.Trim.None,
+        )
+      }
+    val sharedPlatformStyle = remember { PlatformTextStyle(includeFontPadding = false) }
     val density = LocalDensity.current
     val lineHeightPx = with(density) { lineHeight.toPx() }
     val topPaddingPx = with(density) { 8.dp.toPx() }
@@ -694,6 +707,7 @@ fun CodeEditorPane(
     val scope = rememberCoroutineScope()
     val latestCommittedZoom by rememberUpdatedState(committedZoomPercent)
     val latestOnZoomPercentChange by rememberUpdatedState(onZoomPercentChange)
+    val latestGutterWidthPx by rememberUpdatedState(gutterWidthPx)
     var showZoomHud by remember { mutableStateOf(false) }
     var zoomHudBump by remember { mutableIntStateOf(0) }
     var zoomPresetMenuOpen by remember { mutableStateOf(false) }
@@ -779,8 +793,7 @@ fun CodeEditorPane(
             awaitEachGesture {
               awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
               var activePinch = false
-              var localScale = 1f
-              var startPivot = Offset.Zero
+              var workingZoom = latestCommittedZoom.toFloat().coerceIn(60f, 220f)
               var lastCentroid = Offset.Zero
               do {
                 val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -789,68 +802,58 @@ fun CodeEditorPane(
                   if (!activePinch) {
                     activePinch = true
                     isPinching = true
-                    localScale = 1f
+                    workingZoom = latestCommittedZoom.toFloat().coerceIn(60f, 220f)
+                    liveZoomPercent = workingZoom
                     val initialCentroid = event.calculateCentroid(useCurrent = false)
-                    startPivot = if (initialCentroid != Offset.Unspecified) initialCentroid else Offset.Zero
-                    lastCentroid = startPivot
-                    pinchStartPivot = startPivot
-                    pinchCurrentCentroid = startPivot
+                    lastCentroid = if (initialCentroid != Offset.Unspecified) initialCentroid else Offset.Zero
                   }
                   val zoomDelta = event.calculateZoom()
                   val centroid = event.calculateCentroid(useCurrent = true)
                   if (centroid != Offset.Unspecified) {
                     lastCentroid = centroid
-                    pinchCurrentCentroid = centroid
                   }
                   if (zoomDelta != 1f && zoomDelta.isFinite()) {
-                    val anchor = latestCommittedZoom.toFloat().coerceAtLeast(1f)
-                    localScale = (localScale * zoomDelta).coerceIn(60f / anchor, 220f / anchor)
-                    pinchScale = localScale
+                    val nextZoom = (workingZoom * zoomDelta).coerceIn(60f, 220f)
+                    if (kotlin.math.abs(nextZoom - workingZoom) >= 0.05f) {
+                      val stepRatio = nextZoom / workingZoom.coerceAtLeast(1f)
+                      val focalX = ((lastCentroid.x - latestGutterWidthPx) - hPadPx).coerceAtLeast(0f)
+                      val focalY = (lastCentroid.y - topPaddingPx).coerceAtLeast(0f)
+                      val curScrollX = horizontalScroll.value
+                      val curScrollY = verticalScroll.value
+                      workingZoom = nextZoom
+                      liveZoomPercent = nextZoom
+                      scope.launch {
+                        val targetY = ((curScrollY + focalY) * stepRatio - focalY).roundToInt().coerceAtLeast(0)
+                        val targetX = ((curScrollX + focalX) * stepRatio - focalX).roundToInt().coerceAtLeast(0)
+                        verticalScroll.scrollTo(targetY)
+                        horizontalScroll.scrollTo(targetX)
+                      }
+                    }
                   }
                   event.changes.forEach { it.consume() }
                 } else if (activePinch) {
                   val anchor = latestCommittedZoom
-                  val finalZoom = (anchor * localScale).roundToInt().coerceIn(60, 220)
-                  val ratio = finalZoom.toFloat() / anchor.toFloat().coerceAtLeast(1f)
-                  val endPivot = if (lastCentroid != Offset.Unspecified) lastCentroid else startPivot
-                  val curScrollX = horizontalScroll.value
-                  val curScrollY = verticalScroll.value
+                  val finalZoom = workingZoom.roundToInt().coerceIn(60, 220)
                   isPinching = false
-                  pinchScale = 1f
+                  liveZoomPercent = finalZoom.toFloat()
                   activePinch = false
                   zoomHudBump++
                   if (finalZoom != anchor) {
                     committedZoomPercent = finalZoom
                     latestOnZoomPercentChange(finalZoom)
-                    scope.launch {
-                      val targetY = ((curScrollY + startPivot.y) * ratio - endPivot.y).roundToInt().coerceAtLeast(0)
-                      val targetX = ((curScrollX + startPivot.x) * ratio - endPivot.x).roundToInt().coerceAtLeast(0)
-                      verticalScroll.scrollTo(targetY)
-                      horizontalScroll.scrollTo(targetX)
-                    }
                   }
                 }
               } while (event.changes.any { it.pressed })
 
               if (activePinch) {
                 val anchor = latestCommittedZoom
-                val finalZoom = (anchor * localScale).roundToInt().coerceIn(60, 220)
-                val ratio = finalZoom.toFloat() / anchor.toFloat().coerceAtLeast(1f)
-                val endPivot = if (lastCentroid != Offset.Unspecified) lastCentroid else startPivot
-                val curScrollX = horizontalScroll.value
-                val curScrollY = verticalScroll.value
+                val finalZoom = workingZoom.roundToInt().coerceIn(60, 220)
                 isPinching = false
-                pinchScale = 1f
+                liveZoomPercent = finalZoom.toFloat()
                 zoomHudBump++
                 if (finalZoom != anchor) {
                   committedZoomPercent = finalZoom
                   latestOnZoomPercentChange(finalZoom)
-                  scope.launch {
-                    val targetY = ((curScrollY + startPivot.y) * ratio - endPivot.y).roundToInt().coerceAtLeast(0)
-                    val targetX = ((curScrollX + startPivot.x) * ratio - endPivot.x).roundToInt().coerceAtLeast(0)
-                    verticalScroll.scrollTo(targetY)
-                    horizontalScroll.scrollTo(targetX)
-                  }
                 }
               }
             }
@@ -861,19 +864,10 @@ fun CodeEditorPane(
         modifier =
           Modifier
             .fillMaxSize()
-            .graphicsLayer {
-              if (pinchScale != 1f) {
-                scaleX = pinchScale
-                scaleY = pinchScale
-                transformOrigin = TransformOrigin(0f, 0f)
-                translationX = pinchStartPivot.x * (1f - pinchScale) + (pinchCurrentCentroid.x - pinchStartPivot.x)
-                translationY = pinchStartPivot.y * (1f - pinchScale) + (pinchCurrentCentroid.y - pinchStartPivot.y)
-              }
-            }
             .verticalScroll(verticalScroll),
       ) {
         if (uiState.editorSettings.showLineNumbers) {
-          val scalePad = (committedZoomPercent / 100f).coerceIn(0.8f, 1.8f)
+          val scalePad = (activeZoomPercent / 100f).coerceIn(0.6f, 2.2f)
           val gutterMinWidth =
             (when {
               lineCount >= 1000 -> 46f
@@ -885,32 +879,46 @@ fun CodeEditorPane(
               Modifier
                 .widthIn(min = gutterMinWidth)
                 .heightIn(min = minEditorHeight)
+                .onSizeChanged { gutterWidthPx = it.width.toFloat() }
                 .background(palette.editorGutterBg)
                 .drawBehind {
+                  val layout = textLayoutResult
+                  val canUseLayout =
+                    !uiState.editorSettings.wordWrap && layout != null && layout.lineCount >= lineCount
+                  fun lineBounds(oneBasedLine: Int): Pair<Float, Float> {
+                    val idx = (oneBasedLine - 1).coerceAtLeast(0)
+                    return if (canUseLayout && idx < layout!!.lineCount) {
+                      val top = topPaddingPx + layout.getLineTop(idx)
+                      val h = (layout.getLineBottom(idx) - layout.getLineTop(idx)).coerceAtLeast(1f)
+                      top to h
+                    } else {
+                      (topPaddingPx + idx * lineHeightPx) to lineHeightPx
+                    }
+                  }
                   lineSeverityMap.forEach { (lineNum, sev) ->
                     if (sev != DiagnosticSeverity.INFO) {
-                      val errY = topPaddingPx + (lineNum - 1).coerceAtLeast(0) * lineHeightPx
+                      val (errY, errH) = lineBounds(lineNum)
                       if (errY < size.height) {
                         val c = if (sev == DiagnosticSeverity.ERROR) RoseError else AmberWarn
                         drawRect(
                           color = c.copy(alpha = 0.16f),
                           topLeft = Offset(0f, errY),
-                          size = Size(size.width, lineHeightPx),
+                          size = Size(size.width, errH),
                         )
                         drawRect(
                           color = c,
                           topLeft = Offset(0f, errY),
-                          size = Size(3.dp.toPx(), lineHeightPx),
+                          size = Size(3.dp.toPx(), errH),
                         )
                       }
                     }
                   }
-                  val y = topPaddingPx + (activeLine - 1).coerceAtLeast(0) * lineHeightPx
-                  if (y < size.height) {
+                  val (activeY, activeH) = lineBounds(activeLine)
+                  if (activeY < size.height) {
                     drawRect(
                       color = palette.editorActiveLineBg,
-                      topLeft = Offset(0f, y),
-                      size = Size(size.width, lineHeightPx),
+                      topLeft = Offset(0f, activeY),
+                      size = Size(size.width, activeH),
                     )
                   }
                 }
@@ -924,6 +932,9 @@ fun CodeEditorPane(
                   fontFamily = JetBrainsMono,
                   fontSize = fontSize,
                   lineHeight = lineHeight,
+                  fontFeatureSettings = "tnum",
+                  platformStyle = sharedPlatformStyle,
+                  lineHeightStyle = sharedLineHeightStyle,
                   color = palette.textMuted,
                   textAlign = TextAlign.End,
                 ),
@@ -1052,6 +1063,9 @@ fun CodeEditorPane(
               fontFamily = JetBrainsMono,
               fontSize = fontSize,
               lineHeight = lineHeight,
+              fontFeatureSettings = "tnum",
+              platformStyle = sharedPlatformStyle,
+              lineHeightStyle = sharedLineHeightStyle,
               color = palette.textPrimary,
             ),
           cursorBrush = SolidColor(palette.activePillFg),
@@ -1060,10 +1074,10 @@ fun CodeEditorPane(
         )
       }
 
-      // Floating Pinch-Zoom Indicator HUD (isolated leaf composable so live pinch doesn't recompose editor)
+      // Floating Pinch-Zoom Indicator HUD (reads live typographic zoom percentage)
       EditorZoomHud(
         visible = isPinching || showZoomHud,
-        zoomPercentProvider = { (committedZoomPercent * pinchScale).roundToInt().coerceIn(60, 220) },
+        zoomPercentProvider = { activeZoomPercent.roundToInt().coerceIn(60, 220) },
         modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
       )
     }
@@ -1117,21 +1131,34 @@ fun CodeEditorPane(
           )
           Spacer(Modifier.weight(1f))
 
-          // Compact Editor Zoom Controls (- | 100% | +) in isolated leaf composable
+          // Compact Editor Zoom Controls (- | 100% | +) scaling crisp vector text
           EditorZoomControlCluster(
-            zoomPercentProvider = { (committedZoomPercent * pinchScale).roundToInt().coerceIn(60, 220) },
+            zoomPercentProvider = { activeZoomPercent.roundToInt().coerceIn(60, 220) },
             zoomPresetMenuOpen = zoomPresetMenuOpen,
             onZoomPresetMenuChange = { zoomPresetMenuOpen = it },
             onSetZoom = { next ->
-              committedZoomPercent = next
-              onZoomPercentChange(next)
+              val clamped = next.coerceIn(60, 220)
+              val prev = committedZoomPercent.toFloat().coerceAtLeast(1f)
+              val ratio = clamped.toFloat() / prev
+              committedZoomPercent = clamped
+              liveZoomPercent = clamped.toFloat()
+              onZoomPercentChange(clamped)
               zoomHudBump++
+              scope.launch {
+                verticalScroll.scrollTo((verticalScroll.value * ratio).roundToInt().coerceAtLeast(0))
+              }
             },
             onStepZoom = { delta ->
+              val prev = committedZoomPercent.toFloat().coerceAtLeast(1f)
               val next = (committedZoomPercent + delta).coerceIn(60, 220)
+              val ratio = next.toFloat() / prev
               committedZoomPercent = next
+              liveZoomPercent = next.toFloat()
               onZoomPercentChange(next)
               zoomHudBump++
+              scope.launch {
+                verticalScroll.scrollTo((verticalScroll.value * ratio).roundToInt().coerceAtLeast(0))
+              }
             },
           )
 

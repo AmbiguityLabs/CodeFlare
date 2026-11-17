@@ -680,6 +680,14 @@ class CloudflareRepository(
       }
     }
 
+  suspend fun getScriptSubdomainEnabled(accountId: String, scriptName: String): Boolean =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val resp = api.getScriptSubdomain(accountId, scriptName)
+        resp.isSuccessful && resp.body()?.success == true && (resp.body()?.result?.enabled == true)
+      }.getOrDefault(false)
+    }
+
   suspend fun putSecret(accountId: String, scriptName: String, name: String, value: String): Result<Unit> =
     withContext(Dispatchers.IO) {
       runCatching {

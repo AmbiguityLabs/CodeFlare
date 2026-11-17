@@ -36,8 +36,10 @@ class MainActivity : ComponentActivity() {
       DisposableEffect(lifecycleOwner, ideViewModel) {
         val observer =
           LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) {
-              ideViewModel.flushAutoSaveNow(clearSessionPointer = false)
+            when (event) {
+              Lifecycle.Event.ON_RESUME -> ideViewModel.refreshStoragePermissionAndReload()
+              Lifecycle.Event.ON_STOP -> ideViewModel.flushAutoSaveNow(clearSessionPointer = false)
+              else -> Unit
             }
           }
         lifecycleOwner.lifecycle.addObserver(observer)

@@ -293,6 +293,10 @@ fun IdeWorkspaceScreen(
   }
 
   if (showProjectSettingsModal) {
+    val requestStorageAccess =
+      com.example.ui.components.rememberStorageAccessRequester {
+        viewModel.refreshStoragePermissionAndReload()
+      }
     Box(modifier = Modifier.fillMaxSize()) {
       SettingsScreen(
         uiState = uiState,
@@ -321,6 +325,7 @@ fun IdeWorkspaceScreen(
           showProjectGitModal = true
         },
         onClearAutoSavedDrafts = viewModel::clearAllAutoSavedDrafts,
+        onRequestStorageAccess = requestStorageAccess,
         onNotify = viewModel::showStatus,
       )
       SnackbarHost(

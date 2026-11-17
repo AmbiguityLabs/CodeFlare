@@ -165,5 +165,31 @@ class ProjectDirectoryManagerTest {
     assertEquals(5, summary.importedFilesCount) // 4 source files + bundle json
     assertEquals(2, summary.exportedFilesCount) // src/index.js + bundle json
     assertTrue(summary.totalDiskKb >= 1)
+    assertTrue(summary.rootAbsolutePath.isNotBlank())
+    assertFalse(summary.hasNativeStorageAccess)
+    assertFalse(summary.isUsingNativeDeviceStorage)
+  }
+
+  @Test
+  fun savesSingleFileDirectlyAndRefreshRootMigrationIsSafe() = runBlocking {
+    val db = RamWorkspaceDatabase()
+    val key = db.workspaceKey("local", "fast-save")
+    val ws = buildSampleWorkspace("fast-save")
+    val record = db.importWorkspace(key = key, workspace = ws)
+    manager.saveWorkspaceRecord(record)
+
+    val updatedFile =
+      WorkerFile(
+        path = "src/index.js",
+        content = "export default { fetch: () => new Response('saved') };",
+        originalContent = "export default { fetch() { return new Response('base'); } };",
+        contentType = "application/javascript+module",
+        isEntryPoint = true,
+      )
+    manager.saveSingleFile(key, updatedFile)
+
+    val onDisk = File(manager.projectDirectoryFor(key), "src/index.js").readText()
+    assertEquals("export default { fetch: () => new Response('saved') };", onDisk)
+    assertFalse(manager.refreshRootDirectoryAndMigrate())
   }
 }

@@ -232,11 +232,18 @@ fun ApiTesterPane(
     }
 
     // 2. Quick Actions & Presets
+    val activeBase = workerBaseUrl?.trimEnd('/') ?: "{{baseUrl}}"
     Row(
       modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
       horizontalArrangement = Arrangement.spacedBy(6.dp),
       verticalAlignment = Alignment.CenterVertically,
     ) {
+      if (!workerBaseUrl.isNullOrBlank()) {
+        ApiActionChip("Worker URL", tag = "api_use_worker_url_chip") {
+          onUpdateRequest { ApiRequestUtils.applyDeployedWorkerUrl(it, workerBaseUrl, forceReplace = true) }
+          onNotifyStatus("API Tester URL set to $workerBaseUrl")
+        }
+      }
       ApiActionChip("Save", icon = Icons.Outlined.BookmarkAdd, tag = "api_save_button") {
         showSaveDialog = true
       }
@@ -251,13 +258,13 @@ fun ApiTesterPane(
         onNotifyStatus("Copied JS fetch() snippet")
       }
       ApiActionChip("GET /") {
-        onUpdateRequest { it.copy(method = "GET", url = "{{baseUrl}}/", bodyType = ApiBodyType.NONE) }
+        onUpdateRequest { it.copy(method = "GET", url = "$activeBase/", bodyType = ApiBodyType.NONE) }
       }
       ApiActionChip("POST JSON") {
         onUpdateRequest {
           it.copy(
             method = "POST",
-            url = "{{baseUrl}}/echo",
+            url = "$activeBase/echo",
             bodyType = ApiBodyType.JSON,
             rawBody = "{\n  \"ok\": true,\n  \"source\": \"edgecode\"\n}",
           )

@@ -57,7 +57,11 @@ object CodeEditHelper {
     val cursor = next.selection.start
 
     // 1. Smart backspace inside empty bracket/quote pair: () {} [] "" '' ``
-    if (autoCloseBrackets && prevText.length == nextText.length + 1 && prev.selection.collapsed && cursor in 1..nextText.length) {
+    if (autoCloseBrackets &&
+      prevText.length == nextText.length + 1 &&
+      prev.selection.collapsed &&
+      cursor in 0 until nextText.length
+    ) {
       val deletedPos = prev.selection.start - 1
       if (deletedPos == cursor && deletedPos in prevText.indices && deletedPos + 1 < prevText.length) {
         val left = prevText[deletedPos]

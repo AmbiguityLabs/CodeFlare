@@ -113,6 +113,7 @@ fun SettingsScreen(
   onDisconnectCloudflare: () -> Unit,
   onOpenGitHubHub: (() -> Unit)? = null,
   onClearAutoSavedDrafts: (() -> Unit)? = null,
+  onRequestStorageAccess: (() -> Unit)? = null,
   onNotify: (String) -> Unit,
 ) {
   val palette = LocalIdePalette.current
@@ -1033,7 +1034,9 @@ fun SettingsScreen(
         val storage = uiState.projectStorageSummary
         SettingsSectionCard(
           title = "Project Directory & Storage",
-          subtitle = "Auto-selected workspace, imports & exports",
+          subtitle =
+            if (storage.isUsingNativeDeviceStorage) "Dedicated native phone folder active"
+            else "Grant native folder access to store outside app cache",
           icon = Icons.Outlined.Folder,
           modifier = Modifier.testTag("settings_storage_section"),
         ) {
@@ -1047,20 +1050,59 @@ fun SettingsScreen(
               modifier = Modifier.padding(12.dp),
               verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Text(
+                  text = if (storage.isUsingNativeDeviceStorage) "DEDICATED DEVICE FOLDER" else "ACTIVE DIRECTORY",
+                  fontFamily = JetBrainsMono,
+                  fontSize = 9.5.sp,
+                  color = palette.textMuted,
+                )
+                Surface(
+                  color =
+                    if (storage.hasNativeStorageAccess) EmeraldLive.copy(alpha = 0.16f)
+                    else AmberWarn.copy(alpha = 0.16f),
+                  shape = RoundedCornerShape(6.dp),
+                ) {
+                  Text(
+                    text = if (storage.hasNativeStorageAccess) "Native Access" else "App Scoped",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (storage.hasNativeStorageAccess) EmeraldLive else AmberWarn,
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                  )
+                }
+              }
               Text(
-                text = "AUTO-SELECTED DIRECTORY",
-                fontFamily = JetBrainsMono,
-                fontSize = 9.5.sp,
-                color = palette.textMuted,
-              )
-              Text(
-                text = storage.rootDisplayPath.ifBlank { "EdgeCodeProjects/ (projects · imports · exports)" },
+                text =
+                  storage.rootAbsolutePath.ifBlank {
+                    storage.rootDisplayPath.ifBlank { "EdgeCodeProjects/ (projects · imports · exports)" }
+                  },
                 fontFamily = JetBrainsMono,
                 fontSize = 11.sp,
                 color = palette.activePillFg,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
               )
+              if (!storage.hasNativeStorageAccess && onRequestStorageAccess != null) {
+                Button(
+                  onClick = onRequestStorageAccess,
+                  shape = RoundedCornerShape(10.dp),
+                  colors =
+                    ButtonDefaults.buttonColors(
+                      containerColor = palette.ctaBg,
+                      contentColor = palette.ctaFg,
+                    ),
+                  modifier = Modifier.fillMaxWidth().height(40.dp).testTag("settings_grant_storage_button"),
+                ) {
+                  Icon(Icons.Outlined.Folder, contentDescription = null, modifier = Modifier.size(16.dp))
+                  Spacer(Modifier.width(8.dp))
+                  Text("Grant Folder Access (Phone Storage/EdgeCode)", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+                }
+              }
               HorizontalDivider(color = palette.border.copy(alpha = 0.35f))
               Row(
                 modifier = Modifier.fillMaxWidth(),

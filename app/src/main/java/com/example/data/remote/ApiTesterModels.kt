@@ -60,6 +60,40 @@ data class ApiTesterHistoryItem(
 
 object ApiRequestUtils {
   private val varPattern = Regex("""\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}""")
+  private val workersDevRootPattern = Regex("""^https?://[^/]+\.workers\.dev/?$""", RegexOption.IGNORE_CASE)
+  private val workersDevFullPattern = Regex("""^(https?://[^/]+\.workers\.dev)(/.*)?$""", RegexOption.IGNORE_CASE)
+
+  fun applyDeployedWorkerUrl(
+    current: ApiTesterRequest,
+    deployedUrl: String,
+    forceReplace: Boolean = false,
+  ): ApiTesterRequest {
+    val cleanDeployed = deployedUrl.trim().trimEnd('/')
+    if (cleanDeployed.isBlank()) return current
+
+    val cur = current.url.trim()
+    val shouldReplace =
+      forceReplace ||
+        cur.isBlank() ||
+        cur == "{{baseUrl}}" ||
+        cur == "{{baseUrl}}/" ||
+        workersDevRootPattern.matches(cur)
+
+    if (shouldReplace) {
+      return current.copy(url = cleanDeployed)
+    }
+    if (cur.startsWith("{{baseUrl}}")) {
+      val suffix = cur.removePrefix("{{baseUrl}}")
+      val normalizedSuffix = if (suffix.startsWith("/")) suffix else "/$suffix"
+      return current.copy(url = "$cleanDeployed$normalizedSuffix")
+    }
+    val workersDevMatch = workersDevFullPattern.matchEntire(cur)
+    if (workersDevMatch != null) {
+      val pathSuffix = workersDevMatch.groupValues[2]
+      return current.copy(url = if (pathSuffix.isBlank() || pathSuffix == "/") cleanDeployed else "$cleanDeployed$pathSuffix")
+    }
+    return current
+  }
 
   fun substituteVariables(
     input: String,

@@ -117,6 +117,10 @@ fun HomeScreen(
   val palette = LocalIdePalette.current
   val context = LocalContext.current
   val snackbarHostState = remember { SnackbarHostState() }
+  val requestStorageAccess =
+    com.example.ui.components.rememberStorageAccessRequester {
+      viewModel.refreshStoragePermissionAndReload()
+    }
 
   var projectSearch by remember { mutableStateOf("") }
   var accountMenuOpen by remember { mutableStateOf(false) }
@@ -279,6 +283,7 @@ fun HomeScreen(
           viewModel.setShowHomeGitHubHub(true)
         },
         onClearAutoSavedDrafts = viewModel::clearAllAutoSavedDrafts,
+        onRequestStorageAccess = requestStorageAccess,
         onNotify = viewModel::showStatus,
       )
       SnackbarHost(
@@ -660,6 +665,7 @@ fun HomeScreen(
               onRequestDeleteRamWorkspace = { rec ->
                 pendingDeleteLocalKey = rec.key to rec.workingWorkspace.scriptName
               },
+              onRequestStorageAccess = requestStorageAccess,
               onRefreshWorkers = viewModel::refreshWorkers,
               onOpenWorker = { script -> viewModel.openWorker(script) },
               onRequestDeleteWorker = { script -> pendingDeleteCloudWorker = script.id },
@@ -785,6 +791,7 @@ private fun HomeProjectsTabContent(
   onOpenGitHubHub: () -> Unit,
   onOpenRamWorkspace: (String) -> Unit,
   onRequestDeleteRamWorkspace: (RamWorkspaceRecord) -> Unit,
+  onRequestStorageAccess: () -> Unit,
   onRefreshWorkers: () -> Unit,
   onOpenWorker: (CfWorkerScript) -> Unit,
   onRequestDeleteWorker: (CfWorkerScript) -> Unit,
@@ -909,6 +916,68 @@ private fun HomeProjectsTabContent(
       )
     }
 
+    // Native Phone Folder Permission Prompt (when device external storage access is not yet granted)
+    if (!uiState.projectStorageSummary.hasNativeStorageAccess) {
+      item(key = "home_storage_permission") {
+        Surface(
+          color = palette.glassElevated,
+          shape = RoundedCornerShape(18.dp),
+          border = rememberGlassBorderStroke(1.dp),
+          modifier = Modifier.fillMaxWidth().testTag("home_storage_permission_card"),
+        ) {
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+          ) {
+            Surface(
+              color = palette.activePillBg,
+              shape = RoundedCornerShape(12.dp),
+              modifier = Modifier.size(38.dp),
+            ) {
+              Box(contentAlignment = Alignment.Center) {
+                Icon(
+                  imageVector = Icons.Outlined.Folder,
+                  contentDescription = null,
+                  tint = palette.activePillFg,
+                  modifier = Modifier.size(19.dp),
+                )
+              }
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+              Text(
+                text = "Dedicated Phone Folder",
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = palette.textPrimary,
+              )
+              Text(
+                text = "Allow file access to store all projects in Phone Storage/EdgeCode/",
+                fontSize = 11.5.sp,
+                color = palette.textSecondary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
+            Surface(
+              onClick = onRequestStorageAccess,
+              shape = RoundedCornerShape(12.dp),
+              color = palette.ctaBg,
+              modifier = Modifier.testTag("home_grant_storage_button"),
+            ) {
+              Text(
+                text = "Allow",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = palette.ctaFg,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+              )
+            }
+          }
+        }
+      }
+    }
+
     // Auto-managed Dedicated Project Directory Pill Header
     item(key = "ram_header") {
       Row(
@@ -924,11 +993,14 @@ private fun HomeProjectsTabContent(
           val kb =
             uiState.projectStorageSummary.totalDiskKb.takeIf { it > 0 }
               ?: uiState.ramDbStats.estimatedRamKb
+          val folderLabel = uiState.projectStorageSummary.rootDisplayPath.ifBlank { "EdgeCodeProjects" }
           Text(
-            text = "EdgeCodeProjects · $kb KB",
+            text = "$folderLabel · $kb KB",
             fontFamily = JetBrainsMono,
             fontSize = 11.sp,
             color = palette.textMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
           )
         }
       }

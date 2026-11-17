@@ -20,6 +20,9 @@ import org.json.JSONObject
 
 data class ProjectStorageSummary(
   val rootDisplayPath: String = "EdgeCodeProjects",
+  val rootAbsolutePath: String = "",
+  val hasNativeStorageAccess: Boolean = false,
+  val isUsingNativeDeviceStorage: Boolean = false,
   val projectCount: Int = 0,
   val exportedFilesCount: Int = 0,
   val importedFilesCount: Int = 0,
@@ -27,32 +30,107 @@ data class ProjectStorageSummary(
 )
 
 /**
- * Automatic dedicated file-system storage for EdgeCode workspaces, imports, and exports.
+ * Dedicated file-system storage for EdgeCode workspaces, imports, and exports.
  *
- * Automatically chooses an app-dedicated structured directory (`EdgeCodeProjects/`) without
- * prompting the user:
- *  - `EdgeCodeProjects/projects/<workspaceKey>/` -> active workspace source tree + `.edgecode/manifest.json`
- *  - `EdgeCodeProjects/imports/<projectName>/`  -> neatly organized imported files & bundles
- *  - `EdgeCodeProjects/exports/<projectName>/`  -> neatly organized exported files & bundles
+ * When native phone file management permission is granted, uses `/storage/emulated/0/EdgeCode/`
+ * directly on device storage so every project lives reliably on disk outside app cache/RAM:
+ *  - `EdgeCode/projects/<workspaceKey>/` -> active workspace source tree + `.edgecode/manifest.json`
+ *  - `EdgeCode/imports/<projectName>/`  -> organized imported files & bundles
+ *  - `EdgeCode/exports/<projectName>/`  -> organized exported files & bundles
+ *
+ * Falls back cleanly to app-scoped `EdgeCodeProjects/` until permission is granted.
  */
 class ProjectDirectoryManager(private val context: Context) {
 
-  val rootDir: File by lazy { resolveDedicatedRootDir(context) }
-  val projectsDir: File by lazy { File(rootDir, "projects").apply { mkdirs() } }
-  val exportsDir: File by lazy { File(rootDir, "exports").apply { mkdirs() } }
-  val importsDir: File by lazy { File(rootDir, "imports").apply { mkdirs() } }
+  @Volatile
+  var rootDir: File = resolveDedicatedRootDir(context)
+    private set
+
+  val projectsDir: File
+    get() = File(rootDir, "projects").apply { mkdirs() }
+
+  val exportsDir: File
+    get() = File(rootDir, "exports").apply { mkdirs() }
+
+  val importsDir: File
+    get() = File(rootDir, "imports").apply { mkdirs() }
 
   private val ioMutex = Mutex()
   private val writtenFileHashesByProject = ConcurrentHashMap<String, ConcurrentHashMap<String, Int>>()
   private val writtenManifestDigestByProject = ConcurrentHashMap<String, Int>()
 
+  fun isUsingNativeDeviceStorage(): Boolean =
+    StoragePermissionHelper.hasNativeFileAccess(context) && rootDir.name == NATIVE_FOLDER_NAME
+
   fun displayRootPath(): String {
+    if (isUsingNativeDeviceStorage()) {
+      return "Phone Storage/$NATIVE_FOLDER_NAME"
+    }
     val baseName = rootDir.parentFile?.name?.takeIf { it.isNotBlank() }
     return if (baseName != null) "$baseName/${rootDir.name}" else rootDir.name
   }
 
   fun projectDirectoryFor(workspaceKey: String): File =
     File(projectsDir, sanitizeSegment(workspaceKey)).apply { mkdirs() }
+
+  suspend fun saveSingleFile(
+    workspaceKey: String,
+    file: WorkerFile,
+  ) =
+    withContext(Dispatchers.IO) {
+      if (file.isVirtualReadOnly) return@withContext
+      ioMutex.withLock {
+        val projDir = projectDirectoryFor(workspaceKey)
+        val cleanPath = normalizeRelativePath(file.path, fallbackFolder = "")
+        if (cleanPath.isBlank()) return@withLock
+        val dest = File(projDir, cleanPath)
+        val hash = file.content.hashCode()
+        val fileHashes = writtenFileHashesByProject.getOrPut(workspaceKey) { ConcurrentHashMap() }
+        if (fileHashes[cleanPath] != hash || !dest.exists()) {
+          dest.parentFile?.mkdirs()
+          dest.writeText(file.content, Charsets.UTF_8)
+          fileHashes[cleanPath] = hash
+        }
+      }
+    }
+
+  suspend fun refreshRootDirectoryAndMigrate(): Boolean =
+    withContext(Dispatchers.IO) {
+      ioMutex.withLock {
+        val targetRoot = resolveDedicatedRootDir(context)
+        val oldRoot = rootDir
+        if (targetRoot.absolutePath == oldRoot.absolutePath) {
+          return@withLock false
+        }
+        listOf("projects", "imports", "exports").forEach { sub ->
+          val srcDir = File(oldRoot, sub)
+          val dstDir = File(targetRoot, sub).apply { mkdirs() }
+          if (srcDir.exists() && srcDir.isDirectory) {
+            copyDirectoryPreferNewer(srcDir, dstDir)
+          }
+        }
+        rootDir = targetRoot
+        writtenFileHashesByProject.clear()
+        writtenManifestDigestByProject.clear()
+        true
+      }
+    }
+
+  private fun copyDirectoryPreferNewer(srcDir: File, dstDir: File) {
+    srcDir.walkTopDown().forEach { src ->
+      val rel = src.relativeTo(srcDir).path
+      if (rel.isEmpty()) return@forEach
+      val dst = File(dstDir, rel)
+      if (src.isDirectory) {
+        dst.mkdirs()
+      } else if (src.isFile) {
+        dst.parentFile?.mkdirs()
+        if (!dst.exists() || src.lastModified() > dst.lastModified()) {
+          runCatching { src.copyTo(dst, overwrite = true) }
+        }
+      }
+    }
+  }
 
   suspend fun saveWorkspaceRecord(record: RamWorkspaceRecord) =
     withContext(Dispatchers.IO) {
@@ -209,6 +287,9 @@ class ProjectDirectoryManager(private val context: Context) {
       val totalBytes = sumFileBytes(rootDir)
       ProjectStorageSummary(
         rootDisplayPath = displayRootPath(),
+        rootAbsolutePath = rootDir.absolutePath,
+        hasNativeStorageAccess = StoragePermissionHelper.hasNativeFileAccess(context),
+        isUsingNativeDeviceStorage = isUsingNativeDeviceStorage(),
         projectCount = projCount,
         exportedFilesCount = expCount,
         importedFilesCount = impCount,
@@ -538,7 +619,36 @@ class ProjectDirectoryManager(private val context: Context) {
   }
 
   companion object {
+    const val NATIVE_FOLDER_NAME = "EdgeCode"
+
     fun resolveDedicatedRootDir(context: Context): File {
+      if (StoragePermissionHelper.hasNativeFileAccess(context)) {
+        val mounted =
+          runCatching { Environment.getExternalStorageState() == Environment.MEDIA_MOUNTED }.getOrDefault(false)
+        if (mounted) {
+          val nativeRoot =
+            runCatching {
+              @Suppress("DEPRECATION")
+              val baseExt = Environment.getExternalStorageDirectory()
+              File(baseExt, NATIVE_FOLDER_NAME)
+            }.getOrNull()
+          if (nativeRoot != null) {
+            val writable =
+              runCatching {
+                nativeRoot.mkdirs()
+                File(nativeRoot, "projects").mkdirs()
+                val probe = File(nativeRoot, ".edgecode_write_probe")
+                probe.writeText("ok")
+                probe.delete()
+                nativeRoot.exists() && nativeRoot.isDirectory && nativeRoot.canWrite()
+              }.getOrDefault(false)
+            if (writable) {
+              return nativeRoot
+            }
+          }
+        }
+      }
+
       val externalAppDir =
         runCatching {
           val state = Environment.getExternalStorageState()
