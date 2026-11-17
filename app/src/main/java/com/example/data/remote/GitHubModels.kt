@@ -334,4 +334,32 @@ data class GitHubWorkflowDispatchRequest(
   val ref: String,
 )
 
+@JsonClass(generateAdapter = true)
+data class GitHubJobStep(
+  val name: String = "",
+  val status: String = "",
+  val conclusion: String? = null,
+  val number: Int = 0,
+)
 
+@JsonClass(generateAdapter = true)
+data class GitHubWorkflowJob(
+  val id: Long = 0L,
+  val name: String = "",
+  val status: String = "",
+  val conclusion: String? = null,
+  @Json(name = "started_at") val startedAt: String? = null,
+  @Json(name = "completed_at") val completedAt: String? = null,
+  val steps: List<GitHubJobStep> = emptyList(),
+)
+
+@JsonClass(generateAdapter = true)
+data class GitHubWorkflowJobsResponse(
+  val jobs: List<GitHubWorkflowJob> = emptyList(),
+)
+
+@JsonClass(generateAdapter = true)
+data class GitHubPrReviewRequest(
+  val body: String = "",
+  val event: String = "APPROVE",
+)

@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -34,7 +35,9 @@ import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.SelectAll
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
@@ -42,6 +45,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -57,6 +61,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
@@ -84,13 +89,16 @@ fun LinuxTerminalPane(
   onAutocomplete: () -> Unit,
   onRecallHistory: (older: Boolean) -> Unit,
   onClearTerminal: () -> Unit,
+  onSaveEntryToFile: (fileName: String, content: String) -> Unit,
   onNotifyCopied: (String) -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
   val clipboard = LocalClipboardManager.current
+  val context = LocalContext.current
   val listState = rememberLazyListState()
   var inspectedEntry by remember { mutableStateOf<TerminalEntry?>(null) }
+  var pendingSaveEntry by remember { mutableStateOf<TerminalEntry?>(null) }
 
   LaunchedEffect(uiState.terminalEntries.size) {
     if (uiState.terminalEntries.isNotEmpty()) {
@@ -108,6 +116,34 @@ fun LinuxTerminalPane(
       entry = entry,
       onCopy = copyText,
       onDismiss = { inspectedEntry = null },
+    )
+  }
+
+  pendingSaveEntry?.let { entry ->
+    var targetFileName by remember(entry.id) { mutableStateOf("output-${entry.id}.txt") }
+    AlertDialog(
+      onDismissRequest = { pendingSaveEntry = null },
+      title = { Text("Save Terminal Output to Workspace") },
+      text = {
+        OutlinedTextField(
+          value = targetFileName,
+          onValueChange = { targetFileName = it },
+          label = { Text("Workspace File Path") },
+          singleLine = true,
+          shape = RoundedCornerShape(12.dp),
+          modifier = Modifier.fillMaxWidth().testTag("terminal_save_filename_input"),
+        )
+      },
+      confirmButton = {
+        FilledTonalButton(
+          onClick = {
+            onSaveEntryToFile(targetFileName, entry.httpMeta?.bodyText?.ifBlank { entry.output } ?: entry.output)
+            pendingSaveEntry = null
+          },
+          enabled = targetFileName.isNotBlank(),
+        ) { Text("Save") }
+      },
+      dismissButton = { TextButton(onClick = { pendingSaveEntry = null }) { Text("Cancel") } },
     )
   }
 
@@ -147,6 +183,21 @@ fun LinuxTerminalPane(
             entry = entry,
             onCopy = copyText,
             onRerun = { onRunCommand(entry.command) },
+            onSave = { pendingSaveEntry = entry },
+            onShare = {
+              val shareBody = buildString {
+                appendLine("$ ${entry.command}")
+                append(entry.output)
+              }
+              val shareIntent =
+                Intent(Intent.ACTION_SEND).apply {
+                  type = "text/plain"
+                  putExtra(Intent.EXTRA_TEXT, shareBody)
+                }
+              runCatching {
+                context.startActivity(Intent.createChooser(shareIntent, "Share terminal output"))
+              }
+            },
             onOpenSelectDialog = { inspectedEntry = entry },
           )
         }
@@ -225,7 +276,12 @@ fun LinuxTerminalPane(
         onClick = { onInputChange("curl -i -X POST -H \"Content-Type: application/json\" -d '{\"ping\":\"edge\"}' /") },
       )
       TerminalQuickChip(label = "jq .", onClick = { onInputChange("curl -s / | jq .") })
+      TerminalQuickChip(label = "wrangler dev", onClick = { onRunCommand("wrangler dev") })
       TerminalQuickChip(label = "wrangler deploy", onClick = { onRunCommand("wrangler deploy") })
+      TerminalQuickChip(label = "wrangler versions", onClick = { onRunCommand("wrangler versions") })
+      TerminalQuickChip(label = "wrangler d1 list", onClick = { onRunCommand("wrangler d1 list") })
+      TerminalQuickChip(label = "wrangler r2 bucket list", onClick = { onRunCommand("wrangler r2 bucket list") })
+      TerminalQuickChip(label = "wrangler pages project list", onClick = { onRunCommand("wrangler pages project list") })
       TerminalQuickChip(label = "wrangler tail", onClick = { onRunCommand("wrangler tail") })
       TerminalQuickChip(label = "ls -la", onClick = { onRunCommand("ls -la") })
       TerminalQuickChip(label = "uname -a", onClick = { onRunCommand("uname -a") })
@@ -308,6 +364,8 @@ private fun TerminalEntryCard(
   entry: TerminalEntry,
   onCopy: (label: String, content: String) -> Unit,
   onRerun: () -> Unit,
+  onSave: () -> Unit,
+  onShare: () -> Unit,
   onOpenSelectDialog: () -> Unit,
 ) {
   val palette = LocalIdePalette.current
@@ -432,6 +490,16 @@ private fun TerminalEntryCard(
         label = "Select / Extract",
         icon = Icons.Outlined.SelectAll,
         onClick = onOpenSelectDialog,
+      )
+      TerminalMiniAction(
+        label = "Save",
+        icon = Icons.Outlined.Save,
+        onClick = onSave,
+      )
+      TerminalMiniAction(
+        label = "Share",
+        icon = Icons.Outlined.Share,
+        onClick = onShare,
       )
     }
   }

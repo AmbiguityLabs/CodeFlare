@@ -145,6 +145,13 @@ interface CloudflareApiService {
     @Body request: CfDeploymentCreateRequest,
   ): Response<CfResponse<CfDeployment>>
 
+  @GET("accounts/{accountId}/workers/scripts/{scriptName}/versions")
+  suspend fun listWorkerVersions(
+    @Path("accountId") accountId: String,
+    @Path("scriptName") scriptName: String,
+    @Query("per_page") perPage: Int = 20,
+  ): Response<CfResponse<CfWorkerVersionsResult>>
+
   @POST("accounts/{accountId}/workers/scripts/{scriptName}/tails")
   suspend fun startWorkerTail(
     @Path("accountId") accountId: String,
@@ -230,6 +237,14 @@ interface CloudflareApiService {
     @Path("namespaceId") namespaceId: String,
     @Path("keyName") keyName: String,
     @Body value: RequestBody,
+    @Query("expiration_ttl") expirationTtl: Long? = null,
+  ): Response<CfResponse<Any?>>
+
+  @PUT("accounts/{accountId}/storage/kv/namespaces/{namespaceId}/bulk")
+  suspend fun putKvBulk(
+    @Path("accountId") accountId: String,
+    @Path("namespaceId") namespaceId: String,
+    @Body items: List<CfKvBulkItem>,
   ): Response<CfResponse<Any?>>
 
   @DELETE("accounts/{accountId}/storage/kv/namespaces/{namespaceId}/values/{keyName}")
@@ -293,6 +308,18 @@ interface CloudflareApiService {
   suspend fun listQueues(
     @Path("accountId") accountId: String,
   ): Response<CfResponse<List<CfQueue>>>
+
+  @POST("accounts/{accountId}/queues")
+  suspend fun createQueue(
+    @Path("accountId") accountId: String,
+    @Body body: CfQueueCreateRequest,
+  ): Response<CfResponse<CfQueue>>
+
+  @DELETE("accounts/{accountId}/queues/{queueId}")
+  suspend fun deleteQueue(
+    @Path("accountId") accountId: String,
+    @Path("queueId") queueId: String,
+  ): Response<CfResponse<Any?>>
 
   // Cloudflare Pages Projects, Deployments, Logs & Domains
   @GET("accounts/{accountId}/pages/projects")

@@ -170,6 +170,14 @@ interface GitHubApiService {
     @Path("runId") runId: Long,
   ): Response<Unit>
 
+  @GET("repos/{owner}/{repo}/actions/runs/{runId}/jobs")
+  suspend fun listWorkflowRunJobs(
+    @Header("Authorization") authHeader: String,
+    @Path("owner") owner: String,
+    @Path("repo") repo: String,
+    @Path("runId") runId: Long,
+  ): Response<GitHubWorkflowJobsResponse>
+
   @GET("repos/{owner}/{repo}/commits/{commitSha}")
   suspend fun getCommitDetail(
     @Header("Authorization") authHeader: String?,
@@ -211,6 +219,15 @@ interface GitHubApiService {
     @Path("repo") repo: String,
     @Path("pullNumber") pullNumber: Int,
   ): Response<List<GitHubDiffFile>>
+
+  @POST("repos/{owner}/{repo}/pulls/{pullNumber}/reviews")
+  suspend fun submitPullRequestReview(
+    @Header("Authorization") authHeader: String,
+    @Path("owner") owner: String,
+    @Path("repo") repo: String,
+    @Path("pullNumber") pullNumber: Int,
+    @Body body: GitHubPrReviewRequest,
+  ): Response<Map<String, @JvmSuppressWildcards Any?>>
 
   @GET("repos/{owner}/{repo}/issues")
   suspend fun listIssues(

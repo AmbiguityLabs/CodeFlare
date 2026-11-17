@@ -337,57 +337,96 @@ object JqEvaluator {
     if (trimmed.isEmpty()) return Result.failure(IllegalArgumentException("jq: empty input"))
 
     return runCatching {
-      var current: Any? = JSONTokener(trimmed).nextValue()
+      val root: Any? = JSONTokener(trimmed).nextValue()
 
       if (expr == "keys") {
-        return@runCatching when (current) {
-          is JSONObject -> JSONArray(current.keys().asSequence().toList().sorted()).toString(2)
-          is JSONArray -> JSONArray((0 until current.length()).toList()).toString(2)
+        return@runCatching when (root) {
+          is JSONObject -> JSONArray(root.keys().asSequence().toList().sorted()).toString(2)
+          is JSONArray -> JSONArray((0 until root.length()).toList()).toString(2)
           else -> "[]"
         }
       }
       if (expr == "length") {
-        return@runCatching when (current) {
-          is JSONObject -> current.length().toString()
-          is JSONArray -> current.length().toString()
-          is String -> current.length.toString()
+        return@runCatching when (root) {
+          is JSONObject -> root.length().toString()
+          is JSONArray -> root.length().toString()
+          is String -> root.length.toString()
           else -> "1"
         }
       }
 
-      if (expr != ".") {
-        val cleanPath = expr.removePrefix(".")
-        val segments =
-          cleanPath
-            .replace("[", ".[")
-            .split('.')
-            .filter { it.isNotBlank() }
-
-        for (seg in segments) {
-          current =
-            if (seg.startsWith("[") && seg.endsWith("]")) {
-              val idx = seg.substring(1, seg.length - 1).toIntOrNull()
-              if (current is JSONArray && idx != null && idx in 0 until current.length()) {
-                current.get(idx)
-              } else {
-                JSONObject.NULL
-              }
-            } else if (current is JSONObject && current.has(seg)) {
-              current.get(seg)
-            } else {
-              JSONObject.NULL
-            }
+      // Support map(.field) or map(.a.b)
+      val mapMatch = Regex("""^map\(\s*([^)]+)\s*\)$""").matchEntire(expr)
+      if (mapMatch != null) {
+        val innerExpr = mapMatch.groupValues[1].trim()
+        val arr = root as? JSONArray ?: error("jq: map() requires a JSON array")
+        val mapped = JSONArray()
+        for (i in 0 until arr.length()) {
+          mapped.put(evalSegments(arr.opt(i), tokenizePath(innerExpr)))
         }
+        return@runCatching mapped.toString(2)
       }
 
-      when (current) {
-        null, JSONObject.NULL -> "null"
-        is JSONObject -> current.toString(2)
-        is JSONArray -> current.toString(2)
-        else -> current.toString()
-      }
+      val result =
+        if (expr == ".") root
+        else evalSegments(root, tokenizePath(expr))
+
+      formatJsonNode(result)
     }
   }
+
+  private fun tokenizePath(expr: String): List<String> {
+    val cleanPath = expr.removePrefix(".")
+    if (cleanPath.isBlank()) return emptyList()
+    return cleanPath
+      .replace("[", ".[")
+      .split('.')
+      .filter { it.isNotBlank() }
+  }
+
+  private fun evalSegments(node: Any?, segments: List<String>, index: Int = 0): Any? {
+    if (index >= segments.size) return node
+    val seg = segments[index]
+    return when {
+      seg == "[]" -> {
+        when (node) {
+          is JSONArray -> {
+            val out = JSONArray()
+            for (i in 0 until node.length()) {
+              out.put(evalSegments(node.opt(i), segments, index + 1))
+            }
+            out
+          }
+          is JSONObject -> {
+            val out = JSONArray()
+            val keys = node.keys()
+            while (keys.hasNext()) {
+              out.put(evalSegments(node.opt(keys.next()), segments, index + 1))
+            }
+            out
+          }
+          else -> JSONArray()
+        }
+      }
+      seg.startsWith("[") && seg.endsWith("]") -> {
+        val idx = seg.substring(1, seg.length - 1).toIntOrNull()
+        val next =
+          if (node is JSONArray && idx != null && idx in 0 until node.length()) node.get(idx)
+          else JSONObject.NULL
+        evalSegments(next, segments, index + 1)
+      }
+      node is JSONObject && node.has(seg) -> evalSegments(node.get(seg), segments, index + 1)
+      else -> JSONObject.NULL
+    }
+  }
+
+  private fun formatJsonNode(node: Any?): String =
+    when (node) {
+      null, JSONObject.NULL -> "null"
+      is JSONObject -> node.toString(2)
+      is JSONArray -> node.toString(2)
+      else -> node.toString()
+    }
 
   /**
    * Extracts flat key -> value pairs for easy 1-tap mobile copying from JSON responses.

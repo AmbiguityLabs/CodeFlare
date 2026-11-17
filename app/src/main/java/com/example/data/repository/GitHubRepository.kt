@@ -18,6 +18,7 @@ import com.example.data.remote.GitHubDiffFile
 import com.example.data.remote.GitHubIssue
 import com.example.data.remote.GitHubIssueCommentRequest
 import com.example.data.remote.GitHubMergePrRequest
+import com.example.data.remote.GitHubPrReviewRequest
 import com.example.data.remote.GitHubPullRequest
 import com.example.data.remote.GitHubPutFileRequest
 import com.example.data.remote.GitHubRepo
@@ -28,6 +29,7 @@ import com.example.data.remote.GitHubUpdateRefRequest
 import com.example.data.remote.GitHubUser
 import com.example.data.remote.GitHubWorkflow
 import com.example.data.remote.GitHubWorkflowDispatchRequest
+import com.example.data.remote.GitHubWorkflowJob
 import com.example.data.remote.GitHubWorkflowRun
 import com.example.data.remote.MultipartWorkerParser
 import com.example.data.remote.WorkerFile
@@ -542,6 +544,14 @@ class GitHubRepository(
   ): Result<Unit> =
     safeUnitCall { api.rerunWorkflow(authHeader(token), owner, repo, runId) }
 
+  suspend fun listWorkflowRunJobs(
+    token: String,
+    owner: String,
+    repo: String,
+    runId: Long,
+  ): Result<List<GitHubWorkflowJob>> =
+    safeCall { api.listWorkflowRunJobs(authHeader(token), owner, repo, runId) }.map { it.jobs }
+
   suspend fun getCommitDetail(
     token: String?,
     owner: String,
@@ -598,6 +608,24 @@ class GitHubRepository(
         repo,
         pullNumber,
         GitHubMergePrRequest(mergeMethod = mergeMethod),
+      )
+    }.map { Unit }
+
+  suspend fun submitPullRequestReview(
+    token: String,
+    owner: String,
+    repo: String,
+    pullNumber: Int,
+    event: String,
+    body: String,
+  ): Result<Unit> =
+    safeCall {
+      api.submitPullRequestReview(
+        authHeader(token),
+        owner,
+        repo,
+        pullNumber,
+        GitHubPrReviewRequest(body = body.trim(), event = event),
       )
     }.map { Unit }
 
@@ -677,6 +705,7 @@ class GitHubRepository(
 
   private fun isEditableTextAsset(path: String): Boolean {
     val lower = path.lowercase()
+    val name = lower.substringAfterLast('/')
     return lower.endsWith(".js") ||
       lower.endsWith(".mjs") ||
       lower.endsWith(".ts") ||
@@ -688,6 +717,7 @@ class GitHubRepository(
       lower.endsWith(".toml") ||
       lower.endsWith(".html") ||
       lower.endsWith(".css") ||
+      lower.endsWith(".svg") ||
       lower.endsWith(".sql") ||
       lower.endsWith(".md") ||
       lower.endsWith(".txt") ||
@@ -695,7 +725,9 @@ class GitHubRepository(
       lower.endsWith(".yaml") ||
       lower.endsWith(".sh") ||
       lower.endsWith(".env.example") ||
-      lower == ".gitignore"
+      name == ".gitignore" ||
+      name == "_headers" ||
+      name == "_redirects"
   }
 
   private suspend fun <T> safeCall(block: suspend () -> Response<T>): Result<T> {

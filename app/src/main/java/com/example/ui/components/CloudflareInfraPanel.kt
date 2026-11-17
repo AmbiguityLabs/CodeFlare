@@ -18,6 +18,8 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Key
@@ -27,6 +29,8 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -38,18 +42,22 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -65,9 +73,9 @@ private enum class InfraSubTab(val label: String) {
   BINDINGS("Bindings"),
   KV("KV"),
   D1("D1 SQL"),
-  R2_DO("R2 / DO"),
+  R2_DO("R2 / DO / Queues"),
   ROUTES("Domains & Cron"),
-  DEPLOYS("Deploys"),
+  DEPLOYS("Versions & Split"),
 }
 
 @Composable
@@ -83,6 +91,8 @@ fun CloudflareInfraPanel(
   onAttachWorkerDomain: (String, String) -> Unit,
   onRemoveWorkerDomain: (String) -> Unit,
   onRollbackVersion: (String) -> Unit,
+  onRefreshWorkerVersions: () -> Unit,
+  onDeployGradualSplit: (String, Int, String, Int, String) -> Unit,
   onAddEnvVar: (String, String) -> Unit,
   onAddSecret: (String, String) -> Unit,
   onBindResource: (CfWorkerBinding) -> Unit,
@@ -91,7 +101,9 @@ fun CloudflareInfraPanel(
   onDeleteKvNamespace: (String) -> Unit,
   onSelectKvNamespace: (CfKvNamespace) -> Unit,
   onInspectKvKey: (String) -> Unit,
-  onPutKvEntry: (String, String) -> Unit,
+  onPutKvEntry: (String, String, Long?) -> Unit,
+  onBulkImportKv: (String) -> Unit,
+  onExportKvJson: () -> String,
   onDeleteKvKey: (String) -> Unit,
   onCreateD1Database: (String) -> Unit,
   onDeleteD1Database: (String) -> Unit,
@@ -99,6 +111,9 @@ fun CloudflareInfraPanel(
   onRunD1Sql: (String, String) -> Unit,
   onCreateR2Bucket: (String) -> Unit,
   onDeleteR2Bucket: (String) -> Unit,
+  onCreateQueue: (String) -> Unit,
+  onDeleteQueue: (String) -> Unit,
+  onNotifyStatus: (String) -> Unit,
 ) {
   val palette = LocalIdePalette.current
   var subTab by remember { mutableStateOf(InfraSubTab.BINDINGS) }
@@ -184,10 +199,13 @@ fun CloudflareInfraPanel(
             onSelectKvNamespace = onSelectKvNamespace,
             onInspectKvKey = onInspectKvKey,
             onPutKvEntry = onPutKvEntry,
+            onBulkImportKv = onBulkImportKv,
+            onExportKvJson = onExportKvJson,
             onDeleteKvKey = onDeleteKvKey,
             onBindKv = { varName, ns ->
               onBindResource(CfWorkerBinding(name = varName, type = "kv_namespace", namespaceId = ns.id))
             },
+            onNotifyStatus = onNotifyStatus,
           )
         InfraSubTab.D1 ->
           D1Section(
@@ -208,6 +226,11 @@ fun CloudflareInfraPanel(
             onBindR2 = { varName, bucketName ->
               onBindResource(CfWorkerBinding(name = varName, type = "r2_bucket", bucketName = bucketName))
             },
+            onCreateQueue = onCreateQueue,
+            onDeleteQueue = onDeleteQueue,
+            onBindQueue = { varName, queueName ->
+              onBindResource(CfWorkerBinding(name = varName, type = "queue", queueName = queueName))
+            },
           )
         InfraSubTab.ROUTES ->
           RoutesDomainsCronSection(
@@ -225,6 +248,8 @@ fun CloudflareInfraPanel(
           DeploymentsRollbackSection(
             uiState = uiState,
             onRollbackVersion = onRollbackVersion,
+            onRefreshWorkerVersions = onRefreshWorkerVersions,
+            onDeployGradualSplit = onDeployGradualSplit,
           )
       }
       Spacer(Modifier.height(12.dp))
@@ -252,6 +277,7 @@ private fun BindingsSection(
   var isSecret by remember { mutableStateOf(false) }
   var svcBindName by remember { mutableStateOf("") }
   var svcTarget by remember { mutableStateOf("") }
+  var aiBindName by remember { mutableStateOf("AI") }
 
   Text("ACTIVE WORKER BINDINGS (${ws.bindings.size})", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
   ws.bindings.forEach { b ->
@@ -261,7 +287,12 @@ private fun BindingsSection(
         verticalAlignment = Alignment.CenterVertically,
       ) {
         Icon(
-          imageVector = if (b.type == "secret_text") Icons.Outlined.Lock else Icons.Outlined.Key,
+          imageVector =
+            when (b.type) {
+              "secret_text" -> Icons.Outlined.Lock
+              "ai" -> Icons.Outlined.AutoAwesome
+              else -> Icons.Outlined.Key
+            },
           contentDescription = null,
           tint = palette.activePillFg,
           modifier = Modifier.size(16.dp),
@@ -278,6 +309,9 @@ private fun BindingsSection(
                 "d1" -> "D1 • ${b.databaseId.orEmpty().take(10)}…"
                 "r2_bucket" -> "R2 • ${b.bucketName.orEmpty()}"
                 "service" -> "Service -> ${b.service.orEmpty()}"
+                "ai" -> "Workers AI Inference"
+                "queue" -> "Queue -> ${b.queueName.orEmpty()}"
+                "durable_object_namespace" -> "DO -> ${b.className.orEmpty()}"
                 else -> b.type
               },
             style = MaterialTheme.typography.labelSmall,
@@ -360,6 +394,28 @@ private fun BindingsSection(
     Spacer(Modifier.width(6.dp))
     Text("Bind Service")
   }
+
+  HorizontalDivider(color = palette.treeLine)
+  Text("BIND WORKERS AI", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+  Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+    OutlinedTextField(
+      value = aiBindName,
+      onValueChange = { aiBindName = it },
+      label = { Text("AI Binding Name") },
+      singleLine = true,
+      shape = RoundedCornerShape(12.dp),
+      modifier = Modifier.weight(1f),
+    )
+    FilledTonalButton(
+      onClick = { onBindResource(CfWorkerBinding(name = aiBindName.trim(), type = "ai")) },
+      enabled = aiBindName.isNotBlank(),
+      modifier = Modifier.testTag("bind_workers_ai_button"),
+    ) {
+      Icon(Icons.Outlined.AutoAwesome, contentDescription = null, modifier = Modifier.size(15.dp))
+      Spacer(Modifier.width(4.dp))
+      Text("Bind AI")
+    }
+  }
 }
 
 @Composable
@@ -369,15 +425,56 @@ private fun KvSection(
   onDeleteKvNamespace: (String) -> Unit,
   onSelectKvNamespace: (CfKvNamespace) -> Unit,
   onInspectKvKey: (String) -> Unit,
-  onPutKvEntry: (String, String) -> Unit,
+  onPutKvEntry: (String, String, Long?) -> Unit,
+  onBulkImportKv: (String) -> Unit,
+  onExportKvJson: () -> String,
   onDeleteKvKey: (String) -> Unit,
   onBindKv: (String, CfKvNamespace) -> Unit,
+  onNotifyStatus: (String) -> Unit,
 ) {
   val palette = LocalIdePalette.current
+  val clipboard = LocalClipboardManager.current
   var newNsTitle by remember { mutableStateOf("") }
   var bindName by remember { mutableStateOf("MY_KV") }
   var kvKey by remember { mutableStateOf("") }
   var kvVal by remember { mutableStateOf("") }
+  var kvTtlInput by remember { mutableStateOf("") }
+  var showBulkImportDialog by remember { mutableStateOf(false) }
+
+  if (showBulkImportDialog) {
+    var bulkJson by remember {
+      mutableStateOf(
+        """[
+  {"key": "config:mode", "value": "production", "expiration_ttl": 3600},
+  {"key": "feature:v2", "value": "enabled"}
+]""",
+      )
+    }
+    AlertDialog(
+      onDismissRequest = { showBulkImportDialog = false },
+      title = { Text("Bulk Import KV Entries (JSON)") },
+      text = {
+        OutlinedTextField(
+          value = bulkJson,
+          onValueChange = { bulkJson = it },
+          label = { Text("JSON Array or Key-Value Object") },
+          maxLines = 8,
+          shape = RoundedCornerShape(12.dp),
+          modifier = Modifier.fillMaxWidth().testTag("kv_bulk_json_input"),
+        )
+      },
+      confirmButton = {
+        FilledTonalButton(
+          onClick = {
+            onBulkImportKv(bulkJson)
+            showBulkImportDialog = false
+          },
+          enabled = bulkJson.isNotBlank(),
+        ) { Text("Import") }
+      },
+      dismissButton = { TextButton(onClick = { showBulkImportDialog = false }) { Text("Cancel") } },
+    )
+  }
 
   Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
     OutlinedTextField(
@@ -472,16 +569,42 @@ private fun KvSection(
 
     OutlinedTextField(value = kvKey, onValueChange = { kvKey = it }, label = { Text("Put KV Key") }, singleLine = true, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
     OutlinedTextField(value = kvVal, onValueChange = { kvVal = it }, label = { Text("Value") }, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
+    OutlinedTextField(value = kvTtlInput, onValueChange = { kvTtlInput = it.filter { ch -> ch.isDigit() } }, label = { Text("Optional TTL (seconds >= 60)") }, singleLine = true, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
     FilledTonalButton(
       onClick = {
-        onPutKvEntry(kvKey, kvVal)
+        val ttl = kvTtlInput.toLongOrNull()?.takeIf { it >= 60L }
+        onPutKvEntry(kvKey, kvVal, ttl)
         kvKey = ""
         kvVal = ""
+        kvTtlInput = ""
       },
       enabled = kvKey.isNotBlank(),
       modifier = Modifier.fillMaxWidth(),
     ) {
       Text("Write KV Key")
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+      OutlinedButton(
+        onClick = { showBulkImportDialog = true },
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.weight(1f).testTag("kv_bulk_import_button"),
+      ) {
+        Icon(Icons.Outlined.UploadFile, contentDescription = null, modifier = Modifier.size(15.dp))
+        Spacer(Modifier.width(4.dp))
+        Text("Bulk Import", fontSize = 11.sp)
+      }
+      OutlinedButton(
+        onClick = {
+          clipboard.setText(AnnotatedString(onExportKvJson()))
+          onNotifyStatus("Copied KV keys JSON to clipboard")
+        },
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.weight(1f).testTag("kv_export_json_button"),
+      ) {
+        Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(15.dp))
+        Spacer(Modifier.width(4.dp))
+        Text("Export JSON", fontSize = 11.sp)
+      }
     }
   }
 }
@@ -592,10 +715,15 @@ private fun R2DoQueueSection(
   onCreateR2: (String) -> Unit,
   onDeleteR2: (String) -> Unit,
   onBindR2: (String, String) -> Unit,
+  onCreateQueue: (String) -> Unit,
+  onDeleteQueue: (String) -> Unit,
+  onBindQueue: (String, String) -> Unit,
 ) {
   val palette = LocalIdePalette.current
   var newBucket by remember { mutableStateOf("") }
   var r2BindVar by remember { mutableStateOf("BUCKET") }
+  var newQueueName by remember { mutableStateOf("") }
+  var queueBindVar by remember { mutableStateOf("MY_QUEUE") }
 
   Text("R2 OBJECT STORAGE BUCKETS", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
   Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -607,7 +735,7 @@ private fun R2DoQueueSection(
       },
       enabled = newBucket.isNotBlank(),
     ) {
-      Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+      Icon(Icons.Outlined.Add, contentDescription = "Create R2 bucket", modifier = Modifier.size(16.dp))
     }
   }
 
@@ -651,14 +779,47 @@ private fun R2DoQueueSection(
 
   HorizontalDivider(color = palette.treeLine)
   Text("CLOUDFLARE QUEUES (${uiState.queues.size})", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+  Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+    OutlinedTextField(
+      value = newQueueName,
+      onValueChange = { newQueueName = it },
+      label = { Text("New Queue Name") },
+      singleLine = true,
+      shape = RoundedCornerShape(12.dp),
+      modifier = Modifier.weight(1f).testTag("create_queue_input"),
+    )
+    FilledTonalButton(
+      onClick = {
+        onCreateQueue(newQueueName)
+        newQueueName = ""
+      },
+      enabled = newQueueName.isNotBlank(),
+      modifier = Modifier.testTag("create_queue_button"),
+    ) {
+      Icon(Icons.Outlined.Add, contentDescription = "Create Queue", modifier = Modifier.size(16.dp))
+    }
+  }
   if (uiState.queues.isEmpty()) {
     Text("No Queues provisioned.", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
   } else {
+    if (uiState.workspace != null) {
+      OutlinedTextField(value = queueBindVar, onValueChange = { queueBindVar = it }, label = { Text("Binding Name for Queue") }, singleLine = true, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
+    }
     uiState.queues.forEach { q ->
       Surface(color = palette.chromePill, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(10.dp)) {
-          Text(q.queueName, style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
-          Text(q.queueId, style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+        Row(modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text(q.queueName, style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
+            Text(q.queueId.take(12) + "…", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+          }
+          if (uiState.workspace != null) {
+            TextButton(onClick = { onBindQueue(queueBindVar.ifBlank { "MY_QUEUE" }, q.queueName) }) {
+              Text("Bind")
+            }
+          }
+          IconButton(onClick = { onDeleteQueue(q.queueId) }, modifier = Modifier.size(32.dp)) {
+            Icon(Icons.Outlined.DeleteOutline, contentDescription = "Delete queue", modifier = Modifier.size(15.dp))
+          }
         }
       }
     }
@@ -808,10 +969,13 @@ private fun RoutesDomainsCronSection(
 private fun DeploymentsRollbackSection(
   uiState: IdeUiState,
   onRollbackVersion: (String) -> Unit,
+  onRefreshWorkerVersions: () -> Unit,
+  onDeployGradualSplit: (String, Int, String, Int, String) -> Unit,
 ) {
   val palette = LocalIdePalette.current
   val ws = uiState.workspace
   var pendingVersion by remember { mutableStateOf<String?>(null) }
+  var showGradualSplitDialog by remember { mutableStateOf(false) }
 
   pendingVersion?.let { versionId ->
     AlertDialog(
@@ -830,33 +994,144 @@ private fun DeploymentsRollbackSection(
     )
   }
 
-  if (ws == null || ws.deployments.isEmpty()) {
-    Text("No deployment history available.", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
+  val availableVersionIds =
+    remember(uiState.workerVersions, ws?.deployments) {
+      val vIds = uiState.workerVersions.mapNotNull { it.id.takeIf(String::isNotBlank) }
+      if (vIds.isNotEmpty()) vIds
+      else ws?.deployments.orEmpty().flatMap { it.versions }.map { it.versionId }.distinct()
+    }
+
+  if (showGradualSplitDialog && availableVersionIds.size >= 2) {
+    var primaryVer by remember { mutableStateOf(availableVersionIds[0]) }
+    var secondaryVer by remember { mutableStateOf(availableVersionIds[1]) }
+    var primaryPct by remember { mutableFloatStateOf(80f) }
+    var splitNote by remember { mutableStateOf("Canary rollout via EdgeCode") }
+
+    AlertDialog(
+      onDismissRequest = { showGradualSplitDialog = false },
+      title = { Text("Gradual Traffic Split") },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          Text("Primary: ${primaryVer.take(8)} (${primaryPct.toInt()}%)", style = MaterialTheme.typography.labelMedium)
+          Text("Secondary: ${secondaryVer.take(8)} (${100 - primaryPct.toInt()}%)", style = MaterialTheme.typography.labelMedium)
+          Slider(
+            value = primaryPct,
+            onValueChange = { primaryPct = it },
+            valueRange = 5f..95f,
+            steps = 17,
+          )
+          Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            availableVersionIds.take(4).forEachIndexed { idx, vId ->
+              Surface(
+                onClick = { if (idx % 2 == 0) primaryVer = vId else secondaryVer = vId },
+                shape = RoundedCornerShape(8.dp),
+                color = if (vId == primaryVer || vId == secondaryVer) palette.activePillBg else palette.chromePill,
+              ) {
+                Text(vId.take(6), fontSize = 10.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+              }
+            }
+          }
+          OutlinedTextField(
+            value = splitNote,
+            onValueChange = { splitNote = it },
+            label = { Text("Deployment Annotation") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+          )
+        }
+      },
+      confirmButton = {
+        FilledTonalButton(
+          onClick = {
+            val p1 = primaryPct.toInt()
+            onDeployGradualSplit(primaryVer, p1, secondaryVer, 100 - p1, splitNote)
+            showGradualSplitDialog = false
+          },
+        ) { Text("Apply Split") }
+      },
+      dismissButton = { TextButton(onClick = { showGradualSplitDialog = false }) { Text("Cancel") } },
+    )
+  }
+
+  if (ws == null) {
+    Text("Open a Worker first to inspect versions and gradual traffic splits.", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
     return
   }
 
-  Text("DEPLOYMENTS & ROLLBACK", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
-  ws.deployments.take(10).forEachIndexed { idx, dep ->
-    val versionId = dep.versions.firstOrNull()?.versionId.orEmpty()
-    Surface(color = palette.chromePill, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-      Row(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.Outlined.History, contentDescription = null, tint = palette.textSecondary, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.width(8.dp))
-        Column(modifier = Modifier.weight(1f)) {
-          Text(
-            text = if (idx == 0) "Active • ${versionId.take(8)}" else "Version ${versionId.take(8)}",
-            style = MaterialTheme.typography.labelMedium,
-            color = if (idx == 0) palette.activePillFg else palette.textPrimary,
-          )
-          Text(
-            text = dep.createdOn?.take(19)?.replace('T', ' ') ?: dep.source.orEmpty(),
-            style = MaterialTheme.typography.labelSmall,
-            color = palette.textMuted,
-            maxLines = 1,
-          )
+  Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Text("VERSIONS (${uiState.workerVersions.size})", style = MaterialTheme.typography.labelSmall, color = palette.textMuted, modifier = Modifier.weight(1f))
+    if (availableVersionIds.size >= 2) {
+      OutlinedButton(
+        onClick = { showGradualSplitDialog = true },
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.testTag("gradual_split_button"),
+      ) {
+        Icon(Icons.Outlined.Tune, contentDescription = null, modifier = Modifier.size(14.dp))
+        Spacer(Modifier.width(4.dp))
+        Text("Traffic Split", fontSize = 11.sp)
+      }
+      Spacer(Modifier.width(6.dp))
+    }
+    IconButton(onClick = onRefreshWorkerVersions, modifier = Modifier.size(30.dp)) {
+      Icon(Icons.Outlined.Refresh, contentDescription = "Refresh Worker Versions", modifier = Modifier.size(16.dp))
+    }
+  }
+
+  if (uiState.workerVersions.isEmpty()) {
+    Text("Tap Refresh to load Worker versions for gradual canary rollouts.", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
+  } else {
+    uiState.workerVersions.take(6).forEach { ver ->
+      Surface(color = palette.chromePill, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = "v${ver.number ?: "?"} • ${ver.id.take(10)}…",
+              style = MaterialTheme.typography.labelMedium,
+              color = palette.textPrimary,
+            )
+            Text(
+              text = "${ver.metadata?.source ?: "upload"} • ${ver.metadata?.createdOn?.take(19)?.replace('T', ' ').orEmpty()}",
+              style = MaterialTheme.typography.labelSmall,
+              color = palette.textMuted,
+              maxLines = 1,
+            )
+          }
+          TextButton(onClick = { pendingVersion = ver.id }) { Text("Promote") }
         }
-        if (idx > 0 && versionId.isNotBlank()) {
-          TextButton(onClick = { pendingVersion = versionId }) { Text("Rollback") }
+      }
+    }
+  }
+
+  HorizontalDivider(color = palette.treeLine)
+  Text("DEPLOYMENTS & ROLLBACK", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+  if (ws.deployments.isEmpty()) {
+    Text("No deployment history available.", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
+  } else {
+    ws.deployments.take(10).forEachIndexed { idx, dep ->
+      val versionSummary = dep.versions.joinToString(" / ") { "${it.versionId.take(6)} (${it.percentage.toInt()}%)" }
+      val firstVersionId = dep.versions.firstOrNull()?.versionId.orEmpty()
+      Surface(color = palette.chromePill, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+          Icon(Icons.Outlined.History, contentDescription = null, tint = palette.textSecondary, modifier = Modifier.size(16.dp))
+          Spacer(Modifier.width(8.dp))
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = if (idx == 0) "Active • $versionSummary" else versionSummary.ifBlank { "Deployment" },
+              style = MaterialTheme.typography.labelMedium,
+              color = if (idx == 0) palette.activePillFg else palette.textPrimary,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+              text = dep.createdOn?.take(19)?.replace('T', ' ') ?: dep.source.orEmpty(),
+              style = MaterialTheme.typography.labelSmall,
+              color = palette.textMuted,
+              maxLines = 1,
+            )
+          }
+          if (idx > 0 && firstVersionId.isNotBlank()) {
+            TextButton(onClick = { pendingVersion = firstVersionId }) { Text("Rollback") }
+          }
         }
       }
     }

@@ -2,10 +2,14 @@ package com.example.terminal
 
 import android.content.Context
 import com.example.data.remote.CfAccount
+import com.example.data.remote.CfKvBulkItem
 import com.example.data.remote.MultipartWorkerParser
 import com.example.data.remote.WorkerFile
 import com.example.data.remote.WorkerWorkspace
 import com.example.data.repository.CloudflareRepository
+import org.json.JSONArray
+import org.json.JSONObject
+import org.json.JSONTokener
 import java.io.File
 import java.io.IOException
 import java.net.InetAddress
@@ -74,10 +78,10 @@ class LinuxTerminalEngine(
     ws.workersDevUrl?.let { sessionEnv["BASE_URL"] = it } ?: sessionEnv.remove("BASE_URL")
 
     val activePaths = ws.files.filterNot { it.isVirtualReadOnly }.map { it.path }.toSet()
-    // Remove stale non-virtual files removed via GUI (preserve wrangler.jsonc & .git/)
+    // Remove stale non-virtual files removed via GUI (preserve .git/)
     wsDir.walkTopDown().filter { it.isFile }.forEach { f ->
       val rel = f.relativeTo(wsDir).path.replace('\\', '/')
-      if (rel != "wrangler.jsonc" && !rel.startsWith(".git/") && rel !in activePaths) {
+      if (!rel.startsWith(".git/") && rel !in activePaths) {
         f.delete()
       }
     }
@@ -104,7 +108,7 @@ class LinuxTerminalEngine(
         .filter { it.isFile }
         .mapNotNull { file ->
           val rel = file.relativeTo(wsDir).path.replace('\\', '/')
-          if (rel == "wrangler.jsonc" || rel.startsWith(".git/")) return@mapNotNull null
+          if (rel.startsWith(".git/")) return@mapNotNull null
           val content = runCatching { file.readText(Charsets.UTF_8) }.getOrNull() ?: return@mapNotNull null
           val prev = existingByPath[rel]
           prev?.copy(content = content)
@@ -148,8 +152,15 @@ class LinuxTerminalEngine(
 
     var pipedInput: String? = null
     var lastResult = ShellExecutionResult(output = "")
+    var redirectTarget: Pair<String, Boolean>? = null
 
-    for ((stageIndex, stageCmd) in pipeStages.withIndex()) {
+    for ((stageIndex, rawStageCmd) in pipeStages.withIndex()) {
+      val (stageCmd, targetPath, appendMode) =
+        if (stageIndex == pipeStages.lastIndex) parseRedirection(rawStageCmd)
+        else Triple(rawStageCmd, null, false)
+      if (targetPath != null) {
+        redirectTarget = targetPath to appendMode
+      }
       val res =
         executeSingleStage(
           stageCmd = stageCmd,
@@ -177,8 +188,81 @@ class LinuxTerminalEngine(
         }
     }
 
+    if (redirectTarget != null && !lastResult.isError) {
+      val (targetPath, appendMode) = redirectTarget
+      runCatching {
+        val outFile = File(currentDir, targetPath).canonicalFile
+        outFile.parentFile?.mkdirs()
+        val textToWrite = if (lastResult.output.endsWith("\n")) lastResult.output else "${lastResult.output}\n"
+        if (appendMode) outFile.appendText(textToWrite, Charsets.UTF_8)
+        else outFile.writeText(textToWrite, Charsets.UTF_8)
+        lastResult = lastResult.copy(output = "Saved output to $targetPath (${textToWrite.length} chars)")
+      }.onFailure { err ->
+        lastResult = lastResult.copy(
+          output = "sh: $targetPath: ${err.localizedMessage ?: "write failed"}",
+          isError = true,
+          exitCode = 1,
+          kind = TerminalEntryKind.ERROR,
+        )
+      }
+    }
+
     val syncedBack = readUpdatedFilesFromDisk(workspace)
     return lastResult.copy(updatedWorkspaceFiles = syncedBack ?: lastResult.updatedWorkspaceFiles)
+  }
+
+  private fun parseRedirection(stageCmd: String): Triple<String, String?, Boolean> {
+    var inSingle = false
+    var inDouble = false
+    var escaped = false
+    var redirIdx = -1
+    var isAppend = false
+
+    var i = 0
+    while (i < stageCmd.length) {
+      val ch = stageCmd[i]
+      if (escaped) {
+        escaped = false
+        i++
+        continue
+      }
+      if (ch == '\\' && !inSingle) {
+        escaped = true
+        i++
+        continue
+      }
+      if (ch == '\'' && !inDouble) {
+        inSingle = !inSingle
+        i++
+        continue
+      }
+      if (ch == '"' && !inSingle) {
+        inDouble = !inDouble
+        i++
+        continue
+      }
+      if (!inSingle && !inDouble && ch == '>') {
+        val prev = stageCmd.getOrNull(i - 1)
+        // Skip stderr/fd redirects like 2>/dev/null
+        if (prev != null && prev.isDigit()) {
+          i++
+          continue
+        }
+        redirIdx = i
+        if (stageCmd.getOrNull(i + 1) == '>') {
+          isAppend = true
+        }
+        break
+      }
+      i++
+    }
+
+    if (redirIdx < 0) return Triple(stageCmd, null, false)
+    val left = stageCmd.substring(0, redirIdx).trim()
+    val afterArrow = stageCmd.substring(redirIdx + if (isAppend) 2 else 1).trim()
+    val targetToken = ShellTokenizer.tokenize(afterArrow).firstOrNull()
+    return if (targetToken.isNullOrBlank()) Triple(stageCmd, null, false)
+    else Triple(left, targetToken, isAppend)
   }
 
   private suspend fun executeSingleStage(
@@ -226,10 +310,16 @@ class LinuxTerminalEngine(
             Paste multi-line Chrome/Postman cURL snippets directly via Paste button
 
           Cloudflare Wrangler CLI:
-            wrangler whoami | list | deploy | tail | tail stop
-            wrangler deployments | rollback <version-id>
+            wrangler whoami | list | deploy | tail | tail stop | dev
+            wrangler deployments | versions | rollback <version-id>
             wrangler secret list | put <NAME> <VAL> | delete <NAME>
-            wrangler kv:namespace list | wrangler kv:key list/get/put/delete
+            wrangler kv:namespace list | kv:key list/get/put [--ttl S]/delete
+            wrangler kv:bulk put <file.json> [--namespace-id ID]
+            wrangler d1 list | d1 execute <db> <sql>
+            wrangler r2 bucket list | create <name> | delete <name>
+            wrangler pages project list | pages deployment list <proj>
+            wrangler queues list | create <name> | delete <id>
+            wrangler durable-objects list
 
           Git & GitHub CLI (Synced with Source Control):
             git whoami | status | diff | log
@@ -238,8 +328,8 @@ class LinuxTerminalEngine(
             git push | git pull | git clone <url|owner/repo> [branch]
 
           Linux / Workspace Shell (/system/bin/sh):
-            ls -la, cat src/index.js, grep -rn fetch ., touch file.js, rm, mv, find,
-            uname -a, env, export TOKEN=abc, cd src, pwd, history, open src/index.js, clear
+            ls -la, cat wrangler.jsonc, grep -rn fetch ., cmd | jq .[].id > out.json,
+            touch file.js, rm, mv, find, env, export TOKEN=abc, cd, pwd, open <file>
           """.trimIndent(),
         kind = TerminalEntryKind.SYSTEM,
       )
@@ -555,7 +645,7 @@ class LinuxTerminalEngine(
   ): ShellExecutionResult {
     if (args.isEmpty()) {
       return ShellExecutionResult(
-        output = "Usage: wrangler <whoami|list|deploy|tail|deployments|rollback|routes|secret|kv:namespace|kv:key>",
+        output = "Usage: wrangler <whoami|list|deploy|dev|tail|deployments|versions|rollback|routes|secret|kv:namespace|kv:key|kv:bulk|d1|r2|pages|queues|durable-objects>",
         kind = TerminalEntryKind.WRANGLER,
       )
     }
@@ -567,6 +657,18 @@ class LinuxTerminalEngine(
         val info =
           if (account == null) "Not authenticated (Scratchpad mode). Connect Cloudflare to run cloud commands."
           else "Account: ${account.name}\nAccount ID: ${account.id}\nSubdomain: ${workspace?.accountSubdomain ?: "(unknown)"}"
+        ShellExecutionResult(info, kind = TerminalEntryKind.WRANGLER)
+      }
+      "dev" -> {
+        val ws = workspace ?: return ShellExecutionResult("No Worker open.", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+        val info = buildString {
+          appendLine("Wrangler Dev Preview (${ws.scriptName})")
+          appendLine("Entrypoint : ${ws.entryModulePath} (${if (ws.isEsModuleFormat) "ESM" else "Service Worker"})")
+          appendLine("Compat Date: ${ws.compatibilityDate}")
+          appendLine("Bindings   : ${ws.bindings.size} configured (${ws.bindings.joinToString(", ") { it.name }.ifBlank { "none" }})")
+          ws.workersDevUrl?.let { appendLine("Live Edge  : $it") }
+          appendLine("Tip: Use 'curl -i /' or open the Run / API Tester tab in the bottom panel to execute HTTP requests.")
+        }.trimEnd()
         ShellExecutionResult(info, kind = TerminalEntryKind.WRANGLER)
       }
       "list", "workers" -> {
@@ -603,14 +705,31 @@ class LinuxTerminalEngine(
             val lines =
               if (list.isEmpty()) "(no deployment history)"
               else list.mapIndexed { idx, d ->
-                val vid = d.versions.firstOrNull()?.versionId ?: d.id
+                val summary = d.versions.joinToString(", ") { "${it.versionId.take(8)}:${it.percentage.toInt()}%" }.ifBlank { d.id.take(12) }
                 val tag = if (idx == 0) "[LIVE]" else "      "
-                "$tag ${vid.take(12)}  ${d.createdOn.orEmpty()}  ${d.source.orEmpty()}"
+                "$tag $summary  ${d.createdOn.orEmpty()}  ${d.source.orEmpty()}"
               }.joinToString("\n")
             ShellExecutionResult(lines, kind = TerminalEntryKind.WRANGLER)
           },
           onFailure = {
             ShellExecutionResult(it.localizedMessage ?: "Failed to list deployments", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+          },
+        )
+      }
+      "versions" -> {
+        val ws = workspace ?: return ShellExecutionResult("No Worker open.", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+        if (accountId == null) return ShellExecutionResult("Cloudflare account not connected.", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+        repository.listWorkerVersions(accountId, ws.scriptName).fold(
+          onSuccess = { versions ->
+            val lines =
+              if (versions.isEmpty()) "(no Worker versions found)"
+              else versions.joinToString("\n") { v ->
+                "v${v.number ?: "?"}  ${v.id}  ${v.metadata?.source.orEmpty()}  ${v.metadata?.createdOn.orEmpty()}"
+              }
+            ShellExecutionResult(lines, kind = TerminalEntryKind.WRANGLER)
+          },
+          onFailure = {
+            ShellExecutionResult(it.localizedMessage ?: "Failed to list versions", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
           },
         )
       }
@@ -682,10 +801,13 @@ class LinuxTerminalEngine(
         val action = args.getOrNull(1)?.lowercase()
         val nsFlagIdx = args.indexOfFirst { it == "--namespace-id" || it == "-n" }
         val explicitNs = if (nsFlagIdx >= 0) args.getOrNull(nsFlagIdx + 1) else null
+        val ttlFlagIdx = args.indexOfFirst { it == "--ttl" }
+        val ttlVal = if (ttlFlagIdx >= 0) args.getOrNull(ttlFlagIdx + 1)?.toLongOrNull() else null
         val positional =
           args.drop(2).filterIndexed { i, tok ->
             val origIdx = i + 2
-            tok != "--namespace-id" && tok != "-n" && origIdx != nsFlagIdx + 1
+            tok != "--namespace-id" && tok != "-n" && origIdx != nsFlagIdx + 1 &&
+              tok != "--ttl" && origIdx != ttlFlagIdx + 1
           }
         val nsId =
           explicitNs
@@ -709,9 +831,12 @@ class LinuxTerminalEngine(
           "put" -> {
             val key = positional.getOrNull(0)
             val valStr = positional.getOrNull(1)
-            if (key == null || valStr == null) return ShellExecutionResult("Usage: wrangler kv:key put <KEY> <VAL>", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
-            repository.writeKvValue(accountId, nsId, key, valStr).fold(
-              onSuccess = { ShellExecutionResult("Wrote KV key '$key'", kind = TerminalEntryKind.WRANGLER) },
+            if (key == null || valStr == null) return ShellExecutionResult("Usage: wrangler kv:key put <KEY> <VAL> [--ttl 3600]", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+            repository.writeKvValue(accountId, nsId, key, valStr, expirationTtl = ttlVal).fold(
+              onSuccess = {
+                val ttlNote = ttlVal?.takeIf { it >= 60L }?.let { " (ttl=${it}s)" }.orEmpty()
+                ShellExecutionResult("Wrote KV key '$key'$ttlNote", kind = TerminalEntryKind.WRANGLER)
+              },
               onFailure = { ShellExecutionResult(it.localizedMessage ?: "kv put failed", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR) },
             )
           }
@@ -724,6 +849,189 @@ class LinuxTerminalEngine(
           }
           else -> ShellExecutionResult("Usage: wrangler kv:key <list|get|put|delete> ...", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
         }
+      }
+      "kv:bulk" -> {
+        if (accountId == null) return ShellExecutionResult("Cloudflare account not connected.", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+        val action = args.getOrNull(1)?.lowercase()
+        if (action != "put") {
+          return ShellExecutionResult("Usage: wrangler kv:bulk put <entries.json> [--namespace-id ID]", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+        }
+        val nsFlagIdx = args.indexOfFirst { it == "--namespace-id" || it == "-n" }
+        val explicitNs = if (nsFlagIdx >= 0) args.getOrNull(nsFlagIdx + 1) else null
+        val filePath = args.drop(2).filterIndexed { i, tok ->
+          val origIdx = i + 2
+          tok != "--namespace-id" && tok != "-n" && origIdx != nsFlagIdx + 1
+        }.firstOrNull() ?: return ShellExecutionResult("Usage: wrangler kv:bulk put <entries.json> [--namespace-id ID]", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+
+        val nsId =
+          explicitNs
+            ?: workspace?.bindings?.firstOrNull { it.type == "kv_namespace" && !it.namespaceId.isNullOrBlank() }?.namespaceId
+            ?: repository.listKvNamespaces(accountId).getOrNull()?.firstOrNull()?.id
+            ?: return ShellExecutionResult("No KV namespace ID found. Pass --namespace-id <ID>.", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+
+        val diskFile = File(currentDir, filePath)
+        val rawJson =
+          if (diskFile.exists()) diskFile.readText(Charsets.UTF_8)
+          else workspace?.files?.firstOrNull { it.path == filePath }?.content
+            ?: return ShellExecutionResult("File not found: $filePath", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+
+        val itemsResult = runCatching {
+          val parsed = JSONTokener(rawJson.trim()).nextValue()
+          when (parsed) {
+            is JSONArray -> (0 until parsed.length()).map { idx ->
+              val obj = parsed.getJSONObject(idx)
+              CfKvBulkItem(
+                key = obj.getString("key"),
+                value = obj.optString("value", ""),
+                expirationTtl = obj.optLong("expiration_ttl", 0L).takeIf { it >= 60L },
+              )
+            }
+            is JSONObject -> parsed.keys().asSequence().map { k ->
+              CfKvBulkItem(key = k, value = parsed.optString(k, ""))
+            }.toList()
+            else -> error("Expected JSON array or object")
+          }
+        }
+        val items = itemsResult.getOrElse {
+          return ShellExecutionResult("Invalid KV bulk JSON: ${it.localizedMessage}", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+        }
+        repository.bulkPutKvEntries(accountId, nsId, items).fold(
+          onSuccess = { ShellExecutionResult("Bulk imported ${items.size} keys into KV namespace ${nsId.take(8)}", kind = TerminalEntryKind.WRANGLER) },
+          onFailure = { ShellExecutionResult(it.localizedMessage ?: "kv:bulk put failed", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR) },
+        )
+      }
+      "d1" -> {
+        if (accountId == null) return ShellExecutionResult("Cloudflare account not connected.", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+        when (args.getOrNull(1)?.lowercase()) {
+          "list" ->
+            repository.listD1Databases(accountId).fold(
+              onSuccess = { dbs ->
+                val out = if (dbs.isEmpty()) "(no D1 databases)" else dbs.joinToString("\n") { "${it.uuid}  ${it.name}  tables=${it.numTables ?: "?"}" }
+                ShellExecutionResult(out, kind = TerminalEntryKind.WRANGLER)
+              },
+              onFailure = { ShellExecutionResult(it.localizedMessage ?: "d1 list failed", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR) },
+            )
+          "execute" -> {
+            val dbNameOrId = args.getOrNull(2) ?: return ShellExecutionResult("Usage: wrangler d1 execute <DB_NAME|UUID> <SQL>", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+            val cmdFlagIdx = args.indexOfFirst { it == "--command" || it == "-c" }
+            val sql =
+              if (cmdFlagIdx >= 0) args.getOrNull(cmdFlagIdx + 1).orEmpty()
+              else args.drop(3).joinToString(" ")
+            if (sql.isBlank()) return ShellExecutionResult("Provide SQL query after database name or via --command", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+            val dbs = repository.listD1Databases(accountId).getOrDefault(emptyList())
+            val resolvedId = dbs.firstOrNull { it.uuid == dbNameOrId || it.name.equals(dbNameOrId, true) }?.uuid ?: dbNameOrId
+            repository.queryD1Database(accountId, resolvedId, sql).fold(
+              onSuccess = { results ->
+                val arr = JSONArray()
+                results.forEach { res ->
+                  res.results.forEach { row -> arr.put(JSONObject(row)) }
+                }
+                val meta = results.firstOrNull()?.meta
+                val summary = if (arr.length() == 0) "Query OK (changes=${meta?.changes ?: 0}, duration=${meta?.duration ?: 0.0}ms)" else arr.toString(2)
+                ShellExecutionResult(summary, kind = TerminalEntryKind.WRANGLER)
+              },
+              onFailure = { ShellExecutionResult(it.localizedMessage ?: "d1 execute failed", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR) },
+            )
+          }
+          else -> ShellExecutionResult("Usage: wrangler d1 <list | execute <DB> <SQL>>", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+        }
+      }
+      "r2" -> {
+        if (accountId == null) return ShellExecutionResult("Cloudflare account not connected.", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+        val noun = args.getOrNull(1)?.lowercase()
+        val action = args.getOrNull(2)?.lowercase()
+        if (noun != "bucket") {
+          return ShellExecutionResult("Usage: wrangler r2 bucket <list|create|delete> [name]", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+        }
+        when (action) {
+          "list" ->
+            repository.listR2Buckets(accountId).fold(
+              onSuccess = { buckets ->
+                ShellExecutionResult(if (buckets.isEmpty()) "(no R2 buckets)" else buckets.joinToString("\n") { "${it.name}  (${it.location ?: "auto"})" }, kind = TerminalEntryKind.WRANGLER)
+              },
+              onFailure = { ShellExecutionResult(it.localizedMessage ?: "r2 list failed", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR) },
+            )
+          "create" -> {
+            val name = args.getOrNull(3) ?: return ShellExecutionResult("Usage: wrangler r2 bucket create <NAME>", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+            repository.createR2Bucket(accountId, name).fold(
+              onSuccess = { ShellExecutionResult("Created R2 bucket '${it.name}'", kind = TerminalEntryKind.WRANGLER) },
+              onFailure = { ShellExecutionResult(it.localizedMessage ?: "r2 create failed", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR) },
+            )
+          }
+          "delete" -> {
+            val name = args.getOrNull(3) ?: return ShellExecutionResult("Usage: wrangler r2 bucket delete <NAME>", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+            repository.deleteR2Bucket(accountId, name).fold(
+              onSuccess = { ShellExecutionResult("Deleted R2 bucket '$name'", kind = TerminalEntryKind.WRANGLER) },
+              onFailure = { ShellExecutionResult(it.localizedMessage ?: "r2 delete failed", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR) },
+            )
+          }
+          else -> ShellExecutionResult("Usage: wrangler r2 bucket <list|create|delete> [name]", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+        }
+      }
+      "pages" -> {
+        if (accountId == null) return ShellExecutionResult("Cloudflare account not connected.", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+        val noun = args.getOrNull(1)?.lowercase()
+        val action = args.getOrNull(2)?.lowercase()
+        when {
+          noun == "project" && action == "list" ->
+            repository.listPagesProjects(accountId).fold(
+              onSuccess = { projects ->
+                val out = if (projects.isEmpty()) "(no Pages projects)" else projects.joinToString("\n") { "${it.name}  branch=${it.productionBranch}  https://${it.subdomain ?: "${it.name}.pages.dev"}" }
+                ShellExecutionResult(out, kind = TerminalEntryKind.WRANGLER)
+              },
+              onFailure = { ShellExecutionResult(it.localizedMessage ?: "pages project list failed", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR) },
+            )
+          noun == "deployment" && action == "list" -> {
+            val proj = args.getOrNull(3) ?: return ShellExecutionResult("Usage: wrangler pages deployment list <PROJECT>", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+            repository.listPagesDeployments(accountId, proj).fold(
+              onSuccess = { deps ->
+                val out = if (deps.isEmpty()) "(no deployments)" else deps.take(15).joinToString("\n") { "${it.shortId ?: it.id.take(8)}  [${it.environment}]  ${it.latestStage?.status ?: "?"}  ${it.url.orEmpty()}" }
+                ShellExecutionResult(out, kind = TerminalEntryKind.WRANGLER)
+              },
+              onFailure = { ShellExecutionResult(it.localizedMessage ?: "pages deployment list failed", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR) },
+            )
+          }
+          else -> ShellExecutionResult("Usage: wrangler pages <project list | deployment list <project>>", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+        }
+      }
+      "queues" -> {
+        if (accountId == null) return ShellExecutionResult("Cloudflare account not connected.", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+        when (args.getOrNull(1)?.lowercase()) {
+          "list" ->
+            repository.listQueues(accountId).fold(
+              onSuccess = { qs ->
+                ShellExecutionResult(if (qs.isEmpty()) "(no Queues)" else qs.joinToString("\n") { "${it.queueId}  ${it.queueName}" }, kind = TerminalEntryKind.WRANGLER)
+              },
+              onFailure = { ShellExecutionResult(it.localizedMessage ?: "queues list failed", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR) },
+            )
+          "create" -> {
+            val name = args.getOrNull(2) ?: return ShellExecutionResult("Usage: wrangler queues create <NAME>", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+            repository.createQueue(accountId, name).fold(
+              onSuccess = { ShellExecutionResult("Created Queue '${it.queueName}' (${it.queueId})", kind = TerminalEntryKind.WRANGLER) },
+              onFailure = { ShellExecutionResult(it.localizedMessage ?: "queues create failed", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR) },
+            )
+          }
+          "delete" -> {
+            val qId = args.getOrNull(2) ?: return ShellExecutionResult("Usage: wrangler queues delete <QUEUE_ID>", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+            repository.deleteQueue(accountId, qId).fold(
+              onSuccess = { ShellExecutionResult("Deleted Queue '$qId'", kind = TerminalEntryKind.WRANGLER) },
+              onFailure = { ShellExecutionResult(it.localizedMessage ?: "queues delete failed", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR) },
+            )
+          }
+          else -> ShellExecutionResult("Usage: wrangler queues <list|create|delete>", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+        }
+      }
+      "durable-objects" -> {
+        if (accountId == null) return ShellExecutionResult("Cloudflare account not connected.", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+        if (args.getOrNull(1)?.lowercase() != "list") {
+          return ShellExecutionResult("Usage: wrangler durable-objects list", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
+        }
+        repository.listDurableObjects(accountId).fold(
+          onSuccess = { dos ->
+            ShellExecutionResult(if (dos.isEmpty()) "(no Durable Object namespaces)" else dos.joinToString("\n") { "${it.id}  ${it.name}  class=${it.className ?: "?"}  script=${it.script ?: "?"}" }, kind = TerminalEntryKind.WRANGLER)
+          },
+          onFailure = { ShellExecutionResult(it.localizedMessage ?: "durable-objects list failed", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR) },
+        )
       }
       else -> ShellExecutionResult("Unknown wrangler subcommand '$sub'. Run 'help' for supported commands.", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
     }
@@ -789,12 +1097,19 @@ class LinuxTerminalEngine(
           "curl -i ",
           "curl -v ",
           "wrangler deploy",
+          "wrangler dev",
           "wrangler tail",
           "wrangler list",
+          "wrangler versions",
           "wrangler whoami",
           "wrangler deployments",
           "wrangler secret list",
           "wrangler kv:namespace list",
+          "wrangler d1 list",
+          "wrangler r2 bucket list",
+          "wrangler pages project list",
+          "wrangler queues list",
+          "wrangler durable-objects list",
           "git status",
           "git diff",
           "git add .",

@@ -31,11 +31,15 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.KeyboardArrowLeft
 import androidx.compose.material.icons.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.ListAlt
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -48,7 +52,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,6 +64,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
@@ -66,7 +74,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.remote.DiagnosticSeverity
+import com.example.data.remote.WorkerLanguage
 import com.example.editor.CodeSyntaxVisualTransformation
+import com.example.editor.WranglerSyncParser
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.viewmodel.IdeUiState
@@ -96,6 +106,10 @@ fun CodeEditorPane(
   onOpenProblems: () -> Unit,
   onOpenExplorer: () -> Unit,
   onShowNewWorkerDialog: () -> Unit,
+  onDismissDraftBanner: () -> Unit,
+  onDiscardRestoredDraft: () -> Unit,
+  onJumpToLine: (String, Int) -> Unit,
+  onSyncWranglerToWorkspace: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
@@ -163,6 +177,34 @@ fun CodeEditorPane(
       }
     }
 
+    uiState.restoredDraftBanner?.let { bannerMsg ->
+      Surface(
+        color = palette.activePillBg,
+        modifier = Modifier.fillMaxWidth().testTag("restored_draft_banner"),
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          Text(
+            text = bannerMsg,
+            style = MaterialTheme.typography.labelSmall,
+            color = palette.activePillFg,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+          )
+          TextButton(onClick = onDismissDraftBanner) {
+            Text("Keep", color = palette.activePillFg, fontWeight = FontWeight.Bold)
+          }
+          TextButton(onClick = onDiscardRestoredDraft) {
+            Text("Discard", color = MaterialTheme.colorScheme.error)
+          }
+        }
+      }
+    }
+
     if (activeFile == null) {
       EmptyWorkspaceWelcome(
         hasWorkers = uiState.workers.isNotEmpty(),
@@ -173,6 +215,17 @@ fun CodeEditorPane(
       )
       return
     }
+
+    val isWranglerConfig =
+      activeFile.path.equals("wrangler.jsonc", ignoreCase = true) ||
+        activeFile.path.equals("wrangler.json", ignoreCase = true) ||
+        activeFile.path.equals("wrangler.toml", ignoreCase = true)
+    var showSymbolOutlineMenu by remember { mutableStateOf(false) }
+    val tfv = uiState.activeTextFieldValue
+    val symbols =
+      remember(tfv.text, activeFile.language) {
+        WranglerSyncParser.extractCodeSymbols(tfv.text, activeFile.language)
+      }
 
     // Tab-history navigation chevrons (< >) + Breadcrumb Strip (matching Screenshot 2)
     Row(
@@ -269,6 +322,59 @@ fun CodeEditorPane(
         }
       }
 
+      if (isWranglerConfig) {
+        Surface(
+          onClick = onSyncWranglerToWorkspace,
+          shape = RoundedCornerShape(999.dp),
+          color = palette.activePillBg,
+          modifier = Modifier.padding(end = 4.dp).testTag("apply_wrangler_config_button"),
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+          ) {
+            Icon(Icons.Outlined.Sync, contentDescription = "Apply Wrangler Config", tint = palette.activePillFg, modifier = Modifier.size(13.dp))
+            Text("Apply Config", style = MaterialTheme.typography.labelSmall, color = palette.activePillFg, fontWeight = FontWeight.SemiBold)
+          }
+        }
+      }
+
+      if (symbols.isNotEmpty()) {
+        Box {
+          IconButton(
+            onClick = { showSymbolOutlineMenu = true },
+            modifier = Modifier.size(32.dp).testTag("symbol_outline_button"),
+          ) {
+            Icon(
+              Icons.Outlined.ListAlt,
+              contentDescription = "Symbol Outline",
+              tint = palette.textSecondary,
+              modifier = Modifier.size(16.dp),
+            )
+          }
+          DropdownMenu(expanded = showSymbolOutlineMenu, onDismissRequest = { showSymbolOutlineMenu = false }) {
+            symbols.forEach { sym ->
+              DropdownMenuItem(
+                text = {
+                  Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(color = palette.activePillBg, shape = RoundedCornerShape(4.dp)) {
+                      Text(sym.kind, fontSize = 9.sp, color = palette.activePillFg, modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp))
+                    }
+                    Text(sym.name, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(":${sym.line}", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+                  }
+                },
+                onClick = {
+                  showSymbolOutlineMenu = false
+                  onJumpToLine(activeFile.path, sym.line)
+                },
+              )
+            }
+          }
+        }
+      }
+
       IconButton(
         onClick = onToggleFindBar,
         modifier = Modifier.size(32.dp).testTag("find_replace_toggle"),
@@ -347,7 +453,6 @@ fun CodeEditorPane(
     }
 
     // Code Editor with Gutter, Active Line Highlight, Fold Marker & Vertical Gutter Divider
-    val tfv = uiState.activeTextFieldValue
     val fontSize = uiState.editorSettings.fontSizeSp.sp
     val lineHeight = (uiState.editorSettings.fontSizeSp + 7).sp
     val verticalScroll = rememberScrollState()
@@ -443,8 +548,60 @@ fun CodeEditorPane(
       )
     }
 
-    // Compact Coding Symbol Accessory Bar
+    // Workers Autocomplete Strip + Compact Coding Symbol Accessory Bar
     if (!activeFile.isVirtualReadOnly) {
+      if (activeFile.language in setOf(WorkerLanguage.JAVASCRIPT, WorkerLanguage.TYPESCRIPT, WorkerLanguage.JSON)) {
+        val cursorPos = tfv.selection.start.coerceIn(0, tfv.text.length)
+        val wordBeforeCursor =
+          remember(tfv.text, cursorPos) {
+            val prefixWindow = tfv.text.substring((cursorPos - 40).coerceAtLeast(0), cursorPos)
+            prefixWindow.takeLastWhile { it.isLetterOrDigit() || it == '_' || it == '.' || it == '$' }
+          }
+        val completions =
+          remember(uiState.workspace?.bindings, activeFile.language, wordBeforeCursor) {
+            WranglerSyncParser.buildWorkersCompletions(uiState.workspace, activeFile.language, wordBeforeCursor)
+          }
+        if (completions.isNotEmpty()) {
+          HorizontalDivider(color = palette.border)
+          Row(
+            modifier =
+              Modifier
+                .fillMaxWidth()
+                .background(palette.chromeBg)
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            completions.forEach { sug ->
+              Surface(
+                onClick = {
+                  if (wordBeforeCursor.isNotEmpty() && sug.label.startsWith(wordBeforeCursor, ignoreCase = true)) {
+                    val replaceStart = (cursorPos - wordBeforeCursor.length).coerceAtLeast(0)
+                    val nextText = tfv.text.replaceRange(replaceStart, cursorPos, sug.insertText)
+                    val nextPos = (replaceStart + sug.insertText.length - sug.cursorBackOffset).coerceIn(0, nextText.length)
+                    onCodeChange(TextFieldValue(nextText, TextRange(nextPos)))
+                  } else {
+                    onInsertText(sug.insertText, sug.cursorBackOffset)
+                  }
+                },
+                shape = RoundedCornerShape(8.dp),
+                color = palette.chromePill,
+              ) {
+                Row(
+                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                  Text(sug.label, style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold), color = palette.activePillFg)
+                  Text(sug.detail, style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+                }
+              }
+            }
+          }
+        }
+      }
+
       HorizontalDivider(color = palette.border)
       Row(
         modifier =

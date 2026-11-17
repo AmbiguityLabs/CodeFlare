@@ -12,6 +12,7 @@ import com.example.data.remote.CfDeployment
 import com.example.data.remote.CfDeploymentCreateRequest
 import com.example.data.remote.CfDeploymentVersion
 import com.example.data.remote.CfDurableObjectNamespace
+import com.example.data.remote.CfKvBulkItem
 import com.example.data.remote.CfKvKey
 import com.example.data.remote.CfKvNamespace
 import com.example.data.remote.CfKvNamespaceRequest
@@ -27,6 +28,7 @@ import com.example.data.remote.CfPagesProjectCreateRequest
 import com.example.data.remote.CfPagesUploadPayloadItem
 import com.example.data.remote.CfPagesUpsertHashesRequest
 import com.example.data.remote.CfQueue
+import com.example.data.remote.CfQueueCreateRequest
 import com.example.data.remote.CfR2Bucket
 import com.example.data.remote.CfR2CreateRequest
 import com.example.data.remote.CfResponse
@@ -39,6 +41,7 @@ import com.example.data.remote.CfWorkerRoute
 import com.example.data.remote.CfWorkerScript
 import com.example.data.remote.CfWorkerSecretPut
 import com.example.data.remote.CfWorkerSettings
+import com.example.data.remote.CfWorkerVersion
 import com.example.data.remote.CfZone
 import com.example.data.remote.CfZoneRouteCreate
 import com.example.data.remote.CloudflareClientFactory
@@ -179,6 +182,86 @@ function json(data, status = 200) {
     // ctx.waitUntil(doAsyncWork(env));
   }
 };
+""",
+  ),
+  HONO_ROUTER(
+    id = "hono_router",
+    title = "Edge Micro-Router (Hono-style)",
+    subtitle = "Lightweight route matcher with params, middleware & JSON helpers",
+    code =
+      """const routes = [
+  { method: "GET", pattern: /^\/api\/health$/, handler: (req, env) => Response.json({ ok: true, env: env.ENVIRONMENT ?? "prod" }) },
+  { method: "GET", pattern: /^\/api\/items\/([^/]+)$/, handler: async (req, env, m) => {
+      const id = m[1];
+      const cached = env.MY_KV ? await env.MY_KV.get(`item:${'$'}{id}`) : null;
+      return Response.json({ id, cached });
+    }
+  }
+];
+
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    for (const r of routes) {
+      if (r.method === request.method) {
+        const match = url.pathname.match(r.pattern);
+        if (match) return r.handler(request, env, match, ctx);
+      }
+    }
+    return Response.json({ error: "Not Found", path: url.pathname }, { status: 404 });
+  }
+};
+""",
+  ),
+  BEARER_AUTH_WORKER(
+    id = "bearer_auth_worker",
+    title = "Bearer Auth & KV Guard",
+    subtitle = "Validates Authorization header against env.API_SECRET & KV quota",
+    code =
+      """export default {
+  async fetch(request, env, ctx) {
+    const auth = request.headers.get("Authorization") || "";
+    const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    const expected = env.API_SECRET || "dev-secret";
+
+    if (!token || token !== expected) {
+      return Response.json(
+        { error: "Unauthorized", hint: "Provide Authorization: Bearer <API_SECRET>" },
+        { status: 401 }
+      );
+    }
+
+    const url = new URL(request.url);
+    return Response.json({
+      authenticated: true,
+      path: url.pathname,
+      colo: request.cf?.colo ?? "EDGE"
+    });
+  }
+};
+""",
+  ),
+  PAGES_FUNCTIONS_API(
+    id = "pages_functions_api",
+    title = "Pages Function Handler",
+    subtitle = "Full-stack Cloudflare Pages onRequest(context) JSON endpoint",
+    code =
+      """export async function onRequest(context) {
+  const { request, env, params, waitUntil } = context;
+  const url = new URL(request.url);
+
+  if (request.method === "POST") {
+    const body = await request.json().catch(() => ({}));
+    return Response.json({ received: body, path: url.pathname }, { status: 201 });
+  }
+
+  return Response.json({
+    service: "cloudflare-pages-function",
+    method: request.method,
+    path: url.pathname,
+    hasEnvKeys: Object.keys(env || {})
+  });
+}
 """,
   ),
 }
@@ -412,7 +495,7 @@ class CloudflareRepository(
               originalContent = wranglerVirtual,
               contentType = "application/json",
               isEntryPoint = false,
-              isVirtualReadOnly = true,
+              isVirtualReadOnly = false,
             )
 
         WorkerWorkspace(
@@ -592,6 +675,14 @@ class CloudflareRepository(
                   put("type", b.type)
                   if (b.text != null) put("text", b.text)
                   if (b.namespaceId != null) put("namespace_id", b.namespaceId)
+                  if (b.databaseId != null) put("database_id", b.databaseId)
+                  if (b.bucketName != null) put("bucket_name", b.bucketName)
+                  if (b.service != null) put("service", b.service)
+                  if (b.environment != null) put("environment", b.environment)
+                  if (b.className != null) put("class_name", b.className)
+                  if (b.scriptName != null) put("script_name", b.scriptName)
+                  if (b.queueName != null) put("queue_name", b.queueName)
+                  if (b.indexName != null) put("index_name", b.indexName)
                 }
               },
           )
@@ -637,6 +728,42 @@ class CloudflareRepository(
           error(extractCfError(resp) ?: "Failed to load Worker deployments")
         }
         resp.body()?.result?.deployments.orEmpty()
+      }
+    }
+
+  suspend fun listWorkerVersions(accountId: String, scriptName: String): Result<List<CfWorkerVersion>> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val resp = api.listWorkerVersions(accountId, scriptName)
+        if (!resp.isSuccessful || resp.body()?.success != true) {
+          error(extractCfError(resp) ?: "Failed to load Worker versions")
+        }
+        resp.body()?.result?.items.orEmpty()
+      }
+    }
+
+  suspend fun deployGradualVersions(
+    accountId: String,
+    scriptName: String,
+    allocations: List<CfDeploymentVersion>,
+    message: String? = null,
+  ): Result<CfDeployment> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        require(allocations.isNotEmpty()) { "At least one version allocation is required" }
+        val totalPct = allocations.sumOf { it.percentage }
+        require(kotlin.math.abs(totalPct - 100.0) <= 0.1) { "Traffic percentages must sum to 100%" }
+        val req =
+          CfDeploymentCreateRequest(
+            strategy = "percentage",
+            versions = allocations,
+            annotations = mapOf("workers/message" to (message?.takeIf { it.isNotBlank() } ?: "Gradual deploy via EdgeCode")),
+          )
+        val resp = api.createWorkerDeployment(accountId, scriptName, req)
+        if (!resp.isSuccessful || resp.body()?.success != true) {
+          error(extractCfError(resp) ?: "Gradual deployment failed")
+        }
+        resp.body()?.result ?: CfDeployment()
       }
     }
 
@@ -777,13 +904,41 @@ class CloudflareRepository(
       }
     }
 
-  suspend fun writeKvValue(accountId: String, namespaceId: String, keyName: String, value: String): Result<Unit> =
+  suspend fun writeKvValue(
+    accountId: String,
+    namespaceId: String,
+    keyName: String,
+    value: String,
+    expirationTtl: Long? = null,
+  ): Result<Unit> =
     withContext(Dispatchers.IO) {
       runCatching {
+        val validTtl = expirationTtl?.takeIf { it >= 60L }
         val resp =
-          api.putKvValue(accountId, namespaceId, keyName, value.toRequestBody("text/plain".toMediaType()))
+          api.putKvValue(
+            accountId = accountId,
+            namespaceId = namespaceId,
+            keyName = keyName,
+            value = value.toRequestBody("text/plain".toMediaType()),
+            expirationTtl = validTtl,
+          )
         if (!resp.isSuccessful || resp.body()?.success != true) {
           error(extractCfError(resp) ?: "Failed to write KV key '$keyName'")
+        }
+      }
+    }
+
+  suspend fun bulkPutKvEntries(
+    accountId: String,
+    namespaceId: String,
+    items: List<CfKvBulkItem>,
+  ): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        require(items.isNotEmpty()) { "No KV entries provided for bulk import" }
+        val resp = api.putKvBulk(accountId, namespaceId, items)
+        if (!resp.isSuccessful || resp.body()?.success != true) {
+          error(extractCfError(resp) ?: "KV bulk import failed")
         }
       }
     }
@@ -950,6 +1105,29 @@ class CloudflareRepository(
       }
     }
 
+  suspend fun createQueue(accountId: String, queueName: String): Result<CfQueue> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val clean = queueName.trim().lowercase().replace(Regex("[^a-z0-9-]"), "-")
+        require(clean.isNotBlank()) { "Queue name cannot be empty" }
+        val resp = api.createQueue(accountId, CfQueueCreateRequest(clean))
+        if (!resp.isSuccessful || resp.body()?.success != true) {
+          error(extractCfError(resp) ?: "Failed to create queue '$clean'")
+        }
+        resp.body()?.result ?: CfQueue(queueName = clean)
+      }
+    }
+
+  suspend fun deleteQueue(accountId: String, queueId: String): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val resp = api.deleteQueue(accountId, queueId)
+        if (!resp.isSuccessful || resp.body()?.success != true) {
+          error(extractCfError(resp) ?: "Failed to delete queue")
+        }
+      }
+    }
+
   // Cloudflare Pages Management
   suspend fun listPagesProjects(accountId: String): Result<List<CfPagesProject>> =
     withContext(Dispatchers.IO) {
@@ -1072,6 +1250,69 @@ class CloudflareRepository(
         val resp = api.patchPagesProject(accountId, projectName, body)
         if (!resp.isSuccessful || resp.body()?.success != true) {
           error(extractCfError(resp) ?: "Failed to update Pages environment variables")
+        }
+        resp.body()?.result ?: error("Empty Pages patch response")
+      }
+    }
+
+  suspend fun updatePagesBuildConfig(
+    accountId: String,
+    projectName: String,
+    productionBranch: String,
+    buildCommand: String,
+    destinationDir: String,
+    rootDir: String,
+  ): Result<CfPagesProject> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val adapter =
+          clientFactory.moshi.adapter<Map<String, Any>>(
+            Types.newParameterizedType(Map::class.java, String::class.java, Any::class.java),
+          )
+        val payload =
+          mapOf(
+            "production_branch" to productionBranch.trim().ifBlank { "main" },
+            "build_config" to
+              mapOf(
+                "build_command" to buildCommand.trim(),
+                "destination_dir" to destinationDir.trim(),
+                "root_dir" to rootDir.trim(),
+              ),
+          )
+        val body = adapter.toJson(payload).toRequestBody("application/json".toMediaType())
+        val resp = api.patchPagesProject(accountId, projectName, body)
+        if (!resp.isSuccessful || resp.body()?.success != true) {
+          error(extractCfError(resp) ?: "Failed to update Pages build configuration")
+        }
+        resp.body()?.result ?: error("Empty Pages patch response")
+      }
+    }
+
+  suspend fun updatePagesBindings(
+    accountId: String,
+    projectName: String,
+    environment: String,
+    kvBindings: Map<String, String>,
+    d1Bindings: Map<String, String>,
+    r2Bindings: Map<String, String>,
+  ): Result<CfPagesProject> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val adapter =
+          clientFactory.moshi.adapter<Map<String, Any>>(
+            Types.newParameterizedType(Map::class.java, String::class.java, Any::class.java),
+          )
+        val envBlock =
+          buildMap<String, Any> {
+            put("kv_namespaces", kvBindings.mapValues { (_, id) -> mapOf("namespace_id" to id) })
+            put("d1_databases", d1Bindings.mapValues { (_, id) -> mapOf("id" to id) })
+            put("r2_buckets", r2Bindings.mapValues { (_, bucket) -> mapOf("name" to bucket) })
+          }
+        val payload = mapOf("deployment_configs" to mapOf(environment to envBlock))
+        val body = adapter.toJson(payload).toRequestBody("application/json".toMediaType())
+        val resp = api.patchPagesProject(accountId, projectName, body)
+        if (!resp.isSuccessful || resp.body()?.success != true) {
+          error(extractCfError(resp) ?: "Failed to update Pages bindings")
         }
         resp.body()?.result ?: error("Empty Pages patch response")
       }
@@ -1366,7 +1607,7 @@ class CloudflareRepository(
     workersDev: Boolean,
   ): String =
     buildString {
-      appendLine("// Read-only snapshot of live Cloudflare Worker configuration")
+      appendLine("// EdgeCode Wrangler configuration (editable & two-way synced)")
       appendLine("{")
       appendLine("  \"name\": \"$scriptName\",")
       appendLine("  \"main\": \"$entryModule\",")
@@ -1411,6 +1652,43 @@ class CloudflareRepository(
           appendLine("    { \"binding\": \"${r2.name}\", \"bucket_name\": \"${r2.bucketName.orEmpty()}\" }$comma")
         }
         appendLine("  ],")
+      }
+      val services = bindings.filter { it.type == "service" }
+      if (services.isNotEmpty()) {
+        appendLine("  \"services\": [")
+        services.forEachIndexed { idx, svc ->
+          val comma = if (idx < services.lastIndex) "," else ""
+          val envPart = svc.environment?.let { ", \"environment\": \"$it\"" }.orEmpty()
+          appendLine("    { \"binding\": \"${svc.name}\", \"service\": \"${svc.service.orEmpty()}\"$envPart }$comma")
+        }
+        appendLine("  ],")
+      }
+      val ai = bindings.firstOrNull { it.type == "ai" }
+      if (ai != null) {
+        appendLine("  \"ai\": { \"binding\": \"${ai.name}\" },")
+      }
+      val dos = bindings.filter { it.type == "durable_object_namespace" }
+      if (dos.isNotEmpty()) {
+        appendLine("  \"durable_objects\": {")
+        appendLine("    \"bindings\": [")
+        dos.forEachIndexed { idx, d ->
+          val comma = if (idx < dos.lastIndex) "," else ""
+          val scriptPart = d.scriptName?.let { ", \"script_name\": \"$it\"" }.orEmpty()
+          appendLine("      { \"name\": \"${d.name}\", \"class_name\": \"${d.className.orEmpty()}\"$scriptPart }$comma")
+        }
+        appendLine("    ]")
+        appendLine("  },")
+      }
+      val queues = bindings.filter { it.type == "queue" }
+      if (queues.isNotEmpty()) {
+        appendLine("  \"queues\": {")
+        appendLine("    \"producers\": [")
+        queues.forEachIndexed { idx, q ->
+          val comma = if (idx < queues.lastIndex) "," else ""
+          appendLine("      { \"binding\": \"${q.name}\", \"queue\": \"${q.queueName.orEmpty()}\" }$comma")
+        }
+        appendLine("    ]")
+        appendLine("  },")
       }
       if (schedules.isNotEmpty()) {
         val crons = schedules.joinToString(", ") { "\"${it.cron}\"" }

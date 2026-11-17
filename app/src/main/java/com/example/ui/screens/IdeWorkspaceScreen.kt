@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Menu
@@ -298,8 +299,17 @@ fun IdeWorkspaceScreen(
         PaletteCommand("Export Active File", "Save current script out to device storage") {
           if (uiState.activeFile != null) triggerExportActiveFile()
         },
+        PaletteCommand("Open API Tester (Postman)", "Test HTTP endpoints, headers, auth presets & collections") {
+          viewModel.toggleBottomPanel(BottomPanelTab.API_TESTER)
+        },
         PaletteCommand("Open Linux API Terminal", "Run curl, jq, wrangler, and Linux commands") {
           viewModel.toggleBottomPanel(BottomPanelTab.TERMINAL)
+        },
+        PaletteCommand("Sync wrangler.jsonc to Cloudflare", "Apply wrangler.jsonc/.toml bindings, vars & crons to workspace") {
+          viewModel.syncWranglerFileToWorkspace()
+        },
+        PaletteCommand("Generate GitHub Auto-Deploy Action", "Create .github/workflows/deploy-cloudflare.yml for auto-deploy") {
+          viewModel.generateCloudflareGitHubActionWorkflow()
         },
         PaletteCommand("Workers Infra (KV, D1, R2, Domains)", "Manage Bindings, KV, D1 SQL, R2, Cron, Rollback") {
           viewModel.setSidebarSection(SidebarSection.BINDINGS)
@@ -369,6 +379,7 @@ fun IdeWorkspaceScreen(
         onInsertSnippet = { snippet -> viewModel.insertTextAtCursor(snippet, 0) },
         onJumpToLine = viewModel::jumpToLine,
         onSearchQueryChange = viewModel::setSearchQuery,
+        onReplaceInAllFiles = viewModel::replaceInAllFiles,
         onRevertFile = viewModel::revertFile,
         onRefreshInfra = viewModel::loadCloudflareInfra,
         onToggleWorkersDev = viewModel::toggleWorkersDev,
@@ -380,6 +391,8 @@ fun IdeWorkspaceScreen(
         onAttachWorkerDomain = viewModel::attachWorkerCustomDomain,
         onRemoveWorkerDomain = viewModel::removeWorkerCustomDomain,
         onRollbackVersion = viewModel::rollbackToVersion,
+        onRefreshWorkerVersions = viewModel::loadWorkerVersions,
+        onDeployGradualSplit = viewModel::deployGradualWorkerSplit,
         onAddEnvVar = viewModel::addEnvVar,
         onAddSecret = viewModel::addSecret,
         onBindResource = viewModel::bindResourceToWorker,
@@ -389,6 +402,8 @@ fun IdeWorkspaceScreen(
         onSelectKvNamespace = viewModel::selectKvNamespace,
         onInspectKvKey = viewModel::inspectKvKey,
         onPutKvEntry = viewModel::putKvEntry,
+        onBulkImportKv = viewModel::bulkImportKvJson,
+        onExportKvJson = viewModel::exportSelectedKvJson,
         onDeleteKvKey = viewModel::deleteKvKey,
         onCreateD1Database = viewModel::createD1Database,
         onDeleteD1Database = viewModel::deleteD1Database,
@@ -396,6 +411,9 @@ fun IdeWorkspaceScreen(
         onRunD1Sql = viewModel::runD1SqlQuery,
         onCreateR2Bucket = viewModel::createR2Bucket,
         onDeleteR2Bucket = viewModel::deleteR2Bucket,
+        onCreateQueue = viewModel::createQueue,
+        onDeleteQueue = viewModel::deleteQueue,
+        onNotifyStatus = viewModel::showStatus,
         onRefreshPages = viewModel::loadPagesProjects,
         onSelectPagesProject = viewModel::selectPagesProject,
         onCreatePagesProject = viewModel::createPagesProject,
@@ -405,6 +423,9 @@ fun IdeWorkspaceScreen(
         onRollbackPagesDeploy = viewModel::rollbackPagesDeployment,
         onFetchPagesLogs = viewModel::fetchPagesLogs,
         onSavePagesEnvVar = viewModel::savePagesEnvVar,
+        onUpdatePagesBuildConfig = viewModel::updatePagesBuildConfig,
+        onUpdatePagesBindings = viewModel::updatePagesBindings,
+        onCreatePagesSpecialFile = viewModel::createPagesSpecialFile,
         onAddPagesDomain = viewModel::addPagesDomain,
         onDeletePagesDomain = viewModel::deletePagesDomain,
         onPickPagesFolder = { pagesFolderLauncher.launch(null) },
@@ -451,6 +472,9 @@ fun IdeWorkspaceScreen(
         onCommentOnGitHubIssue = viewModel::commentOnGitHubIssue,
         onDispatchGitHubWorkflow = viewModel::dispatchGitHubWorkflow,
         onRerunGitHubWorkflowRun = viewModel::rerunGitHubWorkflowRun,
+        onInspectWorkflowRunJobs = viewModel::inspectWorkflowRunJobs,
+        onSubmitPrReview = viewModel::submitPullRequestReview,
+        onGenerateCfActionWorkflow = viewModel::generateCloudflareGitHubActionWorkflow,
         onRenameWorkerTarget = viewModel::renameActiveWorkerTarget,
         onUpdateSettings = viewModel::updateSettings,
         onSignOut = {
@@ -641,6 +665,10 @@ fun IdeWorkspaceScreen(
                     if (!isExpanded) scope.launch { drawerState.open() }
                   },
                   onShowNewWorkerDialog = { showNewWorkerDialog = true },
+                  onDismissDraftBanner = viewModel::dismissDraftBanner,
+                  onDiscardRestoredDraft = viewModel::discardRestoredDraft,
+                  onJumpToLine = viewModel::jumpToLine,
+                  onSyncWranglerToWorkspace = viewModel::syncWranglerFileToWorkspace,
                   modifier = Modifier.weight(1f),
                 )
               }
@@ -658,12 +686,20 @@ fun IdeWorkspaceScreen(
                   onImportAndRunFile = triggerImportAndRun,
                   onCreateAndRunFile = triggerCreateAndRun,
                   onUpdateRunRequest = viewModel::updateRunRequest,
+                  onUpdateApiRequest = viewModel::updateApiRequest,
+                  onUpdateApiEnvVars = viewModel::updateApiEnvVars,
+                  onRunApiRequest = { viewModel.runApiTesterRequest() },
+                  onSaveApiRequest = viewModel::saveCurrentApiRequestToCollection,
+                  onLoadApiRequest = viewModel::loadApiRequest,
+                  onDeleteApiCollectionItem = viewModel::deleteApiCollectionItem,
+                  onClearApiHistory = viewModel::clearApiHistory,
                   onTerminalInputChange = viewModel::setTerminalInput,
                   onRunTerminalCommand = viewModel::runTerminalCommand,
                   onPasteIntoTerminal = viewModel::pasteIntoTerminal,
                   onAutocompleteTerminal = viewModel::autocompleteTerminal,
                   onRecallTerminalHistory = viewModel::recallTerminalHistory,
                   onClearTerminal = viewModel::clearTerminal,
+                  onSaveTerminalOutputToFile = viewModel::saveTerminalOutputToWorkspaceFile,
                   onNotifyStatus = viewModel::showStatus,
                   onJumpToProblem = viewModel::jumpToLine,
                   onToggleLiveTail = viewModel::toggleLiveTail,
@@ -673,7 +709,7 @@ fun IdeWorkspaceScreen(
             }
           }
 
-          // Bottom Action Bar (Run, Terminal, Tail, Search, Log, Prefs)
+          // Bottom Action Bar (Run, API, Terminal, Tail, Search, Problems, Prefs)
           HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
           Row(
             modifier =
@@ -695,6 +731,12 @@ fun IdeWorkspaceScreen(
                   viewModel.toggleBottomPanel(BottomPanelTab.RUN_PREVIEW)
                 }
               },
+            )
+            BottomBarToolButton(
+              icon = Icons.AutoMirrored.Outlined.Send,
+              label = "API",
+              active = uiState.showBottomPanel && uiState.activeBottomTab == BottomPanelTab.API_TESTER,
+              onClick = { viewModel.toggleBottomPanel(BottomPanelTab.API_TESTER) },
             )
             BottomBarToolButton(
               icon = Icons.Outlined.Terminal,

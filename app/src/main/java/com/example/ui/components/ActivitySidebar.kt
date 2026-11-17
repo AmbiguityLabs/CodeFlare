@@ -216,6 +216,7 @@ fun ActivitySidebar(
   onInsertSnippet: (String) -> Unit,
   onJumpToLine: (String, Int) -> Unit,
   onSearchQueryChange: (String) -> Unit,
+  onReplaceInAllFiles: (String, String) -> Unit,
   onRevertFile: (String) -> Unit,
   // Workers Infra callbacks
   onRefreshInfra: () -> Unit,
@@ -228,6 +229,8 @@ fun ActivitySidebar(
   onAttachWorkerDomain: (String, String) -> Unit,
   onRemoveWorkerDomain: (String) -> Unit,
   onRollbackVersion: (String) -> Unit,
+  onRefreshWorkerVersions: () -> Unit,
+  onDeployGradualSplit: (String, Int, String, Int, String) -> Unit,
   onAddEnvVar: (String, String) -> Unit,
   onAddSecret: (String, String) -> Unit,
   onBindResource: (CfWorkerBinding) -> Unit,
@@ -236,7 +239,9 @@ fun ActivitySidebar(
   onDeleteKvNamespace: (String) -> Unit,
   onSelectKvNamespace: (CfKvNamespace) -> Unit,
   onInspectKvKey: (String) -> Unit,
-  onPutKvEntry: (String, String) -> Unit,
+  onPutKvEntry: (String, String, Long?) -> Unit,
+  onBulkImportKv: (String) -> Unit,
+  onExportKvJson: () -> String,
   onDeleteKvKey: (String) -> Unit,
   onCreateD1Database: (String) -> Unit,
   onDeleteD1Database: (String) -> Unit,
@@ -244,6 +249,9 @@ fun ActivitySidebar(
   onRunD1Sql: (String, String) -> Unit,
   onCreateR2Bucket: (String) -> Unit,
   onDeleteR2Bucket: (String) -> Unit,
+  onCreateQueue: (String) -> Unit,
+  onDeleteQueue: (String) -> Unit,
+  onNotifyStatus: (String) -> Unit,
   // Pages callbacks
   onRefreshPages: () -> Unit,
   onSelectPagesProject: (CfPagesProject?) -> Unit,
@@ -254,6 +262,9 @@ fun ActivitySidebar(
   onRollbackPagesDeploy: (String, String) -> Unit,
   onFetchPagesLogs: (String, String) -> Unit,
   onSavePagesEnvVar: (String, String, String, String, Boolean) -> Unit,
+  onUpdatePagesBuildConfig: (String, String, String, String, String) -> Unit,
+  onUpdatePagesBindings: (String, String, Map<String, String>, Map<String, String>, Map<String, String>) -> Unit,
+  onCreatePagesSpecialFile: (String) -> Unit,
   onAddPagesDomain: (String, String) -> Unit,
   onDeletePagesDomain: (String, String) -> Unit,
   onPickPagesFolder: () -> Unit,
@@ -293,6 +304,9 @@ fun ActivitySidebar(
   onCommentOnGitHubIssue: (Int, String) -> Unit,
   onDispatchGitHubWorkflow: (Long) -> Unit,
   onRerunGitHubWorkflowRun: (Long) -> Unit,
+  onInspectWorkflowRunJobs: (Long) -> Unit,
+  onSubmitPrReview: (Int, String, String) -> Unit,
+  onGenerateCfActionWorkflow: () -> Unit,
   onRenameWorkerTarget: (String) -> Unit,
   // Settings & Navigation
   onUpdateSettings: ((EditorSettings) -> EditorSettings) -> Unit,
@@ -423,6 +437,7 @@ fun ActivitySidebar(
           GlobalSearchPanel(
             uiState = uiState,
             onQueryChange = onSearchQueryChange,
+            onReplaceAllInWorkspace = onReplaceInAllFiles,
             onJump = { path, line ->
               onJumpToLine(path, line)
               onCloseDrawerIfCompact()
@@ -441,6 +456,8 @@ fun ActivitySidebar(
             onAttachWorkerDomain = onAttachWorkerDomain,
             onRemoveWorkerDomain = onRemoveWorkerDomain,
             onRollbackVersion = onRollbackVersion,
+            onRefreshWorkerVersions = onRefreshWorkerVersions,
+            onDeployGradualSplit = onDeployGradualSplit,
             onAddEnvVar = onAddEnvVar,
             onAddSecret = onAddSecret,
             onBindResource = onBindResource,
@@ -450,6 +467,8 @@ fun ActivitySidebar(
             onSelectKvNamespace = onSelectKvNamespace,
             onInspectKvKey = onInspectKvKey,
             onPutKvEntry = onPutKvEntry,
+            onBulkImportKv = onBulkImportKv,
+            onExportKvJson = onExportKvJson,
             onDeleteKvKey = onDeleteKvKey,
             onCreateD1Database = onCreateD1Database,
             onDeleteD1Database = onDeleteD1Database,
@@ -457,6 +476,9 @@ fun ActivitySidebar(
             onRunD1Sql = onRunD1Sql,
             onCreateR2Bucket = onCreateR2Bucket,
             onDeleteR2Bucket = onDeleteR2Bucket,
+            onCreateQueue = onCreateQueue,
+            onDeleteQueue = onDeleteQueue,
+            onNotifyStatus = onNotifyStatus,
           )
         SidebarSection.PAGES ->
           CloudflarePagesPanel(
@@ -470,6 +492,12 @@ fun ActivitySidebar(
             onRollbackDeploy = onRollbackPagesDeploy,
             onFetchLogs = onFetchPagesLogs,
             onSaveEnvVar = onSavePagesEnvVar,
+            onUpdateBuildConfig = onUpdatePagesBuildConfig,
+            onUpdateBindings = onUpdatePagesBindings,
+            onCreatePagesSpecialFile = { kind ->
+              onCreatePagesSpecialFile(kind)
+              onCloseDrawerIfCompact()
+            },
             onAddDomain = onAddPagesDomain,
             onDeleteDomain = onDeletePagesDomain,
             onPickPagesFolder = onPickPagesFolder,
@@ -512,6 +540,9 @@ fun ActivitySidebar(
             onCommentOnIssue = onCommentOnGitHubIssue,
             onDispatchWorkflow = onDispatchGitHubWorkflow,
             onRerunWorkflowRun = onRerunGitHubWorkflowRun,
+            onInspectWorkflowRunJobs = onInspectWorkflowRunJobs,
+            onSubmitPrReview = onSubmitPrReview,
+            onGenerateCfActionWorkflow = onGenerateCfActionWorkflow,
             onOpenFileInEditor = onOpenFile,
             onRenameWorkerTarget = onRenameWorkerTarget,
             onDeployActiveWorker = onDeployActiveWorker,
@@ -1368,9 +1399,11 @@ private fun SnippetsPanel(
 private fun GlobalSearchPanel(
   uiState: IdeUiState,
   onQueryChange: (String) -> Unit,
+  onReplaceAllInWorkspace: (String, String) -> Unit,
   onJump: (String, Int) -> Unit,
 ) {
   val palette = LocalIdePalette.current
+  var replaceQuery by remember { mutableStateOf("") }
   val matches =
     remember(uiState.searchQuery, uiState.workspace) {
       val q = uiState.searchQuery.trim()
@@ -1385,16 +1418,56 @@ private fun GlobalSearchPanel(
       }
     }
 
-  Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-    Text("SEARCH WORKSPACE", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+  Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+      Text("SEARCH & REPLACE WORKSPACE", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+      if (uiState.searchQuery.isNotBlank()) {
+        Surface(color = palette.chromePill, shape = RoundedCornerShape(6.dp)) {
+          Text(
+            text = "${matches.size}${if (matches.size >= 60) "+" else ""} match(es)",
+            style = MaterialTheme.typography.labelSmall,
+            color = palette.activePillFg,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+          )
+        }
+      }
+    }
     OutlinedTextField(
       value = uiState.searchQuery,
       onValueChange = onQueryChange,
-      placeholder = { Text("Search in open Worker…") },
+      placeholder = { Text("Search across all project files…") },
       singleLine = true,
       shape = RoundedCornerShape(14.dp),
       modifier = Modifier.fillMaxWidth().testTag("global_search_input"),
     )
+    if (uiState.workspace != null) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        OutlinedTextField(
+          value = replaceQuery,
+          onValueChange = { replaceQuery = it },
+          placeholder = { Text("Replace with…") },
+          singleLine = true,
+          shape = RoundedCornerShape(12.dp),
+          modifier = Modifier.weight(1f).testTag("global_replace_input"),
+        )
+        FilledTonalButton(
+          onClick = { onReplaceAllInWorkspace(uiState.searchQuery, replaceQuery) },
+          enabled = uiState.searchQuery.isNotBlank() && matches.isNotEmpty(),
+          shape = RoundedCornerShape(12.dp),
+          modifier = Modifier.height(48.dp).testTag("global_replace_all_button"),
+        ) {
+          Text("Replace All", fontSize = 11.sp)
+        }
+      }
+    }
     if (uiState.workspace == null) {
       Text("Open a Worker first to search its files.", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
     } else {

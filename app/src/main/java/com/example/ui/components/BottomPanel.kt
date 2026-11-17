@@ -39,6 +39,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.data.remote.ApiEnvVar
+import com.example.data.remote.ApiTesterRequest
 import com.example.data.remote.DiagnosticSeverity
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
@@ -57,12 +59,20 @@ fun BottomPanel(
   onImportAndRunFile: () -> Unit,
   onCreateAndRunFile: () -> Unit,
   onUpdateRunRequest: (String, String, String, String) -> Unit,
+  onUpdateApiRequest: ((ApiTesterRequest) -> ApiTesterRequest) -> Unit,
+  onUpdateApiEnvVars: (List<ApiEnvVar>) -> Unit,
+  onRunApiRequest: () -> Unit,
+  onSaveApiRequest: (String) -> Unit,
+  onLoadApiRequest: (ApiTesterRequest) -> Unit,
+  onDeleteApiCollectionItem: (String) -> Unit,
+  onClearApiHistory: () -> Unit,
   onTerminalInputChange: (String) -> Unit,
   onRunTerminalCommand: (String) -> Unit,
   onPasteIntoTerminal: (String) -> Unit,
   onAutocompleteTerminal: () -> Unit,
   onRecallTerminalHistory: (Boolean) -> Unit,
   onClearTerminal: () -> Unit,
+  onSaveTerminalOutputToFile: (String, String) -> Unit,
   onNotifyStatus: (String) -> Unit,
   onJumpToProblem: (String, Int) -> Unit,
   onToggleLiveTail: () -> Unit,
@@ -91,6 +101,12 @@ fun BottomPanel(
             selected = uiState.activeBottomTab == BottomPanelTab.RUN_PREVIEW,
             onClick = { onSelectTab(BottomPanelTab.RUN_PREVIEW) },
             text = { Text("Run & Result", maxLines = 1) },
+          )
+          Tab(
+            selected = uiState.activeBottomTab == BottomPanelTab.API_TESTER,
+            onClick = { onSelectTab(BottomPanelTab.API_TESTER) },
+            modifier = Modifier.testTag("tab_api_tester"),
+            text = { Text("API Tester", maxLines = 1) },
           )
           Tab(
             selected = uiState.activeBottomTab == BottomPanelTab.TERMINAL,
@@ -158,6 +174,19 @@ fun BottomPanel(
             onNotifyCopied = onNotifyStatus,
             modifier = Modifier.weight(1f),
           )
+        BottomPanelTab.API_TESTER ->
+          ApiTesterPane(
+            uiState = uiState,
+            onUpdateRequest = onUpdateApiRequest,
+            onUpdateEnvVars = onUpdateApiEnvVars,
+            onRunRequest = onRunApiRequest,
+            onSaveRequest = onSaveApiRequest,
+            onLoadRequest = onLoadApiRequest,
+            onDeleteCollectionItem = onDeleteApiCollectionItem,
+            onClearHistory = onClearApiHistory,
+            onNotifyStatus = onNotifyStatus,
+            modifier = Modifier.weight(1f),
+          )
         BottomPanelTab.TERMINAL ->
           LinuxTerminalPane(
             uiState = uiState,
@@ -167,6 +196,7 @@ fun BottomPanel(
             onAutocomplete = onAutocompleteTerminal,
             onRecallHistory = onRecallTerminalHistory,
             onClearTerminal = onClearTerminal,
+            onSaveEntryToFile = onSaveTerminalOutputToFile,
             onNotifyCopied = onNotifyStatus,
             modifier = Modifier.weight(1f),
           )

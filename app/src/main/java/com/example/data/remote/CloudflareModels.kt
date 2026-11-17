@@ -182,6 +182,26 @@ data class CfDeploymentCreateRequest(
 )
 
 @JsonClass(generateAdapter = true)
+data class CfWorkerVersionMeta(
+  val source: String? = null,
+  @Json(name = "created_on") val createdOn: String? = null,
+  @Json(name = "author_email") val authorEmail: String? = null,
+  @Json(name = "has_preview") val hasPreview: Boolean? = null,
+)
+
+@JsonClass(generateAdapter = true)
+data class CfWorkerVersion(
+  val id: String = "",
+  val number: Int? = null,
+  val metadata: CfWorkerVersionMeta? = null,
+)
+
+@JsonClass(generateAdapter = true)
+data class CfWorkerVersionsResult(
+  val items: List<CfWorkerVersion> = emptyList(),
+)
+
+@JsonClass(generateAdapter = true)
 data class CfTailResult(
   val id: String = "",
   val url: String = "",
@@ -204,6 +224,13 @@ data class CfKvNamespaceRequest(
 data class CfKvKey(
   val name: String = "",
   val expiration: Long? = null,
+)
+
+@JsonClass(generateAdapter = true)
+data class CfKvBulkItem(
+  val key: String,
+  val value: String,
+  @Json(name = "expiration_ttl") val expirationTtl: Long? = null,
 )
 
 // D1 Database Models
@@ -276,6 +303,11 @@ data class CfQueue(
   @Json(name = "created_on") val createdOn: String? = null,
 )
 
+@JsonClass(generateAdapter = true)
+data class CfQueueCreateRequest(
+  @Json(name = "queue_name") val queueName: String,
+)
+
 // Cloudflare Pages Models
 @JsonClass(generateAdapter = true)
 data class CfPagesStage(
@@ -330,8 +362,26 @@ data class CfPagesEnvVarValue(
 )
 
 @JsonClass(generateAdapter = true)
+data class CfPagesNamespaceBinding(
+  @Json(name = "namespace_id") val namespaceId: String = "",
+)
+
+@JsonClass(generateAdapter = true)
+data class CfPagesD1Binding(
+  val id: String = "",
+)
+
+@JsonClass(generateAdapter = true)
+data class CfPagesR2Binding(
+  val name: String = "",
+)
+
+@JsonClass(generateAdapter = true)
 data class CfPagesEnvConfig(
   @Json(name = "env_vars") val envVars: Map<String, CfPagesEnvVarValue>? = null,
+  @Json(name = "kv_namespaces") val kvNamespaces: Map<String, CfPagesNamespaceBinding>? = null,
+  @Json(name = "d1_databases") val d1Databases: Map<String, CfPagesD1Binding>? = null,
+  @Json(name = "r2_buckets") val r2Buckets: Map<String, CfPagesR2Binding>? = null,
   @Json(name = "compatibility_date") val compatibilityDate: String? = null,
   @Json(name = "compatibility_flags") val compatibilityFlags: List<String>? = null,
 )

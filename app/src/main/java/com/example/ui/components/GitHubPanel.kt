@@ -135,6 +135,9 @@ fun GitHubAndDiffPanel(
   onCommentOnIssue: (issueNumber: Int, comment: String) -> Unit,
   onDispatchWorkflow: (Long) -> Unit,
   onRerunWorkflowRun: (Long) -> Unit,
+  onInspectWorkflowRunJobs: (Long) -> Unit,
+  onSubmitPrReview: (prNumber: Int, event: String, body: String) -> Unit,
+  onGenerateCfActionWorkflow: () -> Unit,
   onOpenFileInEditor: (String) -> Unit,
   onRenameWorkerTarget: (String) -> Unit,
   onDeployActiveWorker: () -> Unit,
@@ -214,6 +217,8 @@ fun GitHubAndDiffPanel(
           onInspectCommit = onInspectCommit,
           onDispatchWorkflow = onDispatchWorkflow,
           onRerunWorkflowRun = onRerunWorkflowRun,
+          onInspectWorkflowRunJobs = onInspectWorkflowRunJobs,
+          onGenerateCfActionWorkflow = onGenerateCfActionWorkflow,
           onOpenFileInEditor = { path ->
             onOpenFileInEditor(path)
             onCloseDrawerIfCompact()
@@ -255,6 +260,7 @@ fun GitHubAndDiffPanel(
           onInspectPullRequest = onInspectPullRequest,
           onCreatePullRequest = onCreatePullRequest,
           onMergePullRequest = onMergePullRequest,
+          onSubmitPrReview = onSubmitPrReview,
           onCreateIssue = onCreateIssue,
           onToggleIssueState = onToggleIssueState,
           onCommentOnIssue = onCommentOnIssue,
@@ -389,6 +395,8 @@ private fun GitSourceControlTab(
   onInspectCommit: (String) -> Unit,
   onDispatchWorkflow: (Long) -> Unit,
   onRerunWorkflowRun: (Long) -> Unit,
+  onInspectWorkflowRunJobs: (Long) -> Unit,
+  onGenerateCfActionWorkflow: () -> Unit,
   onOpenFileInEditor: (String) -> Unit,
   onRenameWorkerTarget: (String) -> Unit,
   onDeployActiveWorker: () -> Unit,
@@ -605,6 +613,20 @@ private fun GitSourceControlTab(
                 Text("Link", fontSize = 12.sp)
               }
             }
+          }
+        }
+        if (uiState.workspace != null) {
+          OutlinedButton(
+            onClick = {
+              onGenerateCfActionWorkflow()
+              onOpenFileInEditor(".github/workflows/deploy-cloudflare.yml")
+            },
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth().height(42.dp).testTag("generate_cf_action_button"),
+          ) {
+            Icon(Icons.Outlined.RocketLaunch, contentDescription = null, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Generate Auto-Deploy GitHub Action", fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
           }
         }
       }
@@ -836,15 +858,82 @@ private fun GitSourceControlTab(
             "failure" -> RoseError
             else -> AmberWarn
           }
-        Surface(color = palette.chromePill, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) {
-          Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-              Text(run.name ?: "Workflow", style = MaterialTheme.typography.labelMedium, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-              Text("${run.headBranch.orEmpty()} • ${run.conclusion ?: run.status ?: ""}", style = MaterialTheme.typography.labelSmall, color = runColor)
+        val jobsExpanded = uiState.selectedWorkflowRunId == run.id
+        Surface(
+          onClick = { onInspectWorkflowRunJobs(run.id) },
+          color = if (jobsExpanded) palette.selectedRowBg else palette.chromePill,
+          shape = RoundedCornerShape(10.dp),
+          modifier = Modifier.fillMaxWidth().testTag("workflow_run_${run.id}"),
+        ) {
+          Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              Column(modifier = Modifier.weight(1f)) {
+                Text(run.name ?: "Workflow", style = MaterialTheme.typography.labelMedium, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${run.headBranch.orEmpty()} • ${run.conclusion ?: run.status ?: ""} • Tap for jobs", style = MaterialTheme.typography.labelSmall, color = runColor)
+              }
+              if (uiState.gitHubCreds != null) {
+                IconButton(onClick = { onRerunWorkflowRun(run.id) }, modifier = Modifier.size(34.dp)) {
+                  Icon(Icons.Outlined.Replay, contentDescription = "Re-run workflow", tint = palette.activePillFg, modifier = Modifier.size(16.dp))
+                }
+              }
+              Icon(
+                imageVector = if (jobsExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                contentDescription = if (jobsExpanded) "Collapse jobs" else "Inspect jobs",
+                tint = palette.textSecondary,
+                modifier = Modifier.size(18.dp),
+              )
             }
-            if (uiState.gitHubCreds != null) {
-              IconButton(onClick = { onRerunWorkflowRun(run.id) }, modifier = Modifier.size(34.dp)) {
-                Icon(Icons.Outlined.Replay, contentDescription = "Re-run workflow", tint = palette.activePillFg, modifier = Modifier.size(16.dp))
+
+            AnimatedVisibility(visible = jobsExpanded) {
+              Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (uiState.selectedWorkflowJobs.isEmpty()) {
+                  Text(
+                    text = if (uiState.isGitHubBusy) "Loading job logs & steps…" else "No jobs returned for this run.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.textMuted,
+                  )
+                } else {
+                  uiState.selectedWorkflowJobs.forEach { job ->
+                    val jobColor =
+                      when (job.conclusion) {
+                        "success" -> EmeraldLive
+                        "failure" -> RoseError
+                        else -> AmberWarn
+                      }
+                    Surface(color = palette.chromeSurface, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
+                      Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                          Text(job.name, style = MaterialTheme.typography.labelSmall, color = palette.textPrimary, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                          Text(job.conclusion ?: job.status, style = MaterialTheme.typography.labelSmall, color = jobColor)
+                        }
+                        job.steps.forEach { step ->
+                          val stepColor =
+                            when (step.conclusion) {
+                              "success" -> EmeraldLive
+                              "failure" -> RoseError
+                              "skipped" -> palette.textMuted
+                              else -> AmberWarn
+                            }
+                          Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                              text = "${step.number}. ${step.name}",
+                              style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMono, fontSize = 10.sp),
+                              color = palette.textSecondary,
+                              maxLines = 1,
+                              overflow = TextOverflow.Ellipsis,
+                              modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                              text = step.conclusion ?: step.status,
+                              style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                              color = stepColor,
+                            )
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           }
@@ -861,6 +950,7 @@ private fun GitHubPullsAndIssuesTab(
   onInspectPullRequest: (Int?) -> Unit,
   onCreatePullRequest: (title: String, body: String, head: String, base: String) -> Unit,
   onMergePullRequest: (prNumber: Int, method: String) -> Unit,
+  onSubmitPrReview: (prNumber: Int, event: String, body: String) -> Unit,
   onCreateIssue: (title: String, body: String) -> Unit,
   onToggleIssueState: (GitHubIssue) -> Unit,
   onCommentOnIssue: (issueNumber: Int, comment: String) -> Unit,
@@ -875,6 +965,56 @@ private fun GitHubPullsAndIssuesTab(
   var mode by remember { mutableIntStateOf(0) } // 0 = PRs, 1 = Issues
   var showCreatePrDialog by remember { mutableStateOf(false) }
   var showCreateIssueDialog by remember { mutableStateOf(false) }
+  var reviewPrNumber by remember { mutableStateOf<Int?>(null) }
+
+  reviewPrNumber?.let { prNum ->
+    var reviewEvent by remember { mutableStateOf("APPROVE") }
+    var reviewBody by remember { mutableStateOf("") }
+    AlertDialog(
+      onDismissRequest = { reviewPrNumber = null },
+      title = { Text("Review Pull Request #$prNum") },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+          val events = listOf("APPROVE" to "Approve", "COMMENT" to "Comment", "REQUEST_CHANGES" to "Changes")
+          SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            events.forEachIndexed { idx, (key, label) ->
+              SegmentedButton(
+                selected = reviewEvent == key,
+                onClick = { reviewEvent = key },
+                shape = SegmentedButtonDefaults.itemShape(idx, events.size),
+              ) {
+                Text(label, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+              }
+            }
+          }
+          OutlinedTextField(
+            value = reviewBody,
+            onValueChange = { reviewBody = it },
+            label = { Text("Review summary / comment") },
+            placeholder = { Text("Looks clean — ready for Cloudflare deploy.") },
+            maxLines = 4,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth().testTag("pr_review_body_input"),
+          )
+        }
+      },
+      confirmButton = {
+        FilledTonalButton(
+          onClick = {
+            onSubmitPrReview(prNum, reviewEvent, reviewBody)
+            reviewPrNumber = null
+          },
+          enabled = reviewEvent == "APPROVE" || reviewBody.isNotBlank(),
+          modifier = Modifier.testTag("pr_review_submit_button"),
+        ) {
+          Text("Submit Review")
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { reviewPrNumber = null }) { Text("Cancel") }
+      },
+    )
+  }
 
   if (showCreatePrDialog) {
     var prTitle by remember { mutableStateOf("") }
@@ -1031,6 +1171,16 @@ private fun GitHubPullsAndIssuesTab(
                     }
                   }
                   if (uiState.gitHubCreds != null) {
+                    OutlinedButton(
+                      onClick = { reviewPrNumber = pr.number },
+                      enabled = !uiState.isGitHubBusy,
+                      shape = RoundedCornerShape(10.dp),
+                      modifier = Modifier.fillMaxWidth().testTag("review_pr_button_${pr.number}"),
+                    ) {
+                      Icon(Icons.Outlined.VerifiedUser, contentDescription = null, modifier = Modifier.size(16.dp))
+                      Spacer(Modifier.width(6.dp))
+                      Text("Submit PR Review #${pr.number}")
+                    }
                     FilledTonalButton(
                       onClick = { onMergePullRequest(pr.number, "squash") },
                       enabled = !uiState.isGitHubBusy,

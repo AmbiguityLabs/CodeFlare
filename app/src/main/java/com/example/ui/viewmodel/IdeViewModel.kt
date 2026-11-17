@@ -10,12 +10,20 @@ import com.example.data.auth.CloudflareOAuthManager
 import com.example.data.auth.GitHubDeviceCodeResponse
 import com.example.data.auth.GitHubOAuthManager
 import com.example.data.local.DeviceFileHelper
+import com.example.data.local.DraftPersistenceManager
+import com.example.data.local.PersistedApiTesterState
 import com.example.data.local.PickedDeviceFile
 import com.example.data.local.RawPickedAsset
+import com.example.data.remote.ApiEnvVar
+import com.example.data.remote.ApiRequestUtils
+import com.example.data.remote.ApiTesterHistoryItem
+import com.example.data.remote.ApiTesterRequest
 import com.example.data.remote.CfAccount
 import com.example.data.remote.CfD1Database
 import com.example.data.remote.CfD1QueryResult
+import com.example.data.remote.CfDeploymentVersion
 import com.example.data.remote.CfDurableObjectNamespace
+import com.example.data.remote.CfKvBulkItem
 import com.example.data.remote.CfKvKey
 import com.example.data.remote.CfKvNamespace
 import com.example.data.remote.CfPagesBuildLogsResult
@@ -28,6 +36,7 @@ import com.example.data.remote.CfQueue
 import com.example.data.remote.CfR2Bucket
 import com.example.data.remote.CfWorkerBinding
 import com.example.data.remote.CfWorkerScript
+import com.example.data.remote.CfWorkerVersion
 import com.example.data.remote.CfZone
 import com.example.data.remote.CloudflareClientFactory
 import com.example.data.remote.DiagnosticItem
@@ -44,7 +53,9 @@ import com.example.data.remote.GitHubRepo
 import com.example.data.remote.GitHubTreeItem
 import com.example.data.remote.GitHubUser
 import com.example.data.remote.GitHubWorkflow
+import com.example.data.remote.GitHubWorkflowJob
 import com.example.data.remote.GitHubWorkflowRun
+import com.example.data.remote.GitIgnoreMatcher
 import com.example.data.remote.HttpTestResult
 import com.example.data.remote.LinkedGitRepoState
 import com.example.data.remote.LocalGitCommit
@@ -64,6 +75,7 @@ import com.example.data.security.StoredCredentials
 import com.example.data.security.StoredGitHubCredentials
 import com.example.editor.CodeAnalyzer
 import com.example.editor.CodeFormatter
+import com.example.editor.WranglerSyncParser
 import com.example.runner.LocalRunResult
 import com.example.runner.LocalScriptRunner
 import com.example.terminal.LinuxTerminalEngine
@@ -73,8 +85,13 @@ import com.example.terminal.TerminalEntryKind
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import org.json.JSONArray
+import org.json.JSONObject
+import org.json.JSONTokener
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -94,6 +111,7 @@ enum class SidebarSection {
 
 enum class BottomPanelTab {
   RUN_PREVIEW,
+  API_TESTER,
   TERMINAL,
   PROBLEMS,
   TAIL_LOGS,
@@ -210,6 +228,14 @@ data class IdeUiState(
   // API Test & Linux Terminal
   val isRunningHttpTest: Boolean = false,
   val httpTestResult: HttpTestResult? = null,
+  val apiRequest: ApiTesterRequest = ApiTesterRequest(),
+  val apiCollections: List<ApiTesterRequest> = emptyList(),
+  val apiHistory: List<ApiTesterHistoryItem> = emptyList(),
+  val apiEnvVars: List<ApiEnvVar> = listOf(ApiEnvVar(key = "apiToken", value = "")),
+  val restoredDraftBanner: String? = null,
+  val workerVersions: List<CfWorkerVersion> = emptyList(),
+  val selectedWorkflowRunId: Long? = null,
+  val selectedWorkflowJobs: List<GitHubWorkflowJob> = emptyList(),
   val terminalEntries: List<TerminalEntry> = emptyList(),
   val terminalInput: String = "",
   val terminalPromptPath: String = "~/scratch",
@@ -256,8 +282,14 @@ data class IdeUiState(
   val gitChangedFiles: List<GitChangedFile>
     get() {
       val ws = workspace ?: return emptyList()
-      val currentMap = ws.files.filterNot { it.isVirtualReadOnly }.associate { it.path to it.content }
-      val baseline = gitWorkingBaseline
+      val gitignoreContent = ws.files.firstOrNull { it.path == ".gitignore" }?.content
+      val ignorePatterns = GitIgnoreMatcher.parsePatterns(gitignoreContent)
+      val currentMap =
+        ws.files
+          .filterNot { it.isVirtualReadOnly || it.path == "wrangler.jsonc" }
+          .filterNot { GitIgnoreMatcher.isIgnored(it.path, ignorePatterns) }
+          .associate { it.path to it.content }
+      val baseline = gitWorkingBaseline.filterKeys { !GitIgnoreMatcher.isIgnored(it, ignorePatterns) }
       val allPaths = (currentMap.keys + baseline.keys).toSortedSet()
       return allPaths.mapNotNull { path ->
         val cur = currentMap[path]
@@ -300,6 +332,7 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   private val gitHubRepository = GitHubRepository(prefsStore, clientFactory.moshi)
   private val terminalEngine = LinuxTerminalEngine(application, repository)
   private val localScriptRunner = LocalScriptRunner(application)
+  private val draftManager = DraftPersistenceManager(application)
   private val terminalIdGen = AtomicLong(1L)
 
   private val _uiState = MutableStateFlow(IdeUiState())
@@ -307,11 +340,23 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
 
   private var oauthJob: Job? = null
   private var gitHubOAuthJob: Job? = null
+  private var draftSaveJob: Job? = null
   private var activeTailSession: ActiveTailSession? = null
   private val undoStacks = mutableMapOf<String, ArrayDeque<TextFieldValue>>()
   private val redoStacks = mutableMapOf<String, ArrayDeque<TextFieldValue>>()
 
   init {
+    viewModelScope.launch {
+      val persistedApi = draftManager.loadApiTesterState()
+      _uiState.update {
+        it.copy(
+          apiCollections = persistedApi.collections,
+          apiHistory = persistedApi.history,
+          apiEnvVars = persistedApi.envVars,
+        )
+      }
+    }
+
     viewModelScope.launch {
       prefsStore.editorSettingsFlow.collect { settings ->
         _uiState.update { it.copy(editorSettings = settings) }
@@ -583,21 +628,36 @@ export default {
         originalContent = wranglerJson,
         contentType = "application/json",
         isEntryPoint = false,
-        isVirtualReadOnly = true,
+        isVirtualReadOnly = false,
       )
-    val files = listOf(indexFile, corsFile, wranglerFile)
-    val ws =
+    val baseFiles = listOf(indexFile, corsFile, wranglerFile)
+    val baseWs =
       WorkerWorkspace(
         scriptName = "local-worker",
         isEsModuleFormat = true,
         entryModulePath = "src/index.js",
         compatibilityDate = "2024-11-01",
-        files = files,
+        files = baseFiles,
         bindings = emptyList(),
         routes = emptyList(),
         workersDevEnabled = false,
         accountSubdomain = "",
       )
+    val savedDraft = draftManager.loadWorkspaceDraft("local_local-worker")
+    val (files, restoredBanner, restoredTabs, restoredActive) =
+      if (savedDraft != null && savedDraft.files.any { it.isDirty }) {
+        val merged = mergeRestoredDraftFiles(baseFiles, savedDraft.files)
+        val dirtyCount = merged.count { it.isDirty }
+        Quadruple(
+          merged,
+          "Recovered auto-saved draft ($dirtyCount unsaved edit(s))",
+          savedDraft.openTabs.filter { tp -> merged.any { it.path == tp } }.ifEmpty { listOf("src/index.js") },
+          savedDraft.activeFilePath?.takeIf { ap -> merged.any { it.path == ap } } ?: "src/index.js",
+        )
+      } else {
+        Quadruple(baseFiles, null, listOf("src/index.js", "src/utils/cors.js"), "src/index.js")
+      }
+    val ws = baseWs.copy(files = files)
     val diags = files.flatMap { CodeAnalyzer.analyzeFile(it) }
     terminalEngine.syncWorkspaceToDisk(ws)
     _uiState.update {
@@ -605,17 +665,13 @@ export default {
         isLocalScratchpad = true,
         authError = null,
         workspace = ws,
-        openTabPaths = listOf("src/index.js", "src/utils/cors.js"),
-        activeFilePath = "src/index.js",
-        tabNavHistory = listOf("src/index.js"),
+        openTabPaths = restoredTabs,
+        activeFilePath = restoredActive,
+        tabNavHistory = listOf(restoredActive),
         tabNavIndex = 0,
-        editorFieldValues =
-          mapOf(
-            "src/index.js" to TextFieldValue(indexCode),
-            "src/utils/cors.js" to TextFieldValue(corsCode),
-            "wrangler.jsonc" to TextFieldValue(wranglerJson),
-          ),
+        editorFieldValues = files.associate { f -> f.path to TextFieldValue(f.content) },
         diagnostics = diags,
+        restoredDraftBanner = restoredBanner,
         terminalPromptPath = terminalEngine.currentPromptPath(ws),
       )
     }
@@ -696,18 +752,32 @@ export default {
       _uiState.update { it.copy(isOpeningWorker = true, statusMessage = "Fetching ${script.id}…") }
       repository
         .openWorkerWorkspace(accountId, script)
-        .onSuccess { ws ->
+        .onSuccess { fetchedWs ->
           undoStacks.clear()
           redoStacks.clear()
+          val savedDraft = draftManager.loadWorkspaceDraft("${accountId}_${fetchedWs.scriptName}")
+          val hasDraft = savedDraft != null && savedDraft.files.any { df ->
+            val live = fetchedWs.files.firstOrNull { it.path == df.path }
+            live == null || live.content != df.content
+          }
+          val finalFiles =
+            if (hasDraft && savedDraft != null) mergeRestoredDraftFiles(fetchedWs.files, savedDraft.files)
+            else fetchedWs.files
+          val ws = fetchedWs.copy(files = finalFiles, hasModuleSetChanged = hasDraft)
           val initialFields = ws.files.associate { it.path to TextFieldValue(it.content) }
-          val entryPath = ws.entryModulePath
+          val entryPath = savedDraft?.activeFilePath?.takeIf { hasDraft && ws.files.any { f -> f.path == it } }
+            ?: ws.entryModulePath
+          val openTabs =
+            if (hasDraft && savedDraft != null) {
+              savedDraft.openTabs.filter { tp -> ws.files.any { it.path == tp } }.ifEmpty { listOf(entryPath) }
+            } else listOf(entryPath)
           val diags = ws.files.flatMap { CodeAnalyzer.analyzeFile(it) }
           terminalEngine.syncWorkspaceToDisk(ws)
-          val baselineMap = ws.files.filterNot { it.isVirtualReadOnly }.associate { it.path to it.content }
+          val baselineMap = fetchedWs.files.filterNot { it.isVirtualReadOnly || it.path == "wrangler.jsonc" }.associate { it.path to it.content }
           _uiState.update {
             it.copy(
               workspace = ws,
-              openTabPaths = listOf(entryPath),
+              openTabPaths = openTabs,
               activeFilePath = entryPath,
               tabNavHistory = listOf(entryPath),
               tabNavIndex = 0,
@@ -715,6 +785,8 @@ export default {
               diagnostics = diags,
               isOpeningWorker = false,
               statusMessage = null,
+              restoredDraftBanner = if (hasDraft) "Restored unsaved local draft for '${ws.scriptName}'" else null,
+              workerVersions = emptyList(),
               localRunResult = null,
               httpTestResult = null,
               tailLogs = emptyList(),
@@ -728,6 +800,7 @@ export default {
           }
           appendTerminalWelcome(ws)
           appendLog("INFO", "Opened Worker '${ws.scriptName}' (${ws.files.size - 1} module file(s))")
+          loadWorkerVersions()
         }
         .onFailure { err ->
           _uiState.update {
@@ -1086,6 +1159,9 @@ export default {
         editorFieldValues = state.editorFieldValues + (path to newValue),
         diagnostics = diags,
       )
+    }
+    if (textChanged) {
+      scheduleDraftSave()
     }
   }
 
@@ -1570,6 +1646,7 @@ export default {
         .deployWorkerWorkspace(accountId, ws)
         .onSuccess {
           val cleanFiles = ws.files.map { it.copy(originalContent = it.content) }
+          draftManager.clearWorkspaceDraft(workspaceDraftKey(ws))
           val refreshedDeployments =
             repository.listDeployments(accountId, ws.scriptName).getOrDefault(ws.deployments)
           _uiState.update { state ->
@@ -1580,6 +1657,7 @@ export default {
                   deployments = refreshedDeployments,
                   hasModuleSetChanged = false,
                 ),
+              restoredDraftBanner = null,
               isDeploying = false,
               isDeployError = false,
               deployBannerMessage = "Deployed '${ws.scriptName}' to Cloudflare Edge",
@@ -1587,6 +1665,7 @@ export default {
           }
           appendLog("DEPLOY", "Published '${ws.scriptName}' (${cleanFiles.count { !it.isVirtualReadOnly }} module(s)) live to Cloudflare Edge")
           refreshWorkersInternal(accountId)
+          loadWorkerVersions()
         }
         .onFailure { err ->
           _uiState.update {
@@ -1655,6 +1734,37 @@ export default {
     }
   }
 
+  fun replaceInAllFiles(findQuery: String, replaceQuery: String) {
+    val ws = _uiState.value.workspace ?: return
+    if (findQuery.isBlank()) return
+    var fileHits = 0
+    val nextFields = _uiState.value.editorFieldValues.toMutableMap()
+    val updatedFiles =
+      ws.files.map { f ->
+        if (!f.isVirtualReadOnly && f.content.contains(findQuery, ignoreCase = true)) {
+          fileHits++
+          val nextText = f.content.replace(findQuery, replaceQuery, ignoreCase = true)
+          nextFields[f.path] = TextFieldValue(nextText)
+          f.copy(content = nextText)
+        } else {
+          f
+        }
+      }
+    if (fileHits == 0) {
+      _uiState.update { it.copy(statusMessage = "No matches found for '$findQuery'") }
+      return
+    }
+    _uiState.update { state ->
+      state.copy(
+        workspace = ws.copy(files = updatedFiles),
+        editorFieldValues = nextFields,
+        diagnostics = updatedFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+        statusMessage = "Replaced matches across $fileHits file(s)",
+      )
+    }
+    scheduleDraftSave()
+  }
+
   fun setSidebarSection(section: SidebarSection) {
     _uiState.update { it.copy(sidebarSection = section) }
     if (!_uiState.value.isLocalScratchpad) {
@@ -1694,7 +1804,11 @@ export default {
         .toggleWorkersDev(accountId, ws.scriptName, enabled)
         .onSuccess { actual ->
           _uiState.update { state ->
-            state.copy(workspace = state.workspace?.copy(workersDevEnabled = actual))
+            val updatedWs = state.workspace?.copy(workersDevEnabled = actual)?.let { regenerateWranglerFileInWorkspace(it) }
+            state.copy(
+              workspace = updatedWs,
+              editorFieldValues = syncWranglerFieldMap(state.editorFieldValues, updatedWs),
+            )
           }
           appendLog("INFO", "workers.dev route ${if (actual) "enabled" else "disabled"} for ${ws.scriptName}")
         }
@@ -1715,12 +1829,14 @@ export default {
         .saveBindingsAndCompat(accountId, ws.scriptName, compatDate.trim(), nextFlags, ws.bindings)
         .onSuccess { settings ->
           _uiState.update { state ->
+            val updatedWs =
+              state.workspace?.copy(
+                compatibilityDate = settings.compatibilityDate ?: compatDate,
+                compatibilityFlags = settings.compatibilityFlags ?: nextFlags,
+              )?.let { regenerateWranglerFileInWorkspace(it) }
             state.copy(
-              workspace =
-                state.workspace?.copy(
-                  compatibilityDate = settings.compatibilityDate ?: compatDate,
-                  compatibilityFlags = settings.compatibilityFlags ?: nextFlags,
-                ),
+              workspace = updatedWs,
+              editorFieldValues = syncWranglerFieldMap(state.editorFieldValues, updatedWs),
               statusMessage = "Saved compatibility settings",
             )
           }
@@ -1751,9 +1867,11 @@ export default {
         )
         .onSuccess { settings ->
           _uiState.update { state ->
+            val updatedWs =
+              state.workspace?.copy(bindings = settings.bindings ?: updated)?.let { regenerateWranglerFileInWorkspace(it) }
             state.copy(
-              workspace =
-                state.workspace?.copy(bindings = settings.bindings ?: updated),
+              workspace = updatedWs,
+              editorFieldValues = syncWranglerFieldMap(state.editorFieldValues, updatedWs),
               statusMessage = "Saved variable $cleanName",
             )
           }
@@ -1778,8 +1896,10 @@ export default {
             ws.bindings.filterNot { it.name == cleanName } +
               CfWorkerBinding(name = cleanName, type = "secret_text")
           _uiState.update { state ->
+            val updatedWs = state.workspace?.copy(bindings = updated)?.let { regenerateWranglerFileInWorkspace(it) }
             state.copy(
-              workspace = state.workspace?.copy(bindings = updated),
+              workspace = updatedWs,
+              editorFieldValues = syncWranglerFieldMap(state.editorFieldValues, updatedWs),
               statusMessage = "Encrypted secret '$cleanName' uploaded",
             )
           }
@@ -1800,7 +1920,13 @@ export default {
           .deleteSecret(accountId, ws.scriptName, binding.name)
           .onSuccess {
             val next = ws.bindings.filterNot { it.name == binding.name }
-            _uiState.update { it.copy(workspace = ws.copy(bindings = next)) }
+            _uiState.update { state ->
+              val updatedWs = ws.copy(bindings = next).let { regenerateWranglerFileInWorkspace(it) }
+              state.copy(
+                workspace = updatedWs,
+                editorFieldValues = syncWranglerFieldMap(state.editorFieldValues, updatedWs),
+              )
+            }
           }
       } else {
         val next = ws.bindings.filterNot { it.name == binding.name }
@@ -1813,7 +1939,13 @@ export default {
             next,
           )
           .onSuccess {
-            _uiState.update { it.copy(workspace = ws.copy(bindings = next)) }
+            _uiState.update { state ->
+              val updatedWs = ws.copy(bindings = next).let { regenerateWranglerFileInWorkspace(it) }
+              state.copy(
+                workspace = updatedWs,
+                editorFieldValues = syncWranglerFieldMap(state.editorFieldValues, updatedWs),
+              )
+            }
           }
       }
     }
@@ -1830,8 +1962,10 @@ export default {
         .updateCronSchedules(accountId, ws.scriptName, updated)
         .onSuccess { schedules ->
           _uiState.update { state ->
+            val updatedWs = state.workspace?.copy(schedules = schedules)?.let { regenerateWranglerFileInWorkspace(it) }
             state.copy(
-              workspace = state.workspace?.copy(schedules = schedules),
+              workspace = updatedWs,
+              editorFieldValues = syncWranglerFieldMap(state.editorFieldValues, updatedWs),
               statusMessage = "Added Cron '$clean'",
             )
           }
@@ -1852,8 +1986,136 @@ export default {
         .updateCronSchedules(accountId, ws.scriptName, updated)
         .onSuccess { schedules ->
           _uiState.update { state ->
-            state.copy(workspace = state.workspace?.copy(schedules = schedules))
+            val updatedWs = state.workspace?.copy(schedules = schedules)?.let { regenerateWranglerFileInWorkspace(it) }
+            state.copy(
+              workspace = updatedWs,
+              editorFieldValues = syncWranglerFieldMap(state.editorFieldValues, updatedWs),
+            )
           }
+        }
+    }
+  }
+
+  fun loadWorkerVersions() {
+    val accountId = _uiState.value.selectedAccount?.id ?: return
+    val ws = _uiState.value.workspace ?: return
+    viewModelScope.launch {
+      repository.listWorkerVersions(accountId, ws.scriptName).onSuccess { versions ->
+        _uiState.update { it.copy(workerVersions = versions) }
+      }
+    }
+  }
+
+  fun deployGradualWorkerSplit(
+    primaryVersionId: String,
+    primaryPercent: Int,
+    secondaryVersionId: String,
+    secondaryPercent: Int,
+    message: String,
+  ) {
+    val accountId = _uiState.value.selectedAccount?.id ?: return
+    val ws = _uiState.value.workspace ?: return
+    val allocations = buildList {
+      if (primaryPercent > 0) add(CfDeploymentVersion(versionId = primaryVersionId, percentage = primaryPercent.toDouble()))
+      if (secondaryPercent > 0 && secondaryVersionId != primaryVersionId) {
+        add(CfDeploymentVersion(versionId = secondaryVersionId, percentage = secondaryPercent.toDouble()))
+      }
+    }
+    viewModelScope.launch {
+      repository
+        .deployGradualVersions(accountId, ws.scriptName, allocations, message)
+        .onSuccess {
+          val refreshedDeps = repository.listDeployments(accountId, ws.scriptName).getOrDefault(ws.deployments)
+          _uiState.update { state ->
+            state.copy(
+              workspace = state.workspace?.copy(deployments = refreshedDeps),
+              statusMessage = "Deployed gradual split (${allocations.joinToString { "${it.percentage.toInt()}%" }})",
+            )
+          }
+          appendLog("DEPLOY", "Gradual traffic split active on '${ws.scriptName}'")
+        }
+        .onFailure { err ->
+          _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Gradual deploy failed") }
+        }
+    }
+  }
+
+  fun syncWranglerFileToWorkspace() {
+    val ws = _uiState.value.workspace ?: return
+    val cfgFile =
+      ws.files.firstOrNull { it.path == "wrangler.jsonc" || it.path == "wrangler.json" || it.path == "wrangler.toml" }
+        ?: return
+    val parsed =
+      WranglerSyncParser.parse(cfgFile.path, cfgFile.content).getOrElse { err ->
+        _uiState.update { it.copy(statusMessage = "Wrangler parse error: ${err.localizedMessage}") }
+        return
+      }
+
+    // Preserve encrypted secrets that aren't serialized verbatim into wrangler.jsonc
+    val existingSecrets = ws.bindings.filter { it.type == "secret_text" }
+    val mergedBindings = (parsed.bindings + existingSecrets).distinctBy { it.name }
+    val nextCompatDate = parsed.compatibilityDate ?: ws.compatibilityDate
+    val nextFlags = if (parsed.compatibilityFlags.isNotEmpty()) parsed.compatibilityFlags else ws.compatibilityFlags
+    val nextWorkersDev = parsed.workersDev ?: ws.workersDevEnabled
+    val nextEntry = parsed.main?.takeIf { m -> ws.files.any { it.path == m } } ?: ws.entryModulePath
+
+    if (_uiState.value.isLocalScratchpad) {
+      val updatedFiles = ws.files.map {
+        if (it.path == cfgFile.path) it.copy(originalContent = it.content)
+        else it.copy(isEntryPoint = it.path == nextEntry)
+      }
+      _uiState.update {
+        it.copy(
+          workspace =
+            ws.copy(
+              entryModulePath = nextEntry,
+              compatibilityDate = nextCompatDate,
+              compatibilityFlags = nextFlags,
+              workersDevEnabled = nextWorkersDev,
+              bindings = mergedBindings,
+              files = updatedFiles,
+            ),
+          statusMessage = "Synced ${cfgFile.fileName} to local workspace",
+        )
+      }
+      return
+    }
+
+    val accountId = _uiState.value.selectedAccount?.id ?: return
+    viewModelScope.launch {
+      _uiState.update { it.copy(isInfraBusy = true) }
+      repository
+        .saveBindingsAndCompat(accountId, ws.scriptName, nextCompatDate, nextFlags, mergedBindings)
+        .onSuccess {
+          if (parsed.workersDev != null && parsed.workersDev != ws.workersDevEnabled) {
+            repository.toggleWorkersDev(accountId, ws.scriptName, parsed.workersDev)
+          }
+          if (parsed.crons.isNotEmpty()) {
+            repository.updateCronSchedules(accountId, ws.scriptName, parsed.crons)
+          }
+          val updatedFiles = ws.files.map {
+            if (it.path == cfgFile.path) it.copy(originalContent = it.content)
+            else it.copy(isEntryPoint = it.path == nextEntry)
+          }
+          _uiState.update { state ->
+            state.copy(
+              isInfraBusy = false,
+              workspace =
+                ws.copy(
+                  entryModulePath = nextEntry,
+                  compatibilityDate = nextCompatDate,
+                  compatibilityFlags = nextFlags,
+                  workersDevEnabled = nextWorkersDev,
+                  bindings = mergedBindings,
+                  files = updatedFiles,
+                ),
+              statusMessage = "Synced ${cfgFile.fileName} -> Cloudflare settings (${mergedBindings.size} binding(s))",
+            )
+          }
+          appendLog("INFO", "Synced ${cfgFile.fileName} configuration to Cloudflare")
+        }
+        .onFailure { err ->
+          _uiState.update { it.copy(isInfraBusy = false, statusMessage = err.localizedMessage ?: "Wrangler sync failed") }
         }
     }
   }
@@ -2006,8 +2268,11 @@ export default {
         .saveBindingsAndCompat(accountId, ws.scriptName, ws.compatibilityDate, ws.compatibilityFlags, next)
         .onSuccess { settings ->
           _uiState.update { state ->
+            val updatedWs =
+              state.workspace?.copy(bindings = settings.bindings ?: next)?.let { regenerateWranglerFileInWorkspace(it) }
             state.copy(
-              workspace = state.workspace?.copy(bindings = settings.bindings ?: next),
+              workspace = updatedWs,
+              editorFieldValues = syncWranglerFieldMap(state.editorFieldValues, updatedWs),
               statusMessage = "Bound ${binding.name} (${binding.type}) to ${ws.scriptName}",
             )
           }
@@ -2157,15 +2422,76 @@ export default {
     }
   }
 
-  fun putKvEntry(keyName: String, value: String) {
+  fun putKvEntry(keyName: String, value: String, ttlSeconds: Long? = null) {
     val accountId = _uiState.value.selectedAccount?.id ?: return
     val ns = _uiState.value.selectedKvNamespace ?: return
     viewModelScope.launch {
-      repository.writeKvValue(accountId, ns.id, keyName.trim(), value).onSuccess {
-        selectKvNamespace(ns)
-        _uiState.update { it.copy(selectedKvKeyValue = keyName.trim() to value) }
+      repository
+        .writeKvValue(accountId, ns.id, keyName.trim(), value, expirationTtl = ttlSeconds)
+        .onSuccess {
+          selectKvNamespace(ns)
+          _uiState.update {
+            it.copy(
+              selectedKvKeyValue = keyName.trim() to value,
+              statusMessage = "Saved KV key '${keyName.trim()}'",
+            )
+          }
+        }
+        .onFailure { err ->
+          _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "KV write failed") }
+        }
+    }
+  }
+
+  fun bulkImportKvJson(rawJson: String) {
+    val accountId = _uiState.value.selectedAccount?.id ?: return
+    val ns = _uiState.value.selectedKvNamespace ?: return
+    val itemsResult = runCatching {
+      val parsed = JSONTokener(rawJson.trim()).nextValue()
+      when (parsed) {
+        is JSONArray -> (0 until parsed.length()).map { idx ->
+          val obj = parsed.getJSONObject(idx)
+          CfKvBulkItem(
+            key = obj.getString("key"),
+            value = obj.optString("value", ""),
+            expirationTtl = obj.optLong("expiration_ttl", 0L).takeIf { it >= 60L },
+          )
+        }
+        is JSONObject -> parsed.keys().asSequence().map { k ->
+          CfKvBulkItem(key = k, value = parsed.optString(k, ""))
+        }.toList()
+        else -> error("Provide a JSON array of {key, value} or a flat JSON object")
       }
     }
+    val items = itemsResult.getOrElse { err ->
+      _uiState.update { it.copy(statusMessage = "Invalid bulk JSON: ${err.localizedMessage}") }
+      return
+    }
+    viewModelScope.launch {
+      _uiState.update { it.copy(isKvBusy = true) }
+      repository
+        .bulkPutKvEntries(accountId, ns.id, items)
+        .onSuccess {
+          _uiState.update { it.copy(isKvBusy = false, statusMessage = "Imported ${items.size} KV key(s)") }
+          selectKvNamespace(ns)
+        }
+        .onFailure { err ->
+          _uiState.update { it.copy(isKvBusy = false, statusMessage = err.localizedMessage ?: "KV bulk import failed") }
+        }
+    }
+  }
+
+  fun exportSelectedKvJson(): String {
+    val arr = JSONArray()
+    _uiState.value.kvKeys.forEach { k ->
+      arr.put(
+        JSONObject().apply {
+          put("name", k.name)
+          if (k.expiration != null) put("expiration", k.expiration)
+        },
+      )
+    }
+    return arr.toString(2)
   }
 
   fun deleteKvKey(keyName: String) {
@@ -2176,6 +2502,37 @@ export default {
         selectKvNamespace(ns)
         _uiState.update { it.copy(selectedKvKeyValue = null, statusMessage = "Deleted KV key '$keyName'") }
       }
+    }
+  }
+
+  fun createQueue(name: String) {
+    val accountId = _uiState.value.selectedAccount?.id ?: return
+    if (name.isBlank()) return
+    viewModelScope.launch {
+      repository
+        .createQueue(accountId, name)
+        .onSuccess { q ->
+          _uiState.update { it.copy(statusMessage = "Created Queue '${q.queueName}'") }
+          loadCloudflareInfra()
+        }
+        .onFailure { err ->
+          _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Create queue failed") }
+        }
+    }
+  }
+
+  fun deleteQueue(queueId: String) {
+    val accountId = _uiState.value.selectedAccount?.id ?: return
+    viewModelScope.launch {
+      repository
+        .deleteQueue(accountId, queueId)
+        .onSuccess {
+          _uiState.update { it.copy(statusMessage = "Deleted Queue") }
+          loadCloudflareInfra()
+        }
+        .onFailure { err ->
+          _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Delete queue failed") }
+        }
     }
   }
 
@@ -2427,6 +2784,124 @@ export default {
         .onFailure { err ->
           _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Pages env save failed") }
         }
+    }
+  }
+
+  fun updatePagesBuildConfig(
+    projectName: String,
+    productionBranch: String,
+    buildCommand: String,
+    destinationDir: String,
+    rootDir: String,
+  ) {
+    val accountId = _uiState.value.selectedAccount?.id ?: return
+    viewModelScope.launch {
+      _uiState.update { it.copy(isPagesBusy = true) }
+      repository
+        .updatePagesBuildConfig(accountId, projectName, productionBranch, buildCommand, destinationDir, rootDir)
+        .onSuccess { updatedProject ->
+          _uiState.update {
+            it.copy(
+              isPagesBusy = false,
+              selectedPagesProject = updatedProject,
+              pagesProjects = it.pagesProjects.map { p -> if (p.name == updatedProject.name) updatedProject else p },
+              statusMessage = "Updated Pages build config for '$projectName'",
+            )
+          }
+        }
+        .onFailure { err ->
+          _uiState.update { it.copy(isPagesBusy = false, statusMessage = err.localizedMessage ?: "Pages build config failed") }
+        }
+    }
+  }
+
+  fun updatePagesBindings(
+    projectName: String,
+    environment: String,
+    kvBindings: Map<String, String>,
+    d1Bindings: Map<String, String>,
+    r2Bindings: Map<String, String>,
+  ) {
+    val accountId = _uiState.value.selectedAccount?.id ?: return
+    viewModelScope.launch {
+      _uiState.update { it.copy(isPagesBusy = true) }
+      repository
+        .updatePagesBindings(accountId, projectName, environment, kvBindings, d1Bindings, r2Bindings)
+        .onSuccess { updatedProject ->
+          _uiState.update {
+            it.copy(
+              isPagesBusy = false,
+              selectedPagesProject = updatedProject,
+              statusMessage = "Saved Pages $environment bindings",
+            )
+          }
+        }
+        .onFailure { err ->
+          _uiState.update { it.copy(isPagesBusy = false, statusMessage = err.localizedMessage ?: "Pages bindings failed") }
+        }
+    }
+  }
+
+  fun createPagesSpecialFile(kind: String) {
+    val (path, starterContent) =
+      when (kind) {
+        "_headers" ->
+          "_headers" to
+            """/*
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+"""
+        "_redirects" ->
+          "_redirects" to
+            """# Cloudflare Pages redirects
+/old-path /new-path 301
+/api/* https://api.example.com/:splat 200
+"""
+        "_routes.json" ->
+          "_routes.json" to
+            """{
+  "version": 1,
+  "include": ["/api/*", "/auth/*"],
+  "exclude": ["/assets/*", "/*.css", "/*.js"]
+}
+"""
+        "functions/api/hello.js" ->
+          "functions/api/hello.js" to WorkerTemplate.PAGES_FUNCTIONS_API.code
+        else -> return
+      }
+
+    val existingWs = _uiState.value.workspace
+    if (existingWs == null) {
+      addModuleFile(path)
+    } else if (existingWs.files.any { it.path == path }) {
+      openFileTab(path)
+    } else {
+      val newFile =
+        WorkerFile(
+          path = path,
+          content = starterContent,
+          originalContent = "",
+          contentType = MultipartWorkerParser.inferModuleMimeType(path),
+          isEntryPoint = false,
+        )
+      val nextFiles = existingWs.files + newFile
+      val parentDir = if (path.contains('/')) path.substringBeforeLast('/') else ""
+      val nextDirs = if (parentDir.isNotBlank()) existingWs.directories + parentDir else existingWs.directories
+      _uiState.update { state ->
+        state.copy(
+          workspace = existingWs.copy(files = nextFiles, directories = nextDirs, hasModuleSetChanged = true),
+          openTabPaths = state.openTabPaths + path,
+          activeFilePath = path,
+          editorFieldValues = state.editorFieldValues + (path to TextFieldValue(starterContent)),
+          diagnostics = nextFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+          statusMessage = "Created Pages file '$path'",
+        )
+      }
+      scheduleDraftSave()
     }
   }
 
@@ -3175,6 +3650,100 @@ export default {
     }
   }
 
+  fun inspectWorkflowRunJobs(runId: Long) {
+    if (_uiState.value.selectedWorkflowRunId == runId) {
+      _uiState.update { it.copy(selectedWorkflowRunId = null, selectedWorkflowJobs = emptyList()) }
+      return
+    }
+    val token = _uiState.value.gitHubCreds?.token ?: return
+    val linked = _uiState.value.linkedGitRepo
+    val repo = _uiState.value.selectedGitHubRepo
+    val owner = linked?.owner ?: repo?.owner?.login ?: return
+    val repoName = linked?.repoName ?: repo?.name ?: return
+    _uiState.update { it.copy(selectedWorkflowRunId = runId, selectedWorkflowJobs = emptyList(), isGitHubBusy = true) }
+    viewModelScope.launch {
+      gitHubRepository
+        .listWorkflowRunJobs(token, owner, repoName, runId)
+        .onSuccess { jobs -> _uiState.update { it.copy(selectedWorkflowJobs = jobs, isGitHubBusy = false) } }
+        .onFailure { err -> _uiState.update { it.copy(isGitHubBusy = false, statusMessage = err.localizedMessage ?: "Could not fetch workflow jobs") } }
+    }
+  }
+
+  fun submitPullRequestReview(prNumber: Int, event: String, body: String) {
+    val token = _uiState.value.gitHubCreds?.token ?: return
+    val linked = _uiState.value.linkedGitRepo
+    val repo = _uiState.value.selectedGitHubRepo
+    val owner = linked?.owner ?: repo?.owner?.login ?: return
+    val repoName = linked?.repoName ?: repo?.name ?: return
+    viewModelScope.launch {
+      _uiState.update { it.copy(isGitHubBusy = true) }
+      gitHubRepository
+        .submitPullRequestReview(token, owner, repoName, prNumber, event, body)
+        .onSuccess {
+          _uiState.update { it.copy(isGitHubBusy = false, statusMessage = "Submitted PR #$prNumber review ($event)") }
+          appendLog("INFO", "Submitted PR #$prNumber review: $event")
+        }
+        .onFailure { err ->
+          _uiState.update { it.copy(isGitHubBusy = false, statusMessage = err.localizedMessage ?: "PR review failed") }
+        }
+    }
+  }
+
+  fun generateCloudflareGitHubActionWorkflow() {
+    val ws = _uiState.value.workspace
+    val branch = _uiState.value.linkedGitRepo?.branch ?: _uiState.value.selectedGitHubBranch.ifBlank { "main" }
+    val path = ".github/workflows/deploy-cloudflare.yml"
+    val yaml =
+      """name: Deploy Cloudflare Worker
+
+on:
+  push:
+    branches:
+      - $branch
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy ${ws?.scriptName ?: "worker"}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy with Wrangler
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${'$'}{{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${'$'}{{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+"""
+    if (ws == null) {
+      addModuleFile(path)
+      return
+    }
+    val existingIdx = ws.files.indexOfFirst { it.path == path }
+    val updatedFiles =
+      if (existingIdx >= 0) {
+        ws.files.mapIndexed { idx, f -> if (idx == existingIdx) f.copy(content = yaml) else f }
+      } else {
+        ws.files +
+          WorkerFile(
+            path = path,
+            content = yaml,
+            originalContent = "",
+            contentType = "text/yaml",
+            isEntryPoint = false,
+          )
+      }
+    _uiState.update { state ->
+      state.copy(
+        workspace = ws.copy(files = updatedFiles, directories = ws.directories + ".github/workflows", hasModuleSetChanged = true),
+        openTabPaths = (state.openTabPaths + path).distinct(),
+        activeFilePath = path,
+        editorFieldValues = state.editorFieldValues + (path to TextFieldValue(yaml)),
+        statusMessage = "Generated Auto-Deploy Action ($path) — commit & push to enable!",
+      )
+    }
+    scheduleDraftSave()
+  }
+
   fun createGitHubBranch(newBranchName: String) {
     val token = _uiState.value.gitHubCreds?.token ?: return
     val repo = _uiState.value.selectedGitHubRepo ?: return
@@ -3590,13 +4159,18 @@ export default {
         ),
       )
     } else if (queuedCommits.isEmpty()) {
-      // Fallback: if no baseline diff tracked yet, push all editable files cleanly
+      // Fallback: if no baseline diff tracked yet, push all non-ignored editable files cleanly
       val ws = state.workspace ?: return
       val msg =
         (commitMessageOverride ?: state.gitCommitMessageInput)
           .trim()
           .ifBlank { "Sync Worker '${ws.scriptName}' from EdgeCode" }
-      val allEditable = ws.files.filterNot { it.isVirtualReadOnly }.associate { it.path to it.content }
+      val ignorePatterns = GitIgnoreMatcher.parsePatterns(ws.files.firstOrNull { it.path == ".gitignore" }?.content)
+      val allEditable =
+        ws.files
+          .filterNot { it.isVirtualReadOnly || it.path == "wrangler.jsonc" }
+          .filterNot { GitIgnoreMatcher.isIgnored(it.path, ignorePatterns) }
+          .associate { it.path to it.content }
       if (allEditable.isEmpty()) {
         _uiState.update { it.copy(statusMessage = "No editable files to push.") }
         return
@@ -4195,6 +4769,241 @@ export default {
         )
     }
   }
+
+  // API Tester (Postman-style GUI) + Draft Auto-Save + Helpers
+  fun updateApiRequest(transform: (ApiTesterRequest) -> ApiTesterRequest) {
+    _uiState.update { it.copy(apiRequest = transform(it.apiRequest)) }
+  }
+
+  fun updateApiEnvVars(vars: List<ApiEnvVar>) {
+    _uiState.update { it.copy(apiEnvVars = vars) }
+    persistApiTester()
+  }
+
+  fun runApiTesterRequest() {
+    val state = _uiState.value
+    val req = state.apiRequest
+    val workerBaseUrl = state.workspace?.workersDevUrl
+    val resolvedUrlResult = ApiRequestUtils.resolveUrl(req, state.apiEnvVars, workerBaseUrl)
+    val url = resolvedUrlResult.getOrElse { err ->
+      _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Invalid request URL") }
+      return
+    }
+    val (headersMap, bodyText) = ApiRequestUtils.buildHeadersAndBody(req, state.apiEnvVars, workerBaseUrl)
+
+    _uiState.update {
+      it.copy(
+        isRunningHttpTest = true,
+        showBottomPanel = true,
+        activeBottomTab = BottomPanelTab.API_TESTER,
+      )
+    }
+
+    viewModelScope.launch {
+      val result = repository.executeLiveHttpTest(url, req.method, headersMap, bodyText)
+      val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+      val historyItem =
+        ApiTesterHistoryItem(
+          id = UUID.randomUUID().toString().take(8),
+          timestamp = ts,
+          request = req,
+          resolvedUrl = url,
+          statusCode = result.statusCode,
+          durationMs = result.durationMs,
+        )
+      _uiState.update { s ->
+        s.copy(
+          isRunningHttpTest = false,
+          httpTestResult = result,
+          apiHistory = (listOf(historyItem) + s.apiHistory).take(25),
+        )
+      }
+      persistApiTester()
+      appendLog(
+        if (result.statusCode in 200..399) "HTTP" else "WARN",
+        "${result.method} ${result.url} -> ${result.statusCode} (${result.durationMs}ms)",
+      )
+    }
+  }
+
+  fun saveCurrentApiRequestToCollection(customName: String) {
+    val cleanName = customName.trim().ifBlank { _uiState.value.apiRequest.url.take(28) }
+    val item =
+      _uiState.value.apiRequest.copy(
+        id = UUID.randomUUID().toString().take(8),
+        name = cleanName,
+      )
+    _uiState.update { s ->
+      s.copy(
+        apiCollections = listOf(item) + s.apiCollections,
+        statusMessage = "Saved '$cleanName' to API collection",
+      )
+    }
+    persistApiTester()
+  }
+
+  fun loadApiRequest(request: ApiTesterRequest) {
+    _uiState.update { it.copy(apiRequest = request) }
+  }
+
+  fun deleteApiCollectionItem(id: String) {
+    _uiState.update { s -> s.copy(apiCollections = s.apiCollections.filterNot { it.id == id }) }
+    persistApiTester()
+  }
+
+  fun clearApiHistory() {
+    _uiState.update { it.copy(apiHistory = emptyList()) }
+    persistApiTester()
+  }
+
+  private fun persistApiTester() {
+    val s = _uiState.value
+    viewModelScope.launch {
+      draftManager.saveApiTesterState(
+        PersistedApiTesterState(
+          collections = s.apiCollections,
+          history = s.apiHistory,
+          envVars = s.apiEnvVars,
+        ),
+      )
+    }
+  }
+
+  fun saveTerminalOutputToWorkspaceFile(fileName: String, content: String) {
+    val clean = fileName.trim().removePrefix("/")
+    if (clean.isBlank()) return
+    val ws = _uiState.value.workspace
+    if (ws == null) {
+      addModuleFile(clean)
+      updateEditorValue(TextFieldValue(content))
+      return
+    }
+    val exists = ws.files.any { it.path == clean }
+    val nextFiles =
+      if (exists) {
+        ws.files.map { if (it.path == clean) it.copy(content = content) else it }
+      } else {
+        ws.files +
+          WorkerFile(
+            path = clean,
+            content = content,
+            originalContent = "",
+            contentType = MultipartWorkerParser.inferModuleMimeType(clean),
+            isEntryPoint = false,
+          )
+      }
+    _uiState.update { state ->
+      state.copy(
+        workspace = ws.copy(files = nextFiles, hasModuleSetChanged = true),
+        openTabPaths = (state.openTabPaths + clean).distinct(),
+        activeFilePath = clean,
+        editorFieldValues = state.editorFieldValues + (clean to TextFieldValue(content)),
+        statusMessage = "Saved terminal output -> $clean",
+      )
+    }
+    scheduleDraftSave()
+  }
+
+  fun dismissDraftBanner() {
+    _uiState.update { it.copy(restoredDraftBanner = null) }
+  }
+
+  fun discardRestoredDraft() {
+    val ws = _uiState.value.workspace ?: return
+    draftManager.clearWorkspaceDraft(workspaceDraftKey(ws))
+    val reverted = ws.files.map { it.copy(content = it.originalContent) }
+    _uiState.update { state ->
+      state.copy(
+        workspace = ws.copy(files = reverted, hasModuleSetChanged = false),
+        editorFieldValues = reverted.associate { it.path to TextFieldValue(it.content) },
+        diagnostics = reverted.flatMap { CodeAnalyzer.analyzeFile(it) },
+        restoredDraftBanner = null,
+        statusMessage = "Discarded auto-saved draft",
+      )
+    }
+  }
+
+  private fun workspaceDraftKey(ws: WorkerWorkspace): String {
+    val acc = _uiState.value.selectedAccount?.id ?: "local"
+    return "${acc}_${ws.scriptName}"
+  }
+
+  private fun scheduleDraftSave() {
+    draftSaveJob?.cancel()
+    draftSaveJob =
+      viewModelScope.launch {
+        delay(800L)
+        val s = _uiState.value
+        val ws = s.workspace ?: return@launch
+        draftManager.saveWorkspaceDraft(
+          workspaceKey = workspaceDraftKey(ws),
+          files = ws.files,
+          openTabs = s.openTabPaths,
+          activeFilePath = s.activeFilePath,
+        )
+      }
+  }
+
+  private fun mergeRestoredDraftFiles(
+    liveFiles: List<WorkerFile>,
+    draftFiles: List<WorkerFile>,
+  ): List<WorkerFile> {
+    val liveByPath = liveFiles.associateBy { it.path }.toMutableMap()
+    val merged =
+      liveFiles.map { lf ->
+        val df = draftFiles.firstOrNull { it.path == lf.path }
+        if (df != null && df.content != lf.content) lf.copy(content = df.content) else lf
+      }.toMutableList()
+    draftFiles.forEach { df ->
+      if (df.path !in liveByPath) {
+        merged.add(df)
+      }
+    }
+    return merged
+  }
+
+  private fun regenerateWranglerFileInWorkspace(ws: WorkerWorkspace): WorkerWorkspace {
+    val wranglerContent =
+      repository.buildWranglerPreviewJson(
+        scriptName = ws.scriptName,
+        entryModule = ws.entryModulePath,
+        compatDate = ws.compatibilityDate,
+        compatFlags = ws.compatibilityFlags,
+        bindings = ws.bindings,
+        schedules = ws.schedules,
+        workersDev = ws.workersDevEnabled,
+      )
+    val hasFile = ws.files.any { it.path == "wrangler.jsonc" }
+    val updatedFiles =
+      if (hasFile) {
+        ws.files.map {
+          if (it.path == "wrangler.jsonc") {
+            it.copy(content = wranglerContent, originalContent = wranglerContent, isVirtualReadOnly = false)
+          } else it
+        }
+      } else {
+        ws.files +
+          WorkerFile(
+            path = "wrangler.jsonc",
+            content = wranglerContent,
+            originalContent = wranglerContent,
+            contentType = "application/json",
+            isEntryPoint = false,
+            isVirtualReadOnly = false,
+          )
+      }
+    return ws.copy(files = updatedFiles)
+  }
+
+  private fun syncWranglerFieldMap(
+    current: Map<String, TextFieldValue>,
+    ws: WorkerWorkspace?,
+  ): Map<String, TextFieldValue> {
+    val wf = ws?.files?.firstOrNull { it.path == "wrangler.jsonc" } ?: return current
+    return current + ("wrangler.jsonc" to TextFieldValue(wf.content))
+  }
+
+  private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 
   // Settings
   fun updateSettings(transform: (EditorSettings) -> EditorSettings) {

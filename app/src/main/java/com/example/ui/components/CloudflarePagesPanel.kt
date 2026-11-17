@@ -45,6 +45,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -79,6 +82,9 @@ fun CloudflarePagesPanel(
   onRollbackDeploy: (String, String) -> Unit,
   onFetchLogs: (String, String) -> Unit,
   onSaveEnvVar: (projectName: String, environment: String, key: String, value: String, isSecret: Boolean) -> Unit,
+  onUpdateBuildConfig: (projectName: String, productionBranch: String, buildCommand: String, destinationDir: String, rootDir: String) -> Unit,
+  onUpdateBindings: (projectName: String, environment: String, kvBindings: Map<String, String>, d1Bindings: Map<String, String>, r2Bindings: Map<String, String>) -> Unit,
+  onCreatePagesSpecialFile: (String) -> Unit,
   onAddDomain: (String, String) -> Unit,
   onDeleteDomain: (String, String) -> Unit,
   onPickPagesFolder: () -> Unit,
@@ -122,12 +128,13 @@ fun CloudflarePagesPanel(
       Text("CLOUDFLARE PAGES", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
       Surface(color = palette.chromePill, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
         Text(
-          text = "Connect your Cloudflare API Token or Global Key to manage Pages sites, Direct Upload deployments (folder/ZIP), build logs, rollbacks, preview/production env vars, and custom domains.",
+          text = "Connect your Cloudflare API Token or Global Key to manage Pages sites, Direct Upload deployments (folder/ZIP), build config, bindings, logs, and custom domains.",
           style = MaterialTheme.typography.bodySmall,
           color = palette.textSecondary,
           modifier = Modifier.padding(14.dp),
         )
       }
+      PagesSpecialFilesCard(onCreatePagesSpecialFile = onCreatePagesSpecialFile)
     }
     return
   }
@@ -198,6 +205,9 @@ fun CloudflarePagesPanel(
       onRollbackDeploy = { depId -> onRollbackDeploy(selected.name, depId) },
       onFetchLogs = { depId -> onFetchLogs(selected.name, depId) },
       onSaveEnvVar = { env, k, v, sec -> onSaveEnvVar(selected.name, env, k, v, sec) },
+      onUpdateBuildConfig = { branch, cmd, dest, root -> onUpdateBuildConfig(selected.name, branch, cmd, dest, root) },
+      onUpdateBindings = { env, kv, d1, r2 -> onUpdateBindings(selected.name, env, kv, d1, r2) },
+      onCreatePagesSpecialFile = onCreatePagesSpecialFile,
       onAddDomain = { d -> onAddDomain(selected.name, d) },
       onDeleteDomain = { d -> onDeleteDomain(selected.name, d) },
       onPickPagesFolder = onPickPagesFolder,
@@ -222,6 +232,9 @@ private fun PagesProjectDetailView(
   onRollbackDeploy: (String) -> Unit,
   onFetchLogs: (String) -> Unit,
   onSaveEnvVar: (environment: String, key: String, value: String, isSecret: Boolean) -> Unit,
+  onUpdateBuildConfig: (productionBranch: String, buildCommand: String, destinationDir: String, rootDir: String) -> Unit,
+  onUpdateBindings: (environment: String, kvBindings: Map<String, String>, d1Bindings: Map<String, String>, r2Bindings: Map<String, String>) -> Unit,
+  onCreatePagesSpecialFile: (String) -> Unit,
   onAddDomain: (String) -> Unit,
   onDeleteDomain: (String) -> Unit,
   onPickPagesFolder: () -> Unit,
@@ -702,6 +715,162 @@ private fun PagesProjectDetailView(
 
     HorizontalDivider(color = palette.treeLine)
 
+    // Pages Special Files & Functions Quick-Create
+    PagesSpecialFilesCard(onCreatePagesSpecialFile = onCreatePagesSpecialFile)
+
+    HorizontalDivider(color = palette.treeLine)
+
+    // Build Configuration Editor
+    var buildBranch by remember(project.name, project.productionBranch) { mutableStateOf(project.productionBranch) }
+    var buildCmd by remember(project.name, project.buildConfig?.buildCommand) { mutableStateOf(project.buildConfig?.buildCommand.orEmpty()) }
+    var destDir by remember(project.name, project.buildConfig?.destinationDir) { mutableStateOf(project.buildConfig?.destinationDir.orEmpty()) }
+    var rootDir by remember(project.name, project.buildConfig?.rootDir) { mutableStateOf(project.buildConfig?.rootDir.orEmpty()) }
+    Surface(color = palette.chromePill, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+      Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("BUILD CONFIG", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+        OutlinedTextField(value = buildBranch, onValueChange = { buildBranch = it }, label = { Text("Production branch") }, singleLine = true, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = buildCmd, onValueChange = { buildCmd = it }, label = { Text("Build command (e.g. npm run build)") }, singleLine = true, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth())
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+          OutlinedTextField(value = destDir, onValueChange = { destDir = it }, label = { Text("Output dir") }, placeholder = { Text("dist") }, singleLine = true, shape = RoundedCornerShape(10.dp), modifier = Modifier.weight(1f))
+          OutlinedTextField(value = rootDir, onValueChange = { rootDir = it }, label = { Text("Root dir") }, placeholder = { Text("/") }, singleLine = true, shape = RoundedCornerShape(10.dp), modifier = Modifier.weight(1f))
+        }
+        FilledTonalButton(
+          onClick = { onUpdateBuildConfig(buildBranch, buildCmd, destDir, rootDir) },
+          enabled = buildBranch.isNotBlank() && !uiState.isPagesBusy,
+          modifier = Modifier.fillMaxWidth().testTag("pages_save_build_config_button"),
+        ) {
+          Text("Save Build Config")
+        }
+      }
+    }
+
+    HorizontalDivider(color = palette.treeLine)
+
+    // Pages Bindings (Production / Preview: KV, D1, R2)
+    val currentEnvCfg =
+      if (envMode == "production") project.deploymentConfigs?.production
+      else project.deploymentConfigs?.preview
+    val existingKvMap = currentEnvCfg?.kvNamespaces.orEmpty().mapValues { it.value.namespaceId }
+    val existingD1Map = currentEnvCfg?.d1Databases.orEmpty().mapValues { it.value.id }
+    val existingR2Map = currentEnvCfg?.r2Buckets.orEmpty().mapValues { it.value.name }
+
+    var bindKind by remember { mutableStateOf("KV") } // KV, D1, R2
+    var bindVarName by remember { mutableStateOf("MY_KV") }
+    var bindResourceId by remember(uiState.kvNamespaces, uiState.d1Databases, uiState.r2Buckets, bindKind) {
+      mutableStateOf(
+        when (bindKind) {
+          "KV" -> uiState.kvNamespaces.firstOrNull()?.id.orEmpty()
+          "D1" -> uiState.d1Databases.firstOrNull()?.uuid.orEmpty()
+          else -> uiState.r2Buckets.firstOrNull()?.name.orEmpty()
+        },
+      )
+    }
+    var resourceMenuOpen by remember { mutableStateOf(false) }
+
+    Surface(color = palette.chromePill, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+      Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("PAGES BINDINGS (${envMode.uppercase()})", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+        existingKvMap.forEach { (k, v) ->
+          PagesBindingRow("KV", k, v) {
+            onUpdateBindings(envMode, existingKvMap - k, existingD1Map, existingR2Map)
+          }
+        }
+        existingD1Map.forEach { (k, v) ->
+          PagesBindingRow("D1", k, v) {
+            onUpdateBindings(envMode, existingKvMap, existingD1Map - k, existingR2Map)
+          }
+        }
+        existingR2Map.forEach { (k, v) ->
+          PagesBindingRow("R2", k, v) {
+            onUpdateBindings(envMode, existingKvMap, existingD1Map, existingR2Map - k)
+          }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+          listOf("KV", "D1", "R2").forEach { kind ->
+            val active = bindKind == kind
+            Surface(
+              onClick = {
+                bindKind = kind
+                bindVarName =
+                  when (kind) {
+                    "KV" -> "MY_KV"
+                    "D1" -> "DB"
+                    else -> "BUCKET"
+                  }
+              },
+              shape = RoundedCornerShape(8.dp),
+              color = if (active) palette.activePillBg else palette.editorBg,
+              modifier = Modifier.weight(1f),
+            ) {
+              Text(
+                text = kind,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (active) palette.activePillFg else palette.textSecondary,
+                modifier = Modifier.padding(vertical = 6.dp, horizontal = 10.dp),
+              )
+            }
+          }
+        }
+
+        OutlinedTextField(value = bindVarName, onValueChange = { bindVarName = it }, label = { Text("Binding Var Name") }, singleLine = true, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth())
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+          OutlinedTextField(
+            value = bindResourceId,
+            onValueChange = { bindResourceId = it },
+            label = { Text(if (bindKind == "R2") "Bucket Name" else "$bindKind ID / UUID") },
+            singleLine = true,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.weight(1f),
+          )
+          val hasChoices =
+            (bindKind == "KV" && uiState.kvNamespaces.isNotEmpty()) ||
+              (bindKind == "D1" && uiState.d1Databases.isNotEmpty()) ||
+              (bindKind == "R2" && uiState.r2Buckets.isNotEmpty())
+          if (hasChoices) {
+            androidx.compose.foundation.layout.Box {
+              OutlinedButton(onClick = { resourceMenuOpen = true }, shape = RoundedCornerShape(10.dp)) {
+                Text("Pick", fontSize = 11.sp)
+              }
+              DropdownMenu(expanded = resourceMenuOpen, onDismissRequest = { resourceMenuOpen = false }) {
+                when (bindKind) {
+                  "KV" -> uiState.kvNamespaces.forEach { ns ->
+                    DropdownMenuItem(text = { Text(ns.title) }, onClick = { bindResourceId = ns.id; resourceMenuOpen = false })
+                  }
+                  "D1" -> uiState.d1Databases.forEach { db ->
+                    DropdownMenuItem(text = { Text(db.name) }, onClick = { bindResourceId = db.uuid; resourceMenuOpen = false })
+                  }
+                  "R2" -> uiState.r2Buckets.forEach { b ->
+                    DropdownMenuItem(text = { Text(b.name) }, onClick = { bindResourceId = b.name; resourceMenuOpen = false })
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        FilledTonalButton(
+          onClick = {
+            val cleanVar = bindVarName.trim()
+            val cleanTarget = bindResourceId.trim()
+            if (cleanVar.isNotBlank() && cleanTarget.isNotBlank()) {
+              when (bindKind) {
+                "KV" -> onUpdateBindings(envMode, existingKvMap + (cleanVar to cleanTarget), existingD1Map, existingR2Map)
+                "D1" -> onUpdateBindings(envMode, existingKvMap, existingD1Map + (cleanVar to cleanTarget), existingR2Map)
+                "R2" -> onUpdateBindings(envMode, existingKvMap, existingD1Map, existingR2Map + (cleanVar to cleanTarget))
+              }
+            }
+          },
+          enabled = bindVarName.isNotBlank() && bindResourceId.isNotBlank() && !uiState.isPagesBusy,
+          modifier = Modifier.fillMaxWidth().testTag("pages_save_binding_button"),
+        ) {
+          Text("Add $bindKind Binding to $envMode")
+        }
+      }
+    }
+
+    HorizontalDivider(color = palette.treeLine)
+
     // Custom Domains
     Text("CUSTOM DOMAINS (${uiState.pagesDomains.size})", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
     uiState.pagesDomains.forEach { dom ->
@@ -728,6 +897,64 @@ private fun PagesProjectDetailView(
         },
         enabled = domainInput.isNotBlank(),
       ) { Text("Add") }
+    }
+  }
+}
+
+@Composable
+private fun PagesSpecialFilesCard(
+  onCreatePagesSpecialFile: (String) -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  Surface(color = palette.chromePill, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      Text("PAGES FUNCTIONS & ROUTING FILES", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+      Text(
+        text = "1-tap create standard Pages config or edge function handlers in workspace:",
+        style = MaterialTheme.typography.labelSmall,
+        color = palette.textSecondary,
+      )
+      Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        listOf("_headers", "_redirects", "_routes.json", "functions/api/hello.js").forEach { kind ->
+          OutlinedButton(
+            onClick = { onCreatePagesSpecialFile(kind) },
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.testTag("pages_create_${kind.replace('/', '_')}"),
+          ) {
+            Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(kind, fontSize = 11.sp)
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun PagesBindingRow(
+  kind: String,
+  varName: String,
+  target: String,
+  onDelete: () -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  Surface(color = palette.editorBg, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
+    Row(modifier = Modifier.padding(start = 8.dp, end = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+      Surface(color = palette.activePillBg, shape = RoundedCornerShape(4.dp)) {
+        Text(kind, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = palette.activePillFg, modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp))
+      }
+      Spacer(Modifier.width(8.dp))
+      Column(modifier = Modifier.weight(1f)) {
+        Text(varName, style = MaterialTheme.typography.labelMedium, color = palette.textPrimary)
+        Text(target.take(16), style = MaterialTheme.typography.labelSmall, color = palette.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+      }
+      IconButton(onClick = onDelete, modifier = Modifier.size(28.dp)) {
+        Icon(Icons.Outlined.DeleteOutline, contentDescription = "Remove $varName binding", modifier = Modifier.size(14.dp))
+      }
     }
   }
 }
