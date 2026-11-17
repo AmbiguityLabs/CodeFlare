@@ -25,7 +25,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Description
@@ -34,12 +34,16 @@ import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.NoteAdd
+import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SnippetFolder
 import androidx.compose.material.icons.outlined.StarOutline
+import androidx.compose.material.icons.outlined.UnfoldLess
+import androidx.compose.material.icons.outlined.UnfoldMore
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
@@ -80,6 +84,8 @@ import com.example.ui.theme.FolderYellow
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.viewmodel.IdeUiState
+
+private enum class TreeSortMode { NAME, TYPE }
 
 private sealed class ProjectTreeEntry {
   abstract val id: String
@@ -127,6 +133,8 @@ fun ProjectFilesSidebar(
   var activeSubTab by remember { mutableIntStateOf(0) } // 0 = Files, 1 = Search, 2 = Snippets
   var pendingDeleteModule by remember { mutableStateOf<String?>(null) }
   var uploadMenuOpen by remember { mutableStateOf(false) }
+  var treeOverflowMenuOpen by remember { mutableStateOf(false) }
+  var sortMode by remember { mutableStateOf(TreeSortMode.NAME) }
   val expandedFolders = remember { mutableStateMapOf<String, Boolean>() }
 
   pendingDeleteModule?.let { moduleToDelete ->
@@ -159,126 +167,139 @@ fun ProjectFilesSidebar(
         .fillMaxSize()
         .background(palette.chromeBg),
   ) {
-    // Clean Project Sidebar Header
+    // Top Segmented Pill Switcher + Collapse Button (matching Reference 1)
     Row(
       modifier =
         Modifier
           .fillMaxWidth()
-          .padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 8.dp),
+          .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 6.dp),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(8.dp),
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-      Column(modifier = Modifier.weight(1f)) {
-        Text(
-          text = uiState.workspace?.scriptName ?: "Project",
-          style = MaterialTheme.typography.titleMedium,
-          color = palette.textPrimary,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-        )
-        val editableCount = uiState.workspace?.files?.count { !it.isVirtualReadOnly } ?: 0
-        val dirtyCount = uiState.workspace?.files?.count { it.isDirty } ?: 0
-        Text(
-          text =
-            if (dirtyCount > 0) "$editableCount files · $dirtyCount edited"
-            else "$editableCount files · Synced in RAM",
-          style = MaterialTheme.typography.labelSmall,
-          color = if (dirtyCount > 0) AmberWarn else palette.textMuted,
-          maxLines = 1,
-        )
+      Surface(
+        color = palette.chromeSurface,
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
+        modifier = Modifier.weight(1f).height(44.dp),
+      ) {
+        Row(
+          modifier = Modifier.fillMaxSize().padding(4.dp),
+          horizontalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+          SidebarSegmentChip(
+            selected = activeSubTab == 0,
+            icon = Icons.Outlined.Description,
+            label = "Files",
+            tag = "rail_explorer",
+            onClick = { activeSubTab = 0 },
+            modifier = Modifier.weight(1f),
+          )
+          SidebarSegmentChip(
+            selected = activeSubTab == 1,
+            icon = Icons.Outlined.Search,
+            label = "Search",
+            tag = "rail_search",
+            onClick = { activeSubTab = 1 },
+            modifier = Modifier.weight(1f),
+          )
+          SidebarSegmentChip(
+            selected = activeSubTab == 2,
+            icon = Icons.Outlined.SnippetFolder,
+            label = "Snippets",
+            tag = "rail_snippets",
+            onClick = { activeSubTab = 2 },
+            modifier = Modifier.weight(1f),
+          )
+        }
       }
 
       if (showCloseButton) {
         IconButton(
           onClick = onCloseDrawerIfCompact,
-          modifier = Modifier.size(36.dp).testTag("collapse_sidebar_button"),
+          modifier = Modifier.size(38.dp).testTag("collapse_sidebar_button"),
         ) {
           Icon(
-            imageVector = Icons.Outlined.Close,
+            imageVector = Icons.Outlined.Remove,
             contentDescription = "Close files drawer",
             tint = palette.textSecondary,
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(20.dp),
           )
         }
       }
     }
 
-    // Focused 3-Tab Segmented Switcher (Files / Search / Snippets)
-    Surface(
-      color = palette.chromePill,
-      shape = RoundedCornerShape(12.dp),
-      modifier =
-        Modifier
-          .fillMaxWidth()
-          .padding(horizontal = 12.dp, vertical = 4.dp)
-          .height(38.dp),
-    ) {
-      Row(
-        modifier = Modifier.fillMaxSize().padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-      ) {
-        SidebarSegmentChip(
-          selected = activeSubTab == 0,
-          icon = Icons.Outlined.Description,
-          label = "Files",
-          tag = "rail_explorer",
-          onClick = { activeSubTab = 0 },
-          modifier = Modifier.weight(1f),
-        )
-        SidebarSegmentChip(
-          selected = activeSubTab == 1,
-          icon = Icons.Outlined.Search,
-          label = "Search",
-          tag = "rail_search",
-          onClick = { activeSubTab = 1 },
-          modifier = Modifier.weight(1f),
-        )
-        SidebarSegmentChip(
-          selected = activeSubTab == 2,
-          icon = Icons.Outlined.SnippetFolder,
-          label = "Snippets",
-          tag = "rail_snippets",
-          onClick = { activeSubTab = 2 },
-          modifier = Modifier.weight(1f),
-        )
-      }
-    }
-
-    Spacer(Modifier.height(4.dp))
-
     when (activeSubTab) {
       0 -> {
-        // Project File Actions Bar
+        val ws = uiState.workspace
+        val treeRows =
+          remember(ws, expandedFolders.toMap(), sortMode) {
+            ws?.let {
+              buildProjectTreeEntries(it.scriptName, it.files, it.directories, expandedFolders, sortMode)
+            }.orEmpty()
+          }
+        val editableFileCount = remember(ws) { ws?.files?.count { !it.isVirtualReadOnly } ?: 0 }
+
+        // Project Pill + Compact Icon Actions Row (matching Reference 1)
         Row(
           modifier =
             Modifier
               .fillMaxWidth()
-              .padding(horizontal = 12.dp, vertical = 4.dp),
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
+              .padding(start = 12.dp, end = 6.dp, top = 2.dp, bottom = 6.dp),
           verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-          QuickFileActionButton(
-            icon = Icons.Outlined.NoteAdd,
-            label = "File",
-            tag = "add_module_file_button",
+          Surface(
+            color = palette.chromePill,
+            shape = RoundedCornerShape(999.dp),
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.55f)),
+            modifier = Modifier.weight(1f, fill = false),
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+              Text(
+                text = ws?.scriptName ?: "Project",
+                fontSize = 12.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = palette.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+              )
+              Icon(
+                imageVector = Icons.Outlined.KeyboardArrowDown,
+                contentDescription = null,
+                tint = palette.textSecondary,
+                modifier = Modifier.size(16.dp),
+              )
+            }
+          }
+
+          Spacer(Modifier.weight(1f))
+
+          IconButton(
             onClick = { onShowNewFileDialog("") },
-            modifier = Modifier.weight(1f),
-          )
-          QuickFileActionButton(
-            icon = Icons.Outlined.CreateNewFolder,
-            label = "Folder",
-            tag = "add_module_dir_button",
+            modifier = Modifier.size(34.dp).testTag("add_module_file_button"),
+          ) {
+            Icon(Icons.Outlined.NoteAdd, contentDescription = "New File", tint = palette.textSecondary, modifier = Modifier.size(18.dp))
+          }
+
+          IconButton(
             onClick = { onShowNewDirectoryDialog("") },
-            modifier = Modifier.weight(1f),
-          )
-          Box(modifier = Modifier.weight(1f)) {
-            QuickFileActionButton(
-              icon = Icons.Outlined.UploadFile,
-              label = "Upload",
-              tag = "upload_files_menu_button",
+            modifier = Modifier.size(34.dp).testTag("add_module_dir_button"),
+          ) {
+            Icon(Icons.Outlined.CreateNewFolder, contentDescription = "New Folder", tint = palette.textSecondary, modifier = Modifier.size(18.dp))
+          }
+
+          Box {
+            IconButton(
               onClick = { uploadMenuOpen = true },
-              modifier = Modifier.fillMaxWidth(),
-            )
+              modifier = Modifier.size(34.dp).testTag("upload_files_menu_button"),
+            ) {
+              Icon(Icons.Outlined.UploadFile, contentDescription = "Upload or Export", tint = palette.textSecondary, modifier = Modifier.size(18.dp))
+            }
             DropdownMenu(expanded = uploadMenuOpen, onDismissRequest = { uploadMenuOpen = false }) {
               DropdownMenuItem(
                 text = { Text("Upload Single File") },
@@ -305,21 +326,88 @@ fun ProjectFilesSidebar(
               }
             }
           }
+
+          // Floating 20.dp Explorer Overflow Menu (matching Reference 1 popup!)
+          Box {
+            IconButton(
+              onClick = { treeOverflowMenuOpen = true },
+              modifier = Modifier.size(34.dp).testTag("explorer_overflow_button"),
+            ) {
+              Icon(Icons.Outlined.MoreHoriz, contentDescription = "Explorer menu", tint = palette.textSecondary, modifier = Modifier.size(19.dp))
+            }
+
+            if (treeOverflowMenuOpen) {
+              Popup(
+                alignment = Alignment.TopEnd,
+                onDismissRequest = { treeOverflowMenuOpen = false },
+                properties = PopupProperties(focusable = true),
+              ) {
+                Surface(
+                  color = palette.chromePill,
+                  shape = RoundedCornerShape(20.dp),
+                  shadowElevation = 10.dp,
+                  border = BorderStroke(1.dp, palette.border.copy(alpha = 0.7f)),
+                  modifier = Modifier.widthIn(min = 210.dp, max = 250.dp),
+                ) {
+                  Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                    ProjectPopupMenuRow(Icons.Outlined.Add, "New file") {
+                      treeOverflowMenuOpen = false
+                      onShowNewFileDialog("")
+                    }
+                    ProjectPopupMenuRow(Icons.Outlined.Folder, "New folder") {
+                      treeOverflowMenuOpen = false
+                      onShowNewDirectoryDialog("")
+                    }
+                    ProjectPopupMenuRow(Icons.Outlined.UnfoldMore, "Expand all") {
+                      treeOverflowMenuOpen = false
+                      expandedFolders.keys.toList().forEach { k -> expandedFolders[k] = true }
+                    }
+                    ProjectPopupMenuRow(Icons.Outlined.UnfoldLess, "Collapse all") {
+                      treeOverflowMenuOpen = false
+                      ws?.files.orEmpty().forEach { f ->
+                        val parts = f.path.split('/')
+                        for (i in 1 until parts.size) {
+                          expandedFolders["folder_${parts.subList(0, i).joinToString("/")}"] = false
+                        }
+                      }
+                      ws?.directories.orEmpty().forEach { d ->
+                        expandedFolders["folder_$d"] = false
+                      }
+                    }
+                    HorizontalDivider(
+                      color = palette.border.copy(alpha = 0.5f),
+                      modifier = Modifier.padding(vertical = 6.dp),
+                    )
+                    Text(
+                      text = "Sort by",
+                      style = MaterialTheme.typography.labelSmall,
+                      color = palette.textMuted,
+                      modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
+                    )
+                    SortOptionRow(
+                      label = "Name",
+                      selected = sortMode == TreeSortMode.NAME,
+                      onClick = {
+                        sortMode = TreeSortMode.NAME
+                        treeOverflowMenuOpen = false
+                      },
+                    )
+                    SortOptionRow(
+                      label = "Type",
+                      selected = sortMode == TreeSortMode.TYPE,
+                      onClick = {
+                        sortMode = TreeSortMode.TYPE
+                        treeOverflowMenuOpen = false
+                      },
+                    )
+                  }
+                }
+              }
+            }
+          }
         }
 
-        HorizontalDivider(
-          color = palette.border.copy(alpha = 0.3f),
-          modifier = Modifier.padding(top = 4.dp),
-        )
-
-        val ws = uiState.workspace
-        val treeRows =
-          remember(ws, expandedFolders.toMap()) {
-            ws?.let {
-              buildProjectTreeEntries(it.scriptName, it.files, it.directories, expandedFolders)
-            }.orEmpty()
-          }
-        val editableFileCount = remember(ws) { ws?.files?.count { !it.isVirtualReadOnly } ?: 0 }
+        HorizontalDivider(color = palette.border.copy(alpha = 0.35f))
 
         LazyColumn(
           modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
@@ -450,7 +538,7 @@ private fun SidebarSegmentChip(
     modifier =
       modifier
         .fillMaxHeight()
-        .clip(RoundedCornerShape(9.dp))
+        .clip(RoundedCornerShape(14.dp))
         .background(if (selected) palette.activePillBg else Color.Transparent)
         .clickable(onClick = onClick)
         .testTag(tag),
@@ -461,7 +549,7 @@ private fun SidebarSegmentChip(
       imageVector = icon,
       contentDescription = label,
       tint = if (selected) palette.activePillFg else palette.textSecondary,
-      modifier = Modifier.size(15.dp),
+      modifier = Modifier.size(16.dp),
     )
     Spacer(Modifier.width(4.dp))
     Text(
@@ -471,40 +559,6 @@ private fun SidebarSegmentChip(
       color = if (selected) palette.activePillFg else palette.textSecondary,
       maxLines = 1,
     )
-  }
-}
-
-@Composable
-private fun QuickFileActionButton(
-  icon: ImageVector,
-  label: String,
-  tag: String,
-  onClick: () -> Unit,
-  modifier: Modifier = Modifier,
-) {
-  val palette = LocalIdePalette.current
-  Surface(
-    onClick = onClick,
-    shape = RoundedCornerShape(10.dp),
-    color = palette.chromeSurface,
-    border = BorderStroke(1.dp, palette.border.copy(alpha = 0.35f)),
-    modifier = modifier.testTag(tag),
-  ) {
-    Row(
-      modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.Center,
-    ) {
-      Icon(icon, contentDescription = label, tint = palette.textPrimary, modifier = Modifier.size(15.dp))
-      Spacer(Modifier.width(5.dp))
-      Text(
-        text = label,
-        fontSize = 11.sp,
-        fontWeight = FontWeight.Medium,
-        color = palette.textPrimary,
-        maxLines = 1,
-      )
-    }
   }
 }
 
@@ -735,11 +789,45 @@ private fun ProjectPopupMenuRow(
   }
 }
 
+@Composable
+private fun SortOptionRow(
+  label: String,
+  selected: Boolean,
+  onClick: () -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  Row(
+    modifier =
+      Modifier
+        .fillMaxWidth()
+        .clickable(onClick = onClick)
+        .padding(start = 46.dp, end = 18.dp, top = 10.dp, bottom = 10.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.SpaceBetween,
+  ) {
+    Text(
+      text = label,
+      style = MaterialTheme.typography.bodyMedium,
+      fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+      color = if (selected) palette.activePillFg else palette.textPrimary,
+    )
+    if (selected) {
+      Icon(
+        imageVector = Icons.Outlined.Check,
+        contentDescription = "Selected",
+        tint = palette.activePillFg,
+        modifier = Modifier.size(16.dp),
+      )
+    }
+  }
+}
+
 private fun buildProjectTreeEntries(
   rootName: String,
   files: List<WorkerFile>,
   extraDirectories: Set<String>,
   expandedMap: Map<String, Boolean>,
+  sortMode: TreeSortMode = TreeSortMode.NAME,
 ): List<ProjectTreeEntry> {
   val result = mutableListOf<ProjectTreeEntry>()
   val rootId = "folder_root_$rootName"
@@ -747,7 +835,16 @@ private fun buildProjectTreeEntries(
   if (expandedMap[rootId] == false) return result
 
   val emittedFolders = mutableSetOf<String>()
-  val sortedFiles = files.sortedWith(compareBy<WorkerFile> { !it.path.contains('/') }.thenBy { it.path })
+  val sortedFiles =
+    when (sortMode) {
+      TreeSortMode.NAME -> files.sortedWith(compareBy<WorkerFile> { !it.path.contains('/') }.thenBy { it.path.lowercase() })
+      TreeSortMode.TYPE ->
+        files.sortedWith(
+          compareBy<WorkerFile> { !it.path.contains('/') }
+            .thenBy { it.path.substringAfterLast('.', "").lowercase() }
+            .thenBy { it.path.lowercase() },
+        )
+    }
 
   for (file in sortedFiles) {
     val parts = file.path.split('/')

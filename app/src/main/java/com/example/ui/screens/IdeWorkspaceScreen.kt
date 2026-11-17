@@ -39,6 +39,7 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Restore
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Terminal
@@ -101,7 +102,6 @@ import com.example.ui.components.PaletteCommand
 import com.example.ui.components.ProblemsView
 import com.example.ui.components.ProjectFilesSidebar
 import com.example.ui.components.RenameFileDialog
-import com.example.ui.components.SettingsPanel
 import com.example.ui.components.WorkerTestWindow
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
@@ -273,47 +273,41 @@ fun IdeWorkspaceScreen(
   }
 
   if (showProjectSettingsModal) {
-    Dialog(
-      onDismissRequest = { showProjectSettingsModal = false },
-      properties = DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-      Surface(
-        color = palette.chromeBg,
-        shape = RoundedCornerShape(20.dp),
-        border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 28.dp),
-      ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-          Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 8.dp, top = 12.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-          ) {
-            Text(
-              text = "IDE Preferences",
-              style = MaterialTheme.typography.titleMedium,
-              fontWeight = FontWeight.SemiBold,
-              color = palette.textPrimary,
-            )
-            IconButton(onClick = { showProjectSettingsModal = false }) {
-              Icon(Icons.Outlined.Close, contentDescription = "Close preferences", tint = palette.textSecondary)
+    Box(modifier = Modifier.fillMaxSize()) {
+      SettingsScreen(
+        uiState = uiState,
+        onBack = { showProjectSettingsModal = false },
+        onUpdateSettings = viewModel::updateSettings,
+        onSelectAccount = viewModel::selectAccount,
+        onVerifyCredentials = viewModel::verifyCloudflareCredentials,
+        onUpdateApiToken = viewModel::updateCloudflareApiToken,
+        onUpdateGlobalKey = viewModel::updateCloudflareGlobalKey,
+        onStartOAuth = {
+          viewModel.startOAuthSignIn { authUrl ->
+            runCatching {
+              context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(authUrl)))
             }
           }
-          HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
-          Box(modifier = Modifier.height(480.dp)) {
-            SettingsPanel(
-              uiState = uiState,
-              onUpdateSettings = viewModel::updateSettings,
-              onSignOut = {
-                showProjectSettingsModal = false
-                if (uiState.isLocalScratchpad || uiState.isGitHubIdeOnlyMode) viewModel.exitScratchpadToAuth()
-                else viewModel.signOut()
-              },
-            )
-          }
-        }
-      }
+        },
+        onCancelOAuth = viewModel::cancelOAuthSignIn,
+        onClearCredentialFeedback = viewModel::clearCloudflareCredentialTestMessage,
+        onDisconnectCloudflare = {
+          showProjectSettingsModal = false
+          if (uiState.isLocalScratchpad || uiState.isGitHubIdeOnlyMode) viewModel.exitScratchpadToAuth()
+          else viewModel.signOut()
+        },
+        onOpenGitHubHub = {
+          showProjectSettingsModal = false
+          showProjectGitModal = true
+        },
+        onNotify = viewModel::showStatus,
+      )
+      SnackbarHost(
+        hostState = snackbarHostState,
+        modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().imePadding().padding(16.dp),
+      )
     }
+    return
   }
 
   if (showProjectGitModal) {
@@ -411,6 +405,16 @@ fun IdeWorkspaceScreen(
   }
 
   if (showCommandPalette) {
+    val fileCommands =
+      uiState.workspace?.files.orEmpty().map { file ->
+        PaletteCommand(
+          title = "Open ${file.path}",
+          subtitle = if (file.isEntryPoint) "Worker entry module" else "Workspace file",
+        ) {
+          viewModel.openFileTab(file.path, recordHistory = true)
+          viewModel.setProjectMode(ProjectMode.CODE)
+        }
+      }
     val commands =
       listOf(
         PaletteCommand("Switch to Code Mode", "Open full-screen editor for current project") {
@@ -431,8 +435,14 @@ fun IdeWorkspaceScreen(
         PaletteCommand("Open Project Terminal", "Run curl, jq, wrangler, and Linux commands") {
           viewModel.toggleBottomPanel(BottomPanelTab.TERMINAL)
         },
+        PaletteCommand("Open Problems (${uiState.diagnostics.size})", "Inspect syntax & Worker diagnostics") {
+          viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS)
+        },
         PaletteCommand("Toggle Live Tail Logs", "Stream real-time console.log() via WebSocket") {
           viewModel.toggleLiveTail()
+        },
+        PaletteCommand("Open IDE Log", "Inspect internal IDE deployment & API event log") {
+          viewModel.toggleBottomPanel(BottomPanelTab.CONSOLE)
         },
         PaletteCommand("Export / Deploy Worker to Cloudflare", "Publish all local RAM edits, bindings & deletions live") {
           viewModel.deployActiveWorker()
@@ -467,10 +477,13 @@ fun IdeWorkspaceScreen(
         PaletteCommand("Git Sync (Optional)", "Stage, commit & push project changes to GitHub") {
           showProjectGitModal = true
         },
+        PaletteCommand("Settings & Cloudflare Credentials", "API tokens, deployment defaults, theme & editor preferences") {
+          showProjectSettingsModal = true
+        },
         PaletteCommand("Back to All Projects (Home)", "Return to the Home Projects Hub") {
           viewModel.closeWorkspaceToHome()
         },
-      )
+      ) + fileCommands
     CommandPaletteDialog(commands = commands, onDismiss = { showCommandPalette = false })
   }
 
@@ -544,17 +557,34 @@ fun IdeWorkspaceScreen(
             }
 
             Column(
-              modifier = Modifier.weight(1f),
+              modifier =
+                Modifier
+                  .weight(1f)
+                  .clip(RoundedCornerShape(8.dp))
+                  .clickable { showCommandPalette = true }
+                  .padding(horizontal = 4.dp, vertical = 2.dp),
               verticalArrangement = Arrangement.spacedBy(1.dp),
             ) {
-              Text(
-                text = uiState.workspace?.scriptName ?: "Project",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = palette.textPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-              )
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+              ) {
+                Text(
+                  text = uiState.workspace?.scriptName ?: "Project",
+                  style = MaterialTheme.typography.titleSmall,
+                  fontWeight = FontWeight.SemiBold,
+                  color = palette.textPrimary,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                  modifier = Modifier.weight(1f, fill = false),
+                )
+                Icon(
+                  imageVector = Icons.Outlined.Search,
+                  contentDescription = "Open Command Palette",
+                  tint = palette.textMuted,
+                  modifier = Modifier.size(13.dp),
+                )
+              }
               val fileCount = uiState.workspace?.files?.count { !it.isVirtualReadOnly } ?: 0
               val dirtyCount = uiState.workspace?.files?.count { it.isDirty } ?: 0
               Text(
@@ -570,6 +600,20 @@ fun IdeWorkspaceScreen(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
               )
+            }
+
+            if (!isExpanded && uiState.workspace != null) {
+              IconButton(
+                onClick = { scope.launch { drawerState.open() } },
+                modifier = Modifier.size(36.dp).testTag("workspace_quick_files_button"),
+              ) {
+                Icon(
+                  imageVector = Icons.Outlined.FolderOpen,
+                  contentDescription = "Open Project Files",
+                  tint = palette.textSecondary,
+                  modifier = Modifier.size(18.dp),
+                )
+              }
             }
 
             if (uiState.workspace != null) {
@@ -710,7 +754,7 @@ fun IdeWorkspaceScreen(
                   },
                 )
                 DropdownMenuItem(
-                  text = { Text("IDE Preferences") },
+                  text = { Text("Settings & Credentials") },
                   leadingIcon = { Icon(Icons.Outlined.Settings, contentDescription = null) },
                   onClick = {
                     overflowMenuOpen = false
@@ -878,7 +922,7 @@ fun IdeWorkspaceScreen(
 
         SnackbarHost(
           hostState = snackbarHostState,
-          modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 62.dp),
+          modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp),
         )
       }
     }
@@ -917,44 +961,39 @@ private fun ProjectTestModeWorkspace(
     }
 
   Column(modifier = Modifier.fillMaxSize().background(palette.chromeBg)) {
-    Surface(
-      color = palette.chromePill,
-      shape = RoundedCornerShape(12.dp),
+    Row(
       modifier =
         Modifier
           .fillMaxWidth()
-          .padding(horizontal = 12.dp, vertical = 8.dp)
-          .height(38.dp),
+          .background(palette.chromeSurface)
+          .padding(horizontal = 10.dp, vertical = 6.dp),
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
+      verticalAlignment = Alignment.CenterVertically,
     ) {
-      Row(
-        modifier = Modifier.fillMaxSize().padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-      ) {
-        ModeSegmentChip(
-          label = "Preview",
-          selected = activeTab == BottomPanelTab.WORKER_PREVIEW,
-          tag = "test_segment_preview",
-          onClick = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
-          modifier = Modifier.weight(1f),
-        )
-        ModeSegmentChip(
-          label = "Worker HTTP",
-          selected = activeTab == BottomPanelTab.WORKER_TEST,
-          tag = "test_segment_worker_http",
-          onClick = { viewModel.openWorkerTestWindow(maximizeWindow = true) },
-          modifier = Modifier.weight(1f),
-        )
-        ModeSegmentChip(
-          label = "API Tester",
-          selected = activeTab == BottomPanelTab.API_TESTER,
-          tag = "test_segment_api_tester",
-          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.API_TESTER) },
-          modifier = Modifier.weight(1f),
-        )
-      }
+      ModeSegmentChip(
+        label = "Preview",
+        selected = activeTab == BottomPanelTab.WORKER_PREVIEW,
+        tag = "test_segment_preview",
+        onClick = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
+        modifier = Modifier.weight(1f),
+      )
+      ModeSegmentChip(
+        label = "Worker HTTP",
+        selected = activeTab == BottomPanelTab.WORKER_TEST,
+        tag = "test_segment_worker_http",
+        onClick = { viewModel.openWorkerTestWindow(maximizeWindow = true) },
+        modifier = Modifier.weight(1f),
+      )
+      ModeSegmentChip(
+        label = "API Tester",
+        selected = activeTab == BottomPanelTab.API_TESTER,
+        tag = "test_segment_api_tester",
+        onClick = { viewModel.toggleBottomPanel(BottomPanelTab.API_TESTER) },
+        modifier = Modifier.weight(1f),
+      )
     }
 
-    HorizontalDivider(color = palette.border.copy(alpha = 0.4f))
+    HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
 
     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
       when (activeTab) {
@@ -1028,51 +1067,50 @@ private fun ProjectConsoleModeWorkspace(
     }
 
   Column(modifier = Modifier.fillMaxSize().background(palette.chromeBg)) {
-    Surface(
-      color = palette.chromePill,
-      shape = RoundedCornerShape(12.dp),
+    Row(
       modifier =
         Modifier
           .fillMaxWidth()
-          .padding(horizontal = 12.dp, vertical = 8.dp)
-          .height(38.dp),
+          .background(palette.chromeSurface)
+          .padding(horizontal = 10.dp, vertical = 6.dp),
+      horizontalArrangement = Arrangement.spacedBy(5.dp),
+      verticalAlignment = Alignment.CenterVertically,
     ) {
-      Row(
-        modifier = Modifier.fillMaxSize().padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-      ) {
-        ModeSegmentChip(
-          label = "Terminal",
-          selected = activeTab == BottomPanelTab.TERMINAL,
-          tag = "console_segment_terminal",
-          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.TERMINAL) },
-          modifier = Modifier.weight(1f),
-        )
-        ModeSegmentChip(
-          label = if (uiState.isTailRunning) "Tail •" else "Live Tail",
-          selected = activeTab == BottomPanelTab.TAIL_LOGS,
-          tag = "console_segment_tail",
-          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.TAIL_LOGS) },
-          modifier = Modifier.weight(1f),
-        )
-        ModeSegmentChip(
-          label = "Problems (${uiState.diagnostics.size})",
-          selected = activeTab == BottomPanelTab.PROBLEMS,
-          tag = "console_segment_problems",
-          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS) },
-          modifier = Modifier.weight(1.1f),
-        )
-        ModeSegmentChip(
-          label = "Log",
-          selected = activeTab == BottomPanelTab.CONSOLE,
-          tag = "console_segment_log",
-          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.CONSOLE) },
-          modifier = Modifier.weight(0.75f),
-        )
-      }
+      ModeSegmentChip(
+        label = "Terminal",
+        selected = activeTab == BottomPanelTab.TERMINAL,
+        tag = "console_segment_terminal",
+        onClick = { viewModel.toggleBottomPanel(BottomPanelTab.TERMINAL) },
+        modifier = Modifier.weight(1f),
+      )
+      ModeSegmentChip(
+        label = "Live Tail",
+        selected = activeTab == BottomPanelTab.TAIL_LOGS,
+        tag = "console_segment_tail",
+        badgeText = if (uiState.isTailRunning) "LIVE" else null,
+        badgeColor = EmeraldLive,
+        onClick = { viewModel.toggleBottomPanel(BottomPanelTab.TAIL_LOGS) },
+        modifier = Modifier.weight(1.05f),
+      )
+      ModeSegmentChip(
+        label = "Problems",
+        selected = activeTab == BottomPanelTab.PROBLEMS,
+        tag = "console_segment_problems",
+        badgeText = uiState.diagnostics.size.takeIf { it > 0 }?.toString(),
+        badgeColor = AmberWarn,
+        onClick = { viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS) },
+        modifier = Modifier.weight(1.05f),
+      )
+      ModeSegmentChip(
+        label = "Log",
+        selected = activeTab == BottomPanelTab.CONSOLE,
+        tag = "console_segment_log",
+        onClick = { viewModel.toggleBottomPanel(BottomPanelTab.CONSOLE) },
+        modifier = Modifier.weight(0.7f),
+      )
     }
 
-    HorizontalDivider(color = palette.border.copy(alpha = 0.4f))
+    HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
 
     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
       when (activeTab) {
@@ -1116,25 +1154,58 @@ private fun ModeSegmentChip(
   tag: String,
   onClick: () -> Unit,
   modifier: Modifier = Modifier,
+  badgeText: String? = null,
+  badgeColor: Color? = null,
 ) {
   val palette = LocalIdePalette.current
-  Box(
-    modifier =
-      modifier
-        .fillMaxHeight()
-        .clip(RoundedCornerShape(9.dp))
-        .background(if (selected) palette.activePillBg else Color.Transparent)
-        .clickable(onClick = onClick)
-        .testTag(tag),
-    contentAlignment = Alignment.Center,
+  val fg = if (selected) palette.activePillFg else palette.textSecondary
+
+  Surface(
+    onClick = onClick,
+    shape = RoundedCornerShape(8.dp),
+    color = if (selected) palette.activePillBg else palette.chromeBg,
+    border =
+      BorderStroke(
+        1.dp,
+        if (selected) palette.activePillFg.copy(alpha = 0.3f) else palette.border.copy(alpha = 0.45f),
+      ),
+    modifier = modifier.height(30.dp).testTag(tag),
   ) {
-    Text(
-      text = label,
-      fontSize = 11.sp,
-      fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-      color = if (selected) palette.activePillFg else palette.textSecondary,
-      maxLines = 1,
-      overflow = TextOverflow.Ellipsis,
-    )
+    Row(
+      modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.Center,
+    ) {
+      Text(
+        text = label,
+        fontSize = 11.sp,
+        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+        color = fg,
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Ellipsis,
+      )
+      if (!badgeText.isNullOrBlank()) {
+        Spacer(Modifier.width(4.dp))
+        val bColor = badgeColor ?: palette.activePillFg
+        Box(
+          modifier =
+            Modifier
+              .clip(RoundedCornerShape(4.dp))
+              .background(bColor.copy(alpha = 0.16f))
+              .padding(horizontal = 4.dp, vertical = 1.dp),
+        ) {
+          Text(
+            text = badgeText,
+            fontFamily = JetBrainsMono,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            color = bColor,
+            maxLines = 1,
+            softWrap = false,
+          )
+        }
+      }
+    }
   }
 }

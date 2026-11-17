@@ -1067,8 +1067,8 @@ private fun EditorFileTabBar(
                       modifier =
                         Modifier
                           .fillMaxWidth()
-                          .height(2.dp)
-                          .background(palette.activePillFg),
+                          .height(2.5.dp)
+                          .background(palette.ctaBg),
                     )
                   }
                 }
@@ -1315,39 +1315,75 @@ private fun AllTabsClosedState(
     contentAlignment = Alignment.Center,
   ) {
     Column(
-      modifier = Modifier.widthIn(max = 400.dp),
-      horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.spacedBy(10.dp),
+      modifier = Modifier.widthIn(max = 360.dp),
+      horizontalAlignment = Alignment.Start,
+      verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
       Text(
         text = workerName,
-        style = MaterialTheme.typography.titleMedium,
+        fontSize = 18.sp,
         fontWeight = FontWeight.Bold,
         color = palette.textPrimary,
       )
       Text(
-        text = "All editor tabs are closed. Pick a file from RAM or create a new module to continue editing on-device.",
+        text = "Select a file or jump straight into editing",
         style = MaterialTheme.typography.bodySmall,
-        color = palette.textSecondary,
-        textAlign = TextAlign.Center,
+        color = palette.textMuted,
       )
-      files.take(4).forEach { file ->
-        FilledTonalButton(
-          onClick = { onOpenFile(file.path) },
-          shape = RoundedCornerShape(10.dp),
-          modifier = Modifier.fillMaxWidth().height(48.dp),
-        ) {
-          FileTypeBadge(path = file.path)
-          Spacer(Modifier.width(8.dp))
-          Text(file.path, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-      }
-      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = onOpenExplorer, modifier = Modifier.height(48.dp)) {
-          Text("Explorer")
-        }
-        Button(onClick = onCreateNewFile, modifier = Modifier.height(48.dp)) {
-          Text("New File")
+      Spacer(Modifier.height(4.dp))
+      Surface(
+        color = palette.chromeSurface,
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Column(modifier = Modifier.padding(vertical = 6.dp)) {
+          files.take(4).forEach { file ->
+            Row(
+              modifier =
+                Modifier
+                  .fillMaxWidth()
+                  .clickable { onOpenFile(file.path) }
+                  .padding(horizontal = 16.dp, vertical = 11.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+              FileTypeBadge(path = file.path)
+              Text(
+                text = file.path,
+                style = MaterialTheme.typography.bodyMedium,
+                color = palette.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+              )
+            }
+          }
+          HorizontalDivider(color = palette.border.copy(alpha = 0.4f), modifier = Modifier.padding(vertical = 4.dp))
+          Row(
+            modifier =
+              Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onCreateNewFile)
+                .padding(horizontal = 16.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+          ) {
+            Icon(Icons.Outlined.Add, contentDescription = null, tint = palette.activePillFg, modifier = Modifier.size(18.dp))
+            Text("New File…", style = MaterialTheme.typography.bodyMedium, color = palette.textPrimary)
+          }
+          Row(
+            modifier =
+              Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onOpenExplorer)
+                .padding(horizontal = 16.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+          ) {
+            Icon(Icons.Outlined.FolderOpen, contentDescription = null, tint = palette.textSecondary, modifier = Modifier.size(18.dp))
+            Text("Project Explorer", style = MaterialTheme.typography.bodyMedium, color = palette.textPrimary)
+          }
         }
       }
     }

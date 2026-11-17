@@ -3,22 +3,28 @@ package com.example.ui.theme
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 
-// Screenshot-matched Material You Olive-Sage + Slate IDE Tokens
-val OliveBg = Color(0xFF1B1C17)
-val OliveSurfaceLow = Color(0xFF21231D)
-val OliveSurface = Color(0xFF262821)
-val OliveSurfaceHigh = Color(0xFF30332A)
-val OliveSelectedRow = Color(0xFF3F4334)
-val OliveActivePill = Color(0xFF4F6223)
-val OliveLimeText = Color(0xFFD6F58D)
-val OliveBorder = Color(0xFF33362C)
+// Reference-matched Material 3 Expressive Olive-Obsidian + Chartreuse IDE Tokens
+val OliveBg = Color(0xFF12140E)
+val OliveSurfaceLow = Color(0xFF1B1E17)
+val OliveSurface = Color(0xFF23271E)
+val OliveSurfaceHigh = Color(0xFF2D3226)
+val OliveSelectedRow = Color(0xFF343B29)
+val OliveActivePill = Color(0xFF47571C)
+val OliveLimeText = Color(0xFFD6F462)
+val OliveCtaBg = Color(0xFFD2F258)
+val OliveCtaFg = Color(0xFF1A2302)
+val OliveBorder = Color(0xFF2C3125)
 
-val SlateEditorBg = Color(0xFF1E2028)
-val SlateEditorGutter = Color(0xFF1E2028)
-val SlateActiveLine = Color(0xFF2A2D37)
-val SlateGutterDivider = Color(0xFF343846)
+val FeaturedResumeDarkBg = Color(0xFF51346E)
+val FeaturedResumeDarkFg = Color(0xFFF6EEFF)
+val FeaturedResumeDarkMuted = Color(0xFFD8C6EB)
 
-val BadgeJs = Color(0xFFD99B38)
+val SlateEditorBg = Color(0xFF171920)
+val SlateEditorGutter = Color(0xFF171920)
+val SlateActiveLine = Color(0xFF22252F)
+val SlateGutterDivider = Color(0xFF2B2F3C)
+
+val BadgeJs = Color(0xFFE0A43E)
 val BadgeTs = Color(0xFF38BDF8)
 val BadgeJson = Color(0xFF34D399)
 val BadgeWrangler = Color(0xFFF6821F)
@@ -38,6 +44,11 @@ data class IdePalette(
   val chromePill: Color,
   val activePillBg: Color,
   val activePillFg: Color,
+  val ctaBg: Color,
+  val ctaFg: Color,
+  val featuredCardBg: Color,
+  val featuredCardFg: Color,
+  val featuredCardMuted: Color,
   val selectedRowBg: Color,
   val editorBg: Color,
   val editorGutterBg: Color,
@@ -69,17 +80,22 @@ val DarkIdePalette =
     chromePill = OliveSurface,
     activePillBg = OliveActivePill,
     activePillFg = OliveLimeText,
+    ctaBg = OliveCtaBg,
+    ctaFg = OliveCtaFg,
+    featuredCardBg = FeaturedResumeDarkBg,
+    featuredCardFg = FeaturedResumeDarkFg,
+    featuredCardMuted = FeaturedResumeDarkMuted,
     selectedRowBg = OliveSelectedRow,
     editorBg = SlateEditorBg,
     editorGutterBg = SlateEditorGutter,
     editorActiveLineBg = SlateActiveLine,
     tabBarBg = OliveBg,
-    tabActiveBg = OliveSurfaceHigh,
-    border = SlateGutterDivider,
-    treeLine = Color(0xFF34372E),
-    textPrimary = Color(0xFFE7E9E2),
+    tabActiveBg = SlateEditorBg,
+    border = OliveBorder,
+    treeLine = Color(0xFF31362A),
+    textPrimary = Color(0xFFECEEE6),
     textSecondary = Color(0xFFA7ACA0),
-    textMuted = Color(0xFF72776B),
+    textMuted = Color(0xFF757B6D),
     syntaxKeyword = Color(0xFFC084FC),
     syntaxControl = Color(0xFFD8B4FE),
     syntaxString = Color(0xFFFBBF24),
@@ -94,22 +110,27 @@ val DarkIdePalette =
 val LightIdePalette =
   IdePalette(
     isDark = false,
-    chromeBg = Color(0xFFF3F4EE),
-    chromeSurface = Color(0xFFECEDE5),
-    chromePill = Color(0xFFE3E6DA),
-    activePillBg = Color(0xFFD5E8A8),
-    activePillFg = Color(0xFF283808),
-    selectedRowBg = Color(0xFFE0E5D3),
+    chromeBg = Color(0xFFF4F6EE),
+    chromeSurface = Color(0xFFECEFE4),
+    chromePill = Color(0xFFE2E6D7),
+    activePillBg = Color(0xFFD7EC9F),
+    activePillFg = Color(0xFF253402),
+    ctaBg = Color(0xFF4F6B11),
+    ctaFg = Color(0xFFFFFFFF),
+    featuredCardBg = Color(0xFFEDE2F8),
+    featuredCardFg = Color(0xFF2D1647),
+    featuredCardMuted = Color(0xFF5D4678),
+    selectedRowBg = Color(0xFFDCE4C9),
     editorBg = Color(0xFFFCFCFA),
     editorGutterBg = Color(0xFFF6F7F2),
     editorActiveLineBg = Color(0xFFEDF1E4),
-    tabBarBg = Color(0xFFF3F4EE),
-    tabActiveBg = Color(0xFFFFFFFF),
-    border = Color(0xFFD9DDD0),
-    treeLine = Color(0xFFD0D5C5),
-    textPrimary = Color(0xFF1C1E18),
-    textSecondary = Color(0xFF4F5447),
-    textMuted = Color(0xFF858B7B),
+    tabBarBg = Color(0xFFF4F6EE),
+    tabActiveBg = Color(0xFFFCFCFA),
+    border = Color(0xFFD4D9C9),
+    treeLine = Color(0xFFCDD3C2),
+    textPrimary = Color(0xFF1A1C15),
+    textSecondary = Color(0xFF4E5445),
+    textMuted = Color(0xFF818876),
     syntaxKeyword = Color(0xFF7C3AED),
     syntaxControl = Color(0xFF9333EA),
     syntaxString = Color(0xFFB45309),

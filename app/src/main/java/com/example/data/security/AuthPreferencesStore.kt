@@ -51,6 +51,10 @@ data class EditorSettings(
   val wordWrap: Boolean = false,
   val showLineNumbers: Boolean = true,
   val autoCloseBrackets: Boolean = true,
+  val defaultCompatibilityDate: String = "2024-11-01",
+  val defaultNodejsCompat: Boolean = false,
+  val defaultWorkersDevEnabled: Boolean = true,
+  val autoOpenPreviewOnDeploy: Boolean = false,
 )
 
 class AuthPreferencesStore(private val context: Context) {
@@ -77,6 +81,10 @@ class AuthPreferencesStore(private val context: Context) {
     val WORD_WRAP = booleanPreferencesKey("editor_word_wrap")
     val SHOW_LINE_NUMBERS = booleanPreferencesKey("editor_line_numbers")
     val AUTO_CLOSE_BRACKETS = booleanPreferencesKey("editor_auto_brackets")
+    val DEFAULT_COMPAT_DATE = stringPreferencesKey("deploy_default_compat_date")
+    val DEFAULT_NODEJS_COMPAT = booleanPreferencesKey("deploy_default_nodejs_compat")
+    val DEFAULT_WORKERS_DEV = booleanPreferencesKey("deploy_default_workers_dev")
+    val AUTO_OPEN_PREVIEW_ON_DEPLOY = booleanPreferencesKey("deploy_auto_open_preview")
   }
 
   val credentialsFlow: Flow<StoredCredentials?> =
@@ -123,6 +131,11 @@ class AuthPreferencesStore(private val context: Context) {
         wordWrap = prefs[Keys.WORD_WRAP] ?: false,
         showLineNumbers = prefs[Keys.SHOW_LINE_NUMBERS] ?: true,
         autoCloseBrackets = prefs[Keys.AUTO_CLOSE_BRACKETS] ?: true,
+        defaultCompatibilityDate =
+          prefs[Keys.DEFAULT_COMPAT_DATE]?.takeIf { it.isNotBlank() } ?: "2024-11-01",
+        defaultNodejsCompat = prefs[Keys.DEFAULT_NODEJS_COMPAT] ?: false,
+        defaultWorkersDevEnabled = prefs[Keys.DEFAULT_WORKERS_DEV] ?: true,
+        autoOpenPreviewOnDeploy = prefs[Keys.AUTO_OPEN_PREVIEW_ON_DEPLOY] ?: false,
       )
     }
 
@@ -205,6 +218,10 @@ class AuthPreferencesStore(private val context: Context) {
       prefs[Keys.WORD_WRAP] = next.wordWrap
       prefs[Keys.SHOW_LINE_NUMBERS] = next.showLineNumbers
       prefs[Keys.AUTO_CLOSE_BRACKETS] = next.autoCloseBrackets
+      prefs[Keys.DEFAULT_COMPAT_DATE] = next.defaultCompatibilityDate.trim().ifBlank { "2024-11-01" }
+      prefs[Keys.DEFAULT_NODEJS_COMPAT] = next.defaultNodejsCompat
+      prefs[Keys.DEFAULT_WORKERS_DEV] = next.defaultWorkersDevEnabled
+      prefs[Keys.AUTO_OPEN_PREVIEW_ON_DEPLOY] = next.autoOpenPreviewOnDeploy
     }
   }
 }

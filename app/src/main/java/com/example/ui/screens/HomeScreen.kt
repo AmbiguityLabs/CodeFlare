@@ -29,15 +29,18 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.CloudQueue
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
@@ -45,7 +48,6 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.Web
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -55,7 +57,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -73,14 +74,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.example.data.local.RamWorkspaceRecord
 import com.example.data.remote.CfWorkerScript
 import com.example.ui.components.CloudflareInfraPanel
@@ -89,7 +89,6 @@ import com.example.ui.components.EdgeBottomDock
 import com.example.ui.components.EdgeBottomDockItem
 import com.example.ui.components.GitHubAndDiffPanel
 import com.example.ui.components.NewWorkerDialog
-import com.example.ui.components.SettingsPanel
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
@@ -240,50 +239,41 @@ fun HomeScreen(
   }
 
   if (uiState.showHomeSettings) {
-    Dialog(
-      onDismissRequest = { viewModel.setShowHomeSettings(false) },
-      properties = DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-      Surface(
-        color = palette.chromeBg,
-        shape = RoundedCornerShape(20.dp),
-        border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
-        modifier =
-          Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 28.dp),
-      ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-          Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 8.dp, top = 12.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-          ) {
-            Text(
-              text = "IDE Preferences",
-              style = MaterialTheme.typography.titleMedium,
-              fontWeight = FontWeight.SemiBold,
-              color = palette.textPrimary,
-            )
-            IconButton(onClick = { viewModel.setShowHomeSettings(false) }) {
-              Icon(Icons.Outlined.Close, contentDescription = "Close preferences", tint = palette.textSecondary)
+    Box(modifier = Modifier.fillMaxSize()) {
+      SettingsScreen(
+        uiState = uiState,
+        onBack = { viewModel.setShowHomeSettings(false) },
+        onUpdateSettings = viewModel::updateSettings,
+        onSelectAccount = viewModel::selectAccount,
+        onVerifyCredentials = viewModel::verifyCloudflareCredentials,
+        onUpdateApiToken = viewModel::updateCloudflareApiToken,
+        onUpdateGlobalKey = viewModel::updateCloudflareGlobalKey,
+        onStartOAuth = {
+          viewModel.startOAuthSignIn { authUrl ->
+            runCatching {
+              context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(authUrl)))
             }
           }
-          HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
-          Box(modifier = Modifier.height(480.dp)) {
-            SettingsPanel(
-              uiState = uiState,
-              onUpdateSettings = viewModel::updateSettings,
-              onSignOut = {
-                viewModel.setShowHomeSettings(false)
-                if (uiState.isLocalScratchpad || uiState.isGitHubIdeOnlyMode) viewModel.exitScratchpadToAuth()
-                else viewModel.signOut()
-              },
-            )
-          }
-        }
-      }
+        },
+        onCancelOAuth = viewModel::cancelOAuthSignIn,
+        onClearCredentialFeedback = viewModel::clearCloudflareCredentialTestMessage,
+        onDisconnectCloudflare = {
+          viewModel.setShowHomeSettings(false)
+          if (uiState.isLocalScratchpad || uiState.isGitHubIdeOnlyMode) viewModel.exitScratchpadToAuth()
+          else viewModel.signOut()
+        },
+        onOpenGitHubHub = {
+          viewModel.setShowHomeSettings(false)
+          viewModel.setShowHomeGitHubHub(true)
+        },
+        onNotify = viewModel::showStatus,
+      )
+      SnackbarHost(
+        hostState = snackbarHostState,
+        modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().imePadding().padding(16.dp),
+      )
     }
+    return
   }
 
   // Optional Full-Screen GitHub Hub Overlay (kept completely separate from primary Projects & Editor)
@@ -410,41 +400,51 @@ fun HomeScreen(
           modifier =
             Modifier
               .fillMaxWidth()
-              .padding(horizontal = 16.dp, vertical = 10.dp),
+              .padding(horizontal = 20.dp, vertical = 14.dp),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-          Column(modifier = Modifier.weight(1f)) {
+          Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-              text = "EdgeCode",
-              style = MaterialTheme.typography.titleLarge,
+              text =
+                when (uiState.homeTab) {
+                  HomeTab.PROJECTS -> "Your projects"
+                  HomeTab.PAGES -> "Cloudflare Pages"
+                  HomeTab.INFRA -> "Edge Infrastructure"
+                },
+              fontSize = 24.sp,
               fontWeight = FontWeight.Bold,
+              letterSpacing = (-0.3).sp,
               color = palette.textPrimary,
             )
             if (!uiState.isLocalScratchpad && uiState.accounts.isNotEmpty()) {
               Box {
-                Row(
-                  modifier =
-                    Modifier
-                      .clip(RoundedCornerShape(8.dp))
-                      .clickable { accountMenuOpen = true }
-                      .padding(vertical = 2.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(4.dp),
+                Surface(
+                  onClick = { accountMenuOpen = true },
+                  shape = RoundedCornerShape(999.dp),
+                  color = palette.chromeSurface,
+                  border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
                 ) {
-                  Text(
-                    text = uiState.selectedAccount?.name ?: "Select Account",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = palette.activePillFg,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                  )
-                  Icon(
-                    Icons.Outlined.KeyboardArrowDown,
-                    contentDescription = "Switch account",
-                    tint = palette.activePillFg,
-                    modifier = Modifier.size(16.dp),
-                  )
+                  Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                  ) {
+                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(EmeraldLive))
+                    Text(
+                      text = uiState.selectedAccount?.name ?: "Select Account",
+                      style = MaterialTheme.typography.labelMedium,
+                      color = palette.textPrimary,
+                      maxLines = 1,
+                      overflow = TextOverflow.Ellipsis,
+                    )
+                    Icon(
+                      Icons.Outlined.KeyboardArrowDown,
+                      contentDescription = "Switch account",
+                      tint = palette.textSecondary,
+                      modifier = Modifier.size(15.dp),
+                    )
+                  }
                 }
                 DropdownMenu(expanded = accountMenuOpen, onDismissRequest = { accountMenuOpen = false }) {
                   uiState.accounts.forEach { acc ->
@@ -469,73 +469,99 @@ fun HomeScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
               ) {
                 Text(
-                  text = "Local Mode (On-device RAM)",
+                  text = "Local RAM",
                   style = MaterialTheme.typography.labelSmall,
                   color = palette.textMuted,
                 )
-                Text(
-                  text = "Connect →",
-                  style = MaterialTheme.typography.labelSmall,
-                  fontWeight = FontWeight.SemiBold,
-                  color = palette.activePillFg,
+                Surface(
+                  onClick = viewModel::exitScratchpadToAuth,
+                  shape = RoundedCornerShape(999.dp),
+                  color = palette.activePillBg.copy(alpha = 0.65f),
+                ) {
+                  Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
+                  ) {
+                    Text(
+                      text = "Connect Cloudflare",
+                      style = MaterialTheme.typography.labelSmall,
+                      fontWeight = FontWeight.SemiBold,
+                      color = palette.activePillFg,
+                    )
+                    Icon(
+                      imageVector = Icons.AutoMirrored.Outlined.ArrowForward,
+                      contentDescription = "Connect Cloudflare",
+                      tint = palette.activePillFg,
+                      modifier = Modifier.size(12.dp),
+                    )
+                  }
+                }
+              }
+            }
+          }
+
+          // Circular M3 Expressive Header Action Buttons matching reference
+          Surface(
+            onClick = { viewModel.setShowHomeGitHubHub(true) },
+            shape = CircleShape,
+            color = palette.chromePill,
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.65f)),
+            modifier = Modifier.size(44.dp).testTag("home_github_hub_button"),
+          ) {
+            Box(contentAlignment = Alignment.Center) {
+              Icon(
+                imageVector = Icons.Outlined.AccountTree,
+                contentDescription = "Optional GitHub Hub",
+                tint = if (uiState.gitHubCreds != null) palette.activePillFg else palette.textPrimary,
+                modifier = Modifier.size(20.dp),
+              )
+              if (uiState.gitHubCreds != null) {
+                Box(
                   modifier =
                     Modifier
-                      .clip(RoundedCornerShape(6.dp))
-                      .clickable(onClick = viewModel::exitScratchpadToAuth)
-                      .padding(horizontal = 4.dp, vertical = 1.dp),
+                      .align(Alignment.TopEnd)
+                      .padding(8.dp)
+                      .size(7.dp)
+                      .clip(CircleShape)
+                      .background(EmeraldLive),
                 )
               }
             }
           }
 
-          // Optional GitHub Hub trigger (distinct & unobtrusive)
           Surface(
-            onClick = { viewModel.setShowHomeGitHubHub(true) },
-            shape = RoundedCornerShape(10.dp),
-            color = palette.chromeSurface,
-            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.45f)),
-            modifier = Modifier.testTag("home_github_hub_button"),
+            onClick = { viewModel.setShowHomeSettings(true) },
+            shape = CircleShape,
+            color = palette.chromePill,
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.65f)),
+            modifier = Modifier.size(44.dp).testTag("home_settings_button"),
           ) {
-            Row(
-              modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
+            Box(contentAlignment = Alignment.Center) {
               Icon(
-                imageVector = Icons.Outlined.AccountTree,
-                contentDescription = "Optional GitHub Hub",
-                tint = if (uiState.gitHubCreds != null) EmeraldLive else palette.textSecondary,
-                modifier = Modifier.size(16.dp),
-              )
-              Text(
-                text = "GitHub",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                color = palette.textPrimary,
+                imageVector = Icons.Outlined.Settings,
+                contentDescription = "Settings and Credentials",
+                tint = palette.textPrimary,
+                modifier = Modifier.size(20.dp),
               )
             }
-          }
-
-          IconButton(
-            onClick = { viewModel.setShowHomeSettings(true) },
-            modifier = Modifier.size(38.dp).testTag("home_settings_button"),
-          ) {
-            Icon(
-              imageVector = Icons.Outlined.Settings,
-              contentDescription = "IDE Preferences",
-              tint = palette.textSecondary,
-              modifier = Modifier.size(20.dp),
-            )
           }
         }
 
         if (uiState.isOpeningWorker || uiState.isLoadingWorkers) {
-          LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp))
+          LinearProgressIndicator(
+            modifier = Modifier.fillMaxWidth().height(2.dp),
+            color = palette.ctaBg,
+            trackColor = palette.chromeSurface,
+          )
         }
-        HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
       }
     },
     bottomBar = {
+      val projectTotal =
+        if (uiState.workers.isNotEmpty()) uiState.workers.size else uiState.ramWorkspaces.size
+      val infraTotal =
+        uiState.kvNamespaces.size + uiState.d1Databases.size + uiState.r2Buckets.size + uiState.queues.size
       EdgeBottomDock(
         modifier = Modifier.background(palette.chromeSurface).navigationBarsPadding(),
         items =
@@ -545,6 +571,7 @@ fun HomeScreen(
               icon = Icons.Outlined.Code,
               selected = uiState.homeTab == HomeTab.PROJECTS,
               testTag = "home_tab_projects",
+              badgeText = projectTotal.takeIf { it > 0 }?.toString(),
               onClick = { viewModel.setHomeTab(HomeTab.PROJECTS) },
             ),
             EdgeBottomDockItem(
@@ -552,6 +579,7 @@ fun HomeScreen(
               icon = Icons.Outlined.Web,
               selected = uiState.homeTab == HomeTab.PAGES,
               testTag = "home_tab_pages",
+              badgeText = uiState.pagesProjects.size.takeIf { it > 0 }?.toString(),
               onClick = { viewModel.setHomeTab(HomeTab.PAGES) },
             ),
             EdgeBottomDockItem(
@@ -559,6 +587,7 @@ fun HomeScreen(
               icon = Icons.Outlined.Storage,
               selected = uiState.homeTab == HomeTab.INFRA,
               testTag = "home_tab_infra",
+              badgeText = infraTotal.takeIf { it > 0 }?.toString(),
               onClick = { viewModel.setHomeTab(HomeTab.INFRA) },
             ),
           ),
@@ -582,6 +611,8 @@ fun HomeScreen(
             onImportBundle = {
               importWorkspaceBundleLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
             },
+            onOpenSettings = { viewModel.setShowHomeSettings(true) },
+            onOpenGitHubHub = { viewModel.setShowHomeGitHubHub(true) },
             onOpenRamWorkspace = viewModel::openRamWorkspace,
             onRequestDeleteRamWorkspace = { rec ->
               pendingDeleteLocalKey = rec.key to rec.workingWorkspace.scriptName
@@ -670,6 +701,8 @@ private fun HomeProjectsTabContent(
   onSearchChange: (String) -> Unit,
   onNewProject: () -> Unit,
   onImportBundle: () -> Unit,
+  onOpenSettings: () -> Unit,
+  onOpenGitHubHub: () -> Unit,
   onOpenRamWorkspace: (String) -> Unit,
   onRequestDeleteRamWorkspace: (RamWorkspaceRecord) -> Unit,
   onRefreshWorkers: () -> Unit,
@@ -691,81 +724,129 @@ private fun HomeProjectsTabContent(
       else uiState.workers.filter { it.id.contains(q, ignoreCase = true) }
     }
   val ramByName = remember(uiState.ramWorkspaces) { uiState.ramWorkspaces.associateBy { it.workingWorkspace.scriptName } }
+  val latestProject = remember(ramWorkspaces) { ramWorkspaces.firstOrNull() }
 
   LazyColumn(
     modifier = Modifier.fillMaxSize(),
-    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
-    verticalArrangement = Arrangement.spacedBy(12.dp),
+    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp),
+    verticalArrangement = Arrangement.spacedBy(14.dp),
   ) {
-    // Search & Create Toolbar
+    // Expressive Hero Primary Action Row (+ New project + Import .json square tile)
     item(key = "home_actions") {
-      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        OutlinedTextField(
-          value = searchQuery,
-          onValueChange = onSearchChange,
-          placeholder = { Text("Search projects…") },
-          leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
-          trailingIcon = {
-            if (searchQuery.isNotEmpty()) {
-              IconButton(onClick = { onSearchChange("") }) {
-                Icon(Icons.Outlined.Close, contentDescription = "Clear search", modifier = Modifier.size(16.dp))
-              }
-            }
-          },
-          singleLine = true,
-          shape = RoundedCornerShape(14.dp),
-          modifier = Modifier.fillMaxWidth().testTag("home_project_search"),
-        )
-
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.spacedBy(10.dp),
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Surface(
+          onClick = onNewProject,
+          shape = RoundedCornerShape(20.dp),
+          color = palette.ctaBg,
+          modifier = Modifier.weight(1f).height(60.dp).testTag("home_new_project_button"),
         ) {
-          Button(
-            onClick = onNewProject,
-            shape = RoundedCornerShape(12.dp),
-            colors =
-              ButtonDefaults.buttonColors(
-                containerColor = palette.activePillBg,
-                contentColor = palette.activePillFg,
-              ),
-            modifier = Modifier.weight(1f).height(44.dp).testTag("home_new_project_button"),
+          Row(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
           ) {
-            Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("New Project", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Icon(
+              imageVector = Icons.Outlined.Add,
+              contentDescription = null,
+              tint = palette.ctaFg,
+              modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+              text = "New project",
+              fontSize = 15.5.sp,
+              fontWeight = FontWeight.SemiBold,
+              color = palette.ctaFg,
+            )
           }
+        }
 
-          OutlinedButton(
-            onClick = onImportBundle,
-            shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.65f)),
-            modifier = Modifier.height(44.dp).testTag("home_import_bundle_button"),
-          ) {
-            Icon(Icons.Outlined.CloudDownload, contentDescription = null, modifier = Modifier.size(17.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Import .json", fontSize = 13.sp)
+        Surface(
+          onClick = onImportBundle,
+          shape = RoundedCornerShape(20.dp),
+          color = palette.chromePill,
+          border = BorderStroke(1.dp, palette.border.copy(alpha = 0.7f)),
+          modifier = Modifier.size(60.dp).testTag("home_import_bundle_button"),
+        ) {
+          Box(contentAlignment = Alignment.Center) {
+            Icon(
+              imageVector = Icons.Outlined.CloudDownload,
+              contentDescription = "Import workspace JSON",
+              tint = palette.textPrimary,
+              modifier = Modifier.size(22.dp),
+            )
           }
         }
       }
     }
 
-    // On-device RAM / Local Projects section
+    // Two Quick-Access Feature Cards (Credentials & GitHub) matching reference visual rhythm
+    item(key = "home_quick_cards") {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        HomeFeatureLinkCard(
+          title = "Cloudflare Deploy API",
+          subtitle =
+            if (uiState.credentials != null) {
+              "${uiState.selectedAccount?.name ?: "Account linked"} · Manage API tokens & deploy defaults"
+            } else {
+              "Add an API Token, Global Key, or OAuth session to deploy Workers"
+            },
+          badgeBg = if (uiState.credentials != null) palette.ctaBg else AmberWarn.copy(alpha = 0.2f),
+          badgeTint = if (uiState.credentials != null) palette.ctaFg else AmberWarn,
+          icon = Icons.Outlined.Key,
+          onClick = onOpenSettings,
+        )
+        HomeFeatureLinkCard(
+          title = "GitHub Repositories",
+          subtitle =
+            uiState.gitHubCreds?.login?.let { "@$it · Clone repos, switch branches & push" }
+              ?: "Clone Worker repositories, manage commits & pull requests",
+          badgeBg = Color(0xFF5865F2),
+          badgeTint = Color.White,
+          icon = Icons.Outlined.AccountTree,
+          onClick = onOpenGitHubHub,
+        )
+      }
+    }
+
+    // Search Filter
+    item(key = "home_search") {
+      OutlinedTextField(
+        value = searchQuery,
+        onValueChange = onSearchChange,
+        placeholder = { Text("Search projects and Workers…", color = palette.textMuted) },
+        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = palette.textSecondary, modifier = Modifier.size(18.dp)) },
+        trailingIcon = {
+          if (searchQuery.isNotEmpty()) {
+            IconButton(onClick = { onSearchChange("") }) {
+              Icon(Icons.Outlined.Close, contentDescription = "Clear search", modifier = Modifier.size(16.dp))
+            }
+          }
+        },
+        singleLine = true,
+        shape = RoundedCornerShape(18.dp),
+        modifier = Modifier.fillMaxWidth().testTag("home_project_search"),
+      )
+    }
+
+    // On-device RAM / Local Projects Pill Header
     item(key = "ram_header") {
       Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
       ) {
-        Text(
-          text = "ON-DEVICE PROJECTS (${ramWorkspaces.size})",
-          style = MaterialTheme.typography.labelSmall,
-          fontWeight = FontWeight.SemiBold,
-          color = palette.textMuted,
+        SectionCountPill(
+          title = "Projects",
+          count = ramWorkspaces.size,
         )
         if (uiState.ramDbStats.estimatedRamKb > 0) {
           Text(
-            text = "${uiState.ramDbStats.estimatedRamKb} KB in RAM",
+            text = "${uiState.ramDbStats.estimatedRamKb} KB RAM",
             fontFamily = JetBrainsMono,
             fontSize = 11.sp,
             color = palette.textMuted,
@@ -778,8 +859,8 @@ private fun HomeProjectsTabContent(
       item(key = "ram_empty") {
         Surface(
           color = palette.chromeSurface,
-          shape = RoundedCornerShape(14.dp),
-          border = BorderStroke(1.dp, palette.border.copy(alpha = 0.45f)),
+          shape = RoundedCornerShape(22.dp),
+          border = BorderStroke(1.dp, palette.border.copy(alpha = 0.65f)),
           modifier = Modifier.fillMaxWidth(),
         ) {
           Column(
@@ -789,10 +870,11 @@ private fun HomeProjectsTabContent(
             Text(
               text = "No projects opened yet",
               style = MaterialTheme.typography.titleSmall,
+              fontWeight = FontWeight.SemiBold,
               color = palette.textPrimary,
             )
             Text(
-              text = "Create a new project, import a .json workspace bundle, or select a Worker below to start editing.",
+              text = "Tap New project above, import a .json bundle, or open a Cloudflare Worker below.",
               style = MaterialTheme.typography.bodySmall,
               color = palette.textSecondary,
             )
@@ -809,31 +891,89 @@ private fun HomeProjectsTabContent(
       }
     }
 
+    // Featured "Pick up where you left off" Resume Card (matches Reference 2's plum card)
+    if (latestProject != null && q.isEmpty()) {
+      item(key = "resume_featured_card") {
+        val ws = latestProject.workingWorkspace
+        val fileCount = ws.files.count { !it.isVirtualReadOnly }
+        Surface(
+          color = palette.featuredCardBg,
+          shape = RoundedCornerShape(24.dp),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+          ) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Icon(
+                imageVector = Icons.Outlined.Bolt,
+                contentDescription = null,
+                tint = palette.featuredCardFg,
+                modifier = Modifier.size(20.dp),
+              )
+              Text(
+                text = "Pick up where you left off",
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = palette.featuredCardFg,
+              )
+            }
+            Text(
+              text = "${ws.scriptName} · $fileCount file(s) · entry ${ws.entryModulePath}",
+              style = MaterialTheme.typography.bodySmall,
+              color = palette.featuredCardMuted,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+            Surface(
+              onClick = { onOpenRamWorkspace(latestProject.key) },
+              shape = RoundedCornerShape(999.dp),
+              color = if (palette.isDark) Color(0xFFF3EAFF) else Color(0xFF4F346B),
+            ) {
+              Text(
+                text = "Open ${ws.scriptName}",
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (palette.isDark) Color(0xFF31164F) else Color.White,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+              )
+            }
+          }
+        }
+      }
+    }
+
     // Remote Cloudflare Workers section (when signed into Cloudflare)
     if (!uiState.isLocalScratchpad && uiState.credentials != null) {
       item(key = "cf_header") {
         Row(
-          modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+          modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-          Text(
-            text = "CLOUDFLARE WORKERS (${cloudWorkers.size})",
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = palette.textMuted,
+          SectionCountPill(
+            title = "Cloudflare Workers",
+            count = cloudWorkers.size,
           )
-          IconButton(
-            onClick = onRefreshWorkers,
-            enabled = !uiState.isLoadingWorkers,
-            modifier = Modifier.size(32.dp).testTag("home_refresh_workers_button"),
+          Surface(
+            onClick = { if (!uiState.isLoadingWorkers) onRefreshWorkers() },
+            shape = CircleShape,
+            color = palette.chromeSurface,
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
+            modifier = Modifier.size(34.dp).testTag("home_refresh_workers_button"),
           ) {
-            Icon(
-              Icons.Outlined.Refresh,
-              contentDescription = "Refresh Workers",
-              tint = palette.textSecondary,
-              modifier = Modifier.size(18.dp),
-            )
+            Box(contentAlignment = Alignment.Center) {
+              Icon(
+                Icons.Outlined.Refresh,
+                contentDescription = "Refresh Workers",
+                tint = palette.textSecondary,
+                modifier = Modifier.size(17.dp),
+              )
+            }
           }
         }
       }
@@ -842,8 +982,8 @@ private fun HomeProjectsTabContent(
         item(key = "cf_empty") {
           Surface(
             color = palette.chromeSurface,
-            shape = RoundedCornerShape(14.dp),
-            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.45f)),
+            shape = RoundedCornerShape(22.dp),
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.65f)),
             modifier = Modifier.fillMaxWidth(),
           ) {
             Column(
@@ -853,11 +993,12 @@ private fun HomeProjectsTabContent(
               Text(
                 text = if (q.isEmpty()) "No Cloudflare Workers found" else "No matching Workers",
                 style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
                 color = palette.textPrimary,
               )
               Text(
                 text =
-                  if (q.isEmpty()) "Tap 'New Project' above to create and deploy your first Worker."
+                  if (q.isEmpty()) "Tap New project above to create and deploy your first Worker."
                   else "Try clearing the search filter or refreshing your account Workers.",
                 style = MaterialTheme.typography.bodySmall,
                 color = palette.textSecondary,
@@ -878,7 +1019,107 @@ private fun HomeProjectsTabContent(
       }
     }
 
-    item(key = "home_bottom_spacer") { Spacer(Modifier.height(12.dp)) }
+    item(key = "home_bottom_spacer") { Spacer(Modifier.height(14.dp)) }
+  }
+}
+
+@Composable
+private fun SectionCountPill(
+  title: String,
+  count: Int,
+) {
+  val palette = LocalIdePalette.current
+  Surface(
+    color = palette.activePillBg.copy(alpha = 0.55f),
+    shape = RoundedCornerShape(999.dp),
+  ) {
+    Row(
+      modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      Text(
+        text = title,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = palette.activePillFg,
+      )
+      Surface(
+        color = palette.ctaBg,
+        shape = CircleShape,
+        modifier = Modifier.size(22.dp),
+      ) {
+        Box(contentAlignment = Alignment.Center) {
+          Text(
+            text = count.toString(),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            color = palette.ctaFg,
+          )
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun HomeFeatureLinkCard(
+  title: String,
+  subtitle: String,
+  badgeBg: Color,
+  badgeTint: Color,
+  icon: ImageVector,
+  onClick: () -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  Surface(
+    onClick = onClick,
+    color = palette.chromeSurface,
+    shape = RoundedCornerShape(22.dp),
+    border = BorderStroke(1.dp, palette.border.copy(alpha = 0.65f)),
+    modifier = Modifier.fillMaxWidth(),
+  ) {
+    Row(
+      modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+      Surface(
+        color = badgeBg,
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier.size(46.dp),
+      ) {
+        Box(contentAlignment = Alignment.Center) {
+          Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = badgeTint,
+            modifier = Modifier.size(22.dp),
+          )
+        }
+      }
+      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+          text = title,
+          fontSize = 15.5.sp,
+          fontWeight = FontWeight.SemiBold,
+          color = palette.textPrimary,
+        )
+        Text(
+          text = subtitle,
+          style = MaterialTheme.typography.bodySmall,
+          color = palette.textSecondary,
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+      Icon(
+        imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+        contentDescription = null,
+        tint = palette.textSecondary,
+        modifier = Modifier.size(20.dp),
+      )
+    }
   }
 }
 
@@ -897,30 +1138,30 @@ private fun RamProjectCard(
   Surface(
     onClick = onOpen,
     color = palette.chromeSurface,
-    shape = RoundedCornerShape(14.dp),
+    shape = RoundedCornerShape(20.dp),
     border =
       BorderStroke(
         width = 1.dp,
-        color = if (dirty) AmberWarn.copy(alpha = 0.55f) else palette.border.copy(alpha = 0.45f),
+        color = if (dirty) AmberWarn.copy(alpha = 0.55f) else palette.border.copy(alpha = 0.65f),
       ),
     modifier = Modifier.fillMaxWidth().testTag("home_ram_card_${ws.scriptName}"),
   ) {
     Row(
       modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(12.dp),
+      horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
       Surface(
-        color = palette.activePillBg.copy(alpha = 0.55f),
-        shape = RoundedCornerShape(10.dp),
-        modifier = Modifier.size(40.dp),
+        color = if (dirty) AmberWarn.copy(alpha = 0.2f) else Color(0xFF28C76F),
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier.size(46.dp),
       ) {
         Box(contentAlignment = Alignment.Center) {
           Icon(
             imageVector = Icons.Outlined.Folder,
             contentDescription = null,
-            tint = palette.activePillFg,
-            modifier = Modifier.size(20.dp),
+            tint = if (dirty) AmberWarn else Color.White,
+            modifier = Modifier.size(22.dp),
           )
         }
       }
@@ -932,7 +1173,7 @@ private fun RamProjectCard(
         ) {
           Text(
             text = ws.scriptName,
-            style = MaterialTheme.typography.titleSmall,
+            fontSize = 15.5.sp,
             fontWeight = FontWeight.SemiBold,
             color = palette.textPrimary,
             maxLines = 1,
@@ -955,9 +1196,9 @@ private fun RamProjectCard(
           )
         }
         Text(
-          text = "$fileCount file(s) · entry ${ws.entryModulePath}",
+          text = "$fileCount file(s) · ${ws.entryModulePath}",
           fontFamily = JetBrainsMono,
-          fontSize = 11.sp,
+          fontSize = 11.5.sp,
           color = palette.textSecondary,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
@@ -999,26 +1240,26 @@ private fun CloudWorkerCard(
   Surface(
     onClick = onOpen,
     color = palette.chromeSurface,
-    shape = RoundedCornerShape(14.dp),
-    border = BorderStroke(1.dp, palette.border.copy(alpha = 0.45f)),
+    shape = RoundedCornerShape(20.dp),
+    border = BorderStroke(1.dp, palette.border.copy(alpha = 0.65f)),
     modifier = Modifier.fillMaxWidth().testTag("home_worker_card_${script.id}"),
   ) {
     Row(
       modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(12.dp),
+      horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
       Surface(
-        color = palette.chromePill,
-        shape = RoundedCornerShape(10.dp),
-        modifier = Modifier.size(40.dp),
+        color = if (cachedRecord != null) palette.activePillBg else palette.chromePill,
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier.size(46.dp),
       ) {
         Box(contentAlignment = Alignment.Center) {
           Icon(
             imageVector = Icons.Outlined.CloudQueue,
             contentDescription = null,
-            tint = if (cachedRecord != null) EmeraldLive else palette.textSecondary,
-            modifier = Modifier.size(20.dp),
+            tint = if (cachedRecord != null) palette.activePillFg else palette.textSecondary,
+            modifier = Modifier.size(22.dp),
           )
         }
       }
@@ -1030,7 +1271,7 @@ private fun CloudWorkerCard(
         ) {
           Text(
             text = script.id,
-            style = MaterialTheme.typography.titleSmall,
+            fontSize = 15.5.sp,
             fontWeight = FontWeight.SemiBold,
             color = palette.textPrimary,
             maxLines = 1,
@@ -1049,7 +1290,7 @@ private fun CloudWorkerCard(
               ?: script.modifiedOn?.take(10)?.let { "Updated $it · Tap to open" }
               ?: "Cloudflare Worker · Tap to open",
           fontFamily = JetBrainsMono,
-          fontSize = 11.sp,
+          fontSize = 11.5.sp,
           color = palette.textSecondary,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
@@ -1085,10 +1326,10 @@ private fun StatusTag(
 ) {
   Surface(
     color = color.copy(alpha = 0.16f),
-    shape = RoundedCornerShape(6.dp),
+    shape = RoundedCornerShape(999.dp),
   ) {
     Row(
-      modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+      modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {

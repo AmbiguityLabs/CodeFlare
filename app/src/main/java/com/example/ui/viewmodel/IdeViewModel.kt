@@ -209,6 +209,9 @@ data class IdeUiState(
   val projectMode: ProjectMode = ProjectMode.CODE,
   val showHomeGitHubHub: Boolean = false,
   val showHomeSettings: Boolean = false,
+  val isTestingCfCredentials: Boolean = false,
+  val cfCredentialTestMessage: String? = null,
+  val isCfCredentialTestError: Boolean = false,
   val activeWorkspaceHasPendingConfig: Boolean = false,
   // Cloudflare Workers Infra: KV, D1, R2, DO, Queues, Zones
   val kvNamespaces: List<CfKvNamespace> = emptyList(),
@@ -1244,16 +1247,18 @@ export default {
         contentType = "application/javascript+module",
         isEntryPoint = true,
       )
+    val settings = _uiState.value.editorSettings
     val baseWs =
       WorkerWorkspace(
         scriptName = cleanName,
         isEsModuleFormat = true,
         entryModulePath = "index.js",
-        compatibilityDate = "2024-11-01",
+        compatibilityDate = settings.defaultCompatibilityDate.ifBlank { "2024-11-01" },
+        compatibilityFlags = if (settings.defaultNodejsCompat) listOf("nodejs_compat") else emptyList(),
         files = listOf(indexFile),
         bindings = emptyList(),
         routes = emptyList(),
-        workersDevEnabled = !isScratchpad,
+        workersDevEnabled = !isScratchpad && settings.defaultWorkersDevEnabled,
         accountSubdomain = accountId?.let { ramDb.getInfraCache(it)?.subdomain }.orEmpty(),
         hasModuleSetChanged = !isScratchpad,
       )
@@ -1336,16 +1341,18 @@ export default {
       val accountId = if (isScratchpad) null else _uiState.value.selectedAccount?.id
       val cleanName = name.trim().lowercase().replace(Regex("[^a-z0-9-]"), "-").ifBlank { "uploaded-worker" }
 
+      val settings = _uiState.value.editorSettings
       val baseWs =
         WorkerWorkspace(
           scriptName = cleanName,
           isEsModuleFormat = true,
           entryModulePath = resolvedEntry,
-          compatibilityDate = "2024-11-01",
+          compatibilityDate = settings.defaultCompatibilityDate.ifBlank { "2024-11-01" },
+          compatibilityFlags = if (settings.defaultNodejsCompat) listOf("nodejs_compat") else emptyList(),
           files = finalFiles,
           bindings = emptyList(),
           routes = emptyList(),
-          workersDevEnabled = !isScratchpad,
+          workersDevEnabled = !isScratchpad && settings.defaultWorkersDevEnabled,
           accountSubdomain = accountId?.let { ramDb.getInfraCache(it)?.subdomain }.orEmpty(),
           hasModuleSetChanged = !isScratchpad,
         )
@@ -2468,6 +2475,12 @@ export default {
               statusMessage = null,
               previewUrl = resolvedPreview,
               previewReloadNonce = state.previewReloadNonce + 1L,
+              projectMode =
+                if (pendingErrors.isEmpty() && state.editorSettings.autoOpenPreviewOnDeploy) ProjectMode.TEST
+                else state.projectMode,
+              activeBottomTab =
+                if (pendingErrors.isEmpty() && state.editorSettings.autoOpenPreviewOnDeploy) BottomPanelTab.WORKER_PREVIEW
+                else state.activeBottomTab,
             )
           }
           appendLog("DEPLOY", "Exported '${ws.scriptName}' (${cleanFiles.count { !it.isVirtualReadOnly }} files) from RAM DB to Cloudflare")
@@ -5797,9 +5810,140 @@ jobs:
 
   private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 
-  // Settings
+  // Settings & Cloudflare Credentials
   fun updateSettings(transform: (EditorSettings) -> EditorSettings) {
     viewModelScope.launch { prefsStore.updateEditorSettings(transform) }
+  }
+
+  fun clearCloudflareCredentialTestMessage() {
+    _uiState.update { it.copy(cfCredentialTestMessage = null, isCfCredentialTestError = false) }
+  }
+
+  fun verifyCloudflareCredentials() {
+    viewModelScope.launch {
+      _uiState.update {
+        it.copy(
+          isTestingCfCredentials = true,
+          cfCredentialTestMessage = null,
+          isCfCredentialTestError = false,
+        )
+      }
+      repository
+        .verifyActiveSession()
+        .onSuccess { accounts ->
+          val currentId = _uiState.value.selectedAccount?.id
+          val chosen = accounts.firstOrNull { it.id == currentId } ?: accounts.firstOrNull()
+          _uiState.update {
+            it.copy(
+              isTestingCfCredentials = false,
+              accounts = accounts,
+              selectedAccount = chosen,
+              cfCredentialTestMessage = "Verified: ${accounts.size} Cloudflare account(s) ready for deployment",
+              isCfCredentialTestError = false,
+            )
+          }
+          appendLog("INFO", "Verified active Cloudflare credentials (${accounts.size} account(s))")
+        }
+        .onFailure { err ->
+          val msg = err.localizedMessage ?: "Credential verification failed"
+          _uiState.update {
+            it.copy(
+              isTestingCfCredentials = false,
+              cfCredentialTestMessage = msg,
+              isCfCredentialTestError = true,
+            )
+          }
+          appendLog("ERROR", msg)
+        }
+    }
+  }
+
+  fun updateCloudflareApiToken(token: String) {
+    viewModelScope.launch {
+      _uiState.update {
+        it.copy(
+          isTestingCfCredentials = true,
+          cfCredentialTestMessage = null,
+          isCfCredentialTestError = false,
+        )
+      }
+      repository
+        .updateApiTokenCredentials(token)
+        .onSuccess { accounts ->
+          val creds = prefsStore.getCurrentCredentials()
+          val currentId = _uiState.value.selectedAccount?.id
+          val chosen = accounts.firstOrNull { it.id == currentId } ?: accounts.firstOrNull()
+          _uiState.update {
+            it.copy(
+              credentials = creds,
+              isLocalScratchpad = false,
+              isGitHubIdeOnlyMode = false,
+              accounts = accounts,
+              selectedAccount = chosen,
+              isTestingCfCredentials = false,
+              cfCredentialTestMessage = "Saved API Token (${accounts.size} account(s) linked)",
+              isCfCredentialTestError = false,
+            )
+          }
+          appendLog("INFO", "Updated Cloudflare API Token from Settings")
+          chosen?.let { refreshWorkersInternal(it.id) }
+        }
+        .onFailure { err ->
+          val msg = err.localizedMessage ?: "Failed to verify Cloudflare API Token"
+          _uiState.update {
+            it.copy(
+              isTestingCfCredentials = false,
+              cfCredentialTestMessage = msg,
+              isCfCredentialTestError = true,
+            )
+          }
+          appendLog("ERROR", msg)
+        }
+    }
+  }
+
+  fun updateCloudflareGlobalKey(email: String, apiKey: String) {
+    viewModelScope.launch {
+      _uiState.update {
+        it.copy(
+          isTestingCfCredentials = true,
+          cfCredentialTestMessage = null,
+          isCfCredentialTestError = false,
+        )
+      }
+      repository
+        .updateGlobalKeyCredentials(email, apiKey)
+        .onSuccess { accounts ->
+          val creds = prefsStore.getCurrentCredentials()
+          val currentId = _uiState.value.selectedAccount?.id
+          val chosen = accounts.firstOrNull { it.id == currentId } ?: accounts.firstOrNull()
+          _uiState.update {
+            it.copy(
+              credentials = creds,
+              isLocalScratchpad = false,
+              isGitHubIdeOnlyMode = false,
+              accounts = accounts,
+              selectedAccount = chosen,
+              isTestingCfCredentials = false,
+              cfCredentialTestMessage = "Saved Global API Key (${accounts.size} account(s) linked)",
+              isCfCredentialTestError = false,
+            )
+          }
+          appendLog("INFO", "Updated Cloudflare Global API Key from Settings")
+          chosen?.let { refreshWorkersInternal(it.id) }
+        }
+        .onFailure { err ->
+          val msg = err.localizedMessage ?: "Failed to verify Global API Key"
+          _uiState.update {
+            it.copy(
+              isTestingCfCredentials = false,
+              cfCredentialTestMessage = msg,
+              isCfCredentialTestError = true,
+            )
+          }
+          appendLog("ERROR", msg)
+        }
+    }
   }
 
   private fun appendLog(level: String, message: String) {

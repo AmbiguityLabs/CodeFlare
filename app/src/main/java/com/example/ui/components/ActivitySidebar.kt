@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Code
@@ -1564,6 +1565,10 @@ fun SettingsPanel(
       Text("Line Numbers", style = MaterialTheme.typography.bodyMedium, color = palette.textPrimary)
       Switch(checked = settings.showLineNumbers, onCheckedChange = { ln -> onUpdateSettings { it.copy(showLineNumbers = ln) } })
     }
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+      Text("Auto-Close Brackets", style = MaterialTheme.typography.bodyMedium, color = palette.textPrimary)
+      Switch(checked = settings.autoCloseBrackets, onCheckedChange = { auto -> onUpdateSettings { it.copy(autoCloseBrackets = auto) } })
+    }
 
     Column {
       Text("Code Font Size (${settings.fontSizeSp} sp)", style = MaterialTheme.typography.bodyMedium, color = palette.textPrimary)
@@ -1577,11 +1582,39 @@ fun SettingsPanel(
 
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
       listOf(2, 4).forEach { spaces ->
-        FilledTonalButton(
+        val selected = settings.tabSize == spaces
+        Surface(
           onClick = { onUpdateSettings { it.copy(tabSize = spaces) } },
-          modifier = Modifier.weight(1f),
+          shape = RoundedCornerShape(10.dp),
+          color = if (selected) palette.activePillBg else palette.chromeSurface,
+          border =
+            BorderStroke(
+              1.dp,
+              if (selected) palette.activePillFg.copy(alpha = 0.35f) else palette.border.copy(alpha = 0.5f),
+            ),
+          modifier = Modifier.weight(1f).height(40.dp),
         ) {
-          Text("$spaces Spaces" + if (settings.tabSize == spaces) " ✓" else "")
+          Row(
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+          ) {
+            if (selected) {
+              Icon(
+                imageVector = Icons.Outlined.Check,
+                contentDescription = null,
+                tint = palette.activePillFg,
+                modifier = Modifier.size(15.dp),
+              )
+              Spacer(Modifier.width(5.dp))
+            }
+            Text(
+              text = "$spaces Spaces",
+              style = MaterialTheme.typography.labelLarge,
+              fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+              color = if (selected) palette.activePillFg else palette.textPrimary,
+            )
+          }
         }
       }
     }

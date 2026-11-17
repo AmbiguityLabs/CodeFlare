@@ -1,6 +1,5 @@
 package com.example.ui.components
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -54,34 +53,30 @@ fun EdgeBottomDock(
   val palette = LocalIdePalette.current
 
   Column(
-    modifier = modifier.fillMaxWidth().background(palette.chromeSurface),
+    modifier = modifier.fillMaxWidth().background(palette.chromeBg),
   ) {
-    HorizontalDivider(color = palette.border.copy(alpha = 0.5f), thickness = 1.dp)
+    HorizontalDivider(color = palette.border.copy(alpha = 0.45f), thickness = 1.dp)
     Row(
       modifier =
         Modifier
           .fillMaxWidth()
-          .height(54.dp)
-          .padding(horizontal = 8.dp, vertical = 5.dp),
-      horizontalArrangement = Arrangement.spacedBy(4.dp),
+          .height(66.dp)
+          .padding(horizontal = 8.dp, vertical = 6.dp),
+      horizontalArrangement = Arrangement.SpaceEvenly,
       verticalAlignment = Alignment.CenterVertically,
     ) {
       items.forEach { item ->
         val interactionSource = remember(item.testTag) { MutableInteractionSource() }
         val active = item.selected
-        val fg = if (active) palette.activePillFg else palette.textSecondary
+        val iconTint = if (active) palette.activePillFg else palette.textSecondary
+        val labelColor = if (active) palette.textPrimary else palette.textSecondary
 
-        Surface(
-          color = if (active) palette.activePillBg else Color.Transparent,
-          shape = RoundedCornerShape(10.dp),
-          border =
-            if (active) BorderStroke(1.dp, palette.activePillFg.copy(alpha = 0.25f))
-            else null,
+        Column(
           modifier =
             Modifier
               .weight(1f)
               .fillMaxHeight()
-              .clip(RoundedCornerShape(10.dp))
+              .clip(RoundedCornerShape(14.dp))
               .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -89,55 +84,59 @@ fun EdgeBottomDock(
                 onClick = item.onClick,
               )
               .testTag(item.testTag),
+          horizontalAlignment = Alignment.CenterHorizontally,
+          verticalArrangement = Arrangement.Center,
         ) {
-          Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-          ) {
-            Row(
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.Center,
+          Box(contentAlignment = Alignment.Center) {
+            Box(
+              modifier =
+                Modifier
+                  .width(60.dp)
+                  .height(30.dp)
+                  .clip(RoundedCornerShape(999.dp))
+                  .background(if (active) palette.activePillBg else Color.Transparent),
+              contentAlignment = Alignment.Center,
             ) {
               Icon(
                 imageVector = item.icon,
                 contentDescription = item.label,
-                tint = fg,
-                modifier = Modifier.size(18.dp),
+                tint = iconTint,
+                modifier = Modifier.size(19.dp),
               )
-              if (!item.badgeText.isNullOrBlank()) {
-                Spacer(Modifier.width(4.dp))
-                val bColor = item.badgeColor ?: palette.activePillFg
-                Box(
-                  modifier =
-                    Modifier
-                      .clip(RoundedCornerShape(4.dp))
-                      .background(bColor.copy(alpha = 0.18f))
-                      .padding(horizontal = 4.dp, vertical = 1.dp),
-                ) {
-                  Text(
-                    text = item.badgeText,
-                    fontFamily = JetBrainsMono,
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = bColor,
-                    maxLines = 1,
-                    softWrap = false,
-                  )
-                }
+            }
+            if (!item.badgeText.isNullOrBlank()) {
+              val bColor = item.badgeColor ?: palette.ctaBg
+              Box(
+                modifier =
+                  Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(end = 2.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(bColor)
+                    .padding(horizontal = 5.dp, vertical = 1.dp),
+              ) {
+                Text(
+                  text = item.badgeText,
+                  fontFamily = JetBrainsMono,
+                  fontSize = 8.5.sp,
+                  fontWeight = FontWeight.Bold,
+                  color = Color(0xFF141806),
+                  maxLines = 1,
+                  softWrap = false,
+                )
               }
             }
-            Spacer(Modifier.height(2.dp))
-            Text(
-              text = item.label,
-              fontSize = 11.sp,
-              fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-              color = fg,
-              maxLines = 1,
-              softWrap = false,
-              overflow = TextOverflow.Ellipsis,
-            )
           }
+          Spacer(Modifier.height(4.dp))
+          Text(
+            text = item.label,
+            fontSize = 11.5.sp,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+            color = labelColor,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+          )
         }
       }
     }

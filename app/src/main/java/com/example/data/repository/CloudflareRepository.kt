@@ -368,6 +368,55 @@ class CloudflareRepository(
       Result.success(accounts)
     }
 
+  suspend fun verifyActiveSession(): Result<List<CfAccount>> =
+    withContext(Dispatchers.IO) {
+      val creds =
+        prefsStore.getCurrentCredentials()
+          ?: return@withContext Result.failure(IllegalStateException("No Cloudflare credentials configured"))
+      if (creds.method == AuthMethod.API_TOKEN) {
+        val verifyResp = runCatching { api.verifyToken() }.getOrNull()
+        if (verifyResp != null && !verifyResp.isSuccessful) {
+          val msg = extractCfError(verifyResp)
+          if (msg != null) {
+            // Fall through to listAccounts for account-scoped tokens that cannot read /user/tokens/verify
+          }
+        }
+      }
+      val accountsResp =
+        runCatching { api.listAccounts() }
+          .getOrElse { return@withContext Result.failure(it) }
+      if (!accountsResp.isSuccessful || accountsResp.body()?.success != true) {
+        return@withContext Result.failure(
+          IllegalStateException(extractCfError(accountsResp) ?: "Cloudflare rejected current credentials")
+        )
+      }
+      val accounts = accountsResp.body()?.result.orEmpty()
+      if (accounts.isEmpty()) {
+        return@withContext Result.failure(IllegalStateException("Credentials valid, but zero Cloudflare accounts accessible"))
+      }
+      Result.success(accounts)
+    }
+
+  suspend fun updateApiTokenCredentials(token: String): Result<List<CfAccount>> =
+    withContext(Dispatchers.IO) {
+      val previous = prefsStore.getCurrentCredentials()
+      val result = authorizeWithApiToken(token)
+      if (result.isFailure && previous != null) {
+        prefsStore.saveCredentials(previous)
+      }
+      result
+    }
+
+  suspend fun updateGlobalKeyCredentials(email: String, apiKey: String): Result<List<CfAccount>> =
+    withContext(Dispatchers.IO) {
+      val previous = prefsStore.getCurrentCredentials()
+      val result = authorizeWithGlobalKey(email, apiKey)
+      if (result.isFailure && previous != null) {
+        prefsStore.saveCredentials(previous)
+      }
+      result
+    }
+
   suspend fun completeOAuthSession(
     session: com.example.data.auth.CloudflareOAuthManager.PkceSession,
   ): Result<List<CfAccount>> =
