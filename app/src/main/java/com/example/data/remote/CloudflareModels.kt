@@ -55,6 +55,57 @@ data class CfSubdomainResult(
 )
 
 @JsonClass(generateAdapter = true)
+data class CfSubdomainPutRequest(
+  val subdomain: String,
+)
+
+data class WorkerRenameOutcome(
+  val script: CfWorkerScript,
+  val deletedOldRemote: Boolean,
+  val warningMessage: String? = null,
+)
+
+object CloudflareNamingUtils {
+  private val validDnsLabelRegex = Regex("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+
+  fun sanitizeWorkerName(raw: String, allowUnderscore: Boolean = false): String {
+    val allowedRegex = if (allowUnderscore) Regex("[^a-z0-9_-]") else Regex("[^a-z0-9-]")
+    val collapsed =
+      raw.trim()
+        .lowercase()
+        .replace(allowedRegex, "-")
+        .replace(Regex("-{2,}"), "-")
+        .trim('-')
+        .take(63)
+        .trimEnd('-')
+    return collapsed
+  }
+
+  fun isValidWorkerName(name: String): Boolean =
+    name.isNotBlank() && name.matches(validDnsLabelRegex)
+
+  fun sanitizeSubdomain(raw: String): String {
+    val stripped =
+      raw.trim()
+        .lowercase()
+        .removePrefix("https://")
+        .removePrefix("http://")
+        .substringBefore('/')
+        .removeSuffix(".workers.dev")
+        .trim('.')
+    return stripped
+      .replace(Regex("[^a-z0-9-]"), "-")
+      .replace(Regex("-{2,}"), "-")
+      .trim('-')
+      .take(63)
+      .trimEnd('-')
+  }
+
+  fun isValidSubdomain(subdomain: String): Boolean =
+    subdomain.isNotBlank() && subdomain.matches(validDnsLabelRegex)
+}
+
+@JsonClass(generateAdapter = true)
 data class CfScriptSubdomainStatus(
   val enabled: Boolean = false,
   @Json(name = "previews_enabled") val previewsEnabled: Boolean = false,

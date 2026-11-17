@@ -1,10 +1,15 @@
 package com.example.data.local
 
 import android.content.Context
+import com.example.data.remote.ApiAssertionOperator
+import com.example.data.remote.ApiAssertionRule
+import com.example.data.remote.ApiAssertionTarget
 import com.example.data.remote.ApiAuthType
 import com.example.data.remote.ApiBodyType
 import com.example.data.remote.ApiEnvVar
+import com.example.data.remote.ApiEnvironmentProfile
 import com.example.data.remote.ApiKeyValueRow
+import com.example.data.remote.ApiRequestUtils
 import com.example.data.remote.ApiTesterHistoryItem
 import com.example.data.remote.ApiTesterRequest
 import com.example.data.remote.MultipartWorkerParser
@@ -25,6 +30,8 @@ data class PersistedApiTesterState(
   val collections: List<ApiTesterRequest> = emptyList(),
   val history: List<ApiTesterHistoryItem> = emptyList(),
   val envVars: List<ApiEnvVar> = listOf(ApiEnvVar(key = "apiToken", value = "")),
+  val environmentProfiles: List<ApiEnvironmentProfile> = ApiRequestUtils.defaultEnvironmentProfiles(),
+  val activeEnvProfileId: String = "env_dev",
 )
 
 class DraftPersistenceManager(context: Context) {
@@ -130,17 +137,20 @@ class DraftPersistenceManager(context: Context) {
       }
       root.put("history", histArr)
 
-      val envArr = JSONArray()
-      state.envVars.forEach { ev ->
-        envArr.put(
+      root.put("envVars", serializeEnvVars(state.envVars))
+      root.put("activeEnvProfileId", state.activeEnvProfileId)
+
+      val profilesArr = JSONArray()
+      state.environmentProfiles.forEach { profile ->
+        profilesArr.put(
           JSONObject().apply {
-            put("key", ev.key)
-            put("value", ev.value)
-            put("enabled", ev.enabled)
+            put("id", profile.id)
+            put("name", profile.name)
+            put("vars", serializeEnvVars(profile.vars))
           },
         )
       }
-      root.put("envVars", envArr)
+      root.put("environmentProfiles", profilesArr)
       apiTesterFile.writeText(root.toString(), Charsets.UTF_8)
     }
   }
@@ -175,26 +185,71 @@ class DraftPersistenceManager(context: Context) {
         }
       }
 
-      val envVars = mutableListOf<ApiEnvVar>()
-      root.optJSONArray("envVars")?.let { arr ->
+      val legacyEnvVars = deserializeEnvVars(root.optJSONArray("envVars"))
+      val profiles = mutableListOf<ApiEnvironmentProfile>()
+      root.optJSONArray("environmentProfiles")?.let { arr ->
         for (i in 0 until arr.length()) {
           val obj = arr.optJSONObject(i) ?: continue
-          envVars.add(
-            ApiEnvVar(
-              key = obj.optString("key"),
-              value = obj.optString("value"),
-              enabled = obj.optBoolean("enabled", true),
+          val id = obj.optString("id").takeIf { it.isNotBlank() } ?: continue
+          val name = obj.optString("name").takeIf { it.isNotBlank() } ?: id
+          profiles.add(
+            ApiEnvironmentProfile(
+              id = id,
+              name = name,
+              vars = deserializeEnvVars(obj.optJSONArray("vars")),
             ),
           )
         }
       }
 
+      val resolvedProfiles =
+        if (profiles.isNotEmpty()) profiles
+        else ApiRequestUtils.defaultEnvironmentProfiles(initialDevVars = legacyEnvVars)
+
+      val requestedActiveId = root.optString("activeEnvProfileId")
+      val activeProfile =
+        resolvedProfiles.firstOrNull { it.id == requestedActiveId } ?: resolvedProfiles.first()
+      val resolvedEnvVars =
+        activeProfile.vars.ifEmpty { legacyEnvVars.ifEmpty { listOf(ApiEnvVar(key = "apiToken", value = "")) } }
+
       PersistedApiTesterState(
         collections = collections,
         history = history,
-        envVars = envVars.ifEmpty { listOf(ApiEnvVar(key = "apiToken", value = "")) },
+        envVars = resolvedEnvVars,
+        environmentProfiles = resolvedProfiles,
+        activeEnvProfileId = activeProfile.id,
       )
     }.getOrDefault(PersistedApiTesterState())
+  }
+
+  private fun serializeEnvVars(vars: List<ApiEnvVar>): JSONArray {
+    return JSONArray().apply {
+      vars.forEach { ev ->
+        put(
+          JSONObject().apply {
+            put("key", ev.key)
+            put("value", ev.value)
+            put("enabled", ev.enabled)
+          },
+        )
+      }
+    }
+  }
+
+  private fun deserializeEnvVars(arr: JSONArray?): List<ApiEnvVar> {
+    if (arr == null) return emptyList()
+    val list = mutableListOf<ApiEnvVar>()
+    for (i in 0 until arr.length()) {
+      val obj = arr.optJSONObject(i) ?: continue
+      list.add(
+        ApiEnvVar(
+          key = obj.optString("key"),
+          value = obj.optString("value"),
+          enabled = obj.optBoolean("enabled", true),
+        ),
+      )
+    }
+    return list
   }
 
   private fun serializeRequest(req: ApiTesterRequest): JSONObject {
@@ -214,10 +269,40 @@ class DraftPersistenceManager(context: Context) {
       put("bodyType", req.bodyType.name)
       put("rawBody", req.rawBody)
       put("formRows", serializeRows(req.formRows))
+      val assertArr = JSONArray()
+      req.assertions.forEach { a ->
+        assertArr.put(
+          JSONObject().apply {
+            put("id", a.id)
+            put("target", a.target.name)
+            put("property", a.property)
+            put("operator", a.operator.name)
+            put("expected", a.expected)
+            put("enabled", a.enabled)
+          },
+        )
+      }
+      put("assertions", assertArr)
     }
   }
 
   private fun deserializeRequest(obj: JSONObject): ApiTesterRequest {
+    val assertions = mutableListOf<ApiAssertionRule>()
+    obj.optJSONArray("assertions")?.let { arr ->
+      for (i in 0 until arr.length()) {
+        val aObj = arr.optJSONObject(i) ?: continue
+        assertions.add(
+          ApiAssertionRule(
+            id = aObj.optString("id", "a_$i"),
+            target = runCatching { ApiAssertionTarget.valueOf(aObj.optString("target", "STATUS_CODE")) }.getOrDefault(ApiAssertionTarget.STATUS_CODE),
+            property = aObj.optString("property"),
+            operator = runCatching { ApiAssertionOperator.valueOf(aObj.optString("operator", "IS_2XX")) }.getOrDefault(ApiAssertionOperator.IS_2XX),
+            expected = aObj.optString("expected"),
+            enabled = aObj.optBoolean("enabled", true),
+          ),
+        )
+      }
+    }
     return ApiTesterRequest(
       id = obj.optString("id", "req"),
       name = obj.optString("name", "Saved Request"),
@@ -234,6 +319,7 @@ class DraftPersistenceManager(context: Context) {
       bodyType = runCatching { ApiBodyType.valueOf(obj.optString("bodyType", "NONE")) }.getOrDefault(ApiBodyType.NONE),
       rawBody = obj.optString("rawBody"),
       formRows = deserializeRows(obj.optJSONArray("formRows")),
+      assertions = assertions,
     )
   }
 

@@ -21,6 +21,8 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.DriveFileRenameOutline
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Language
@@ -65,8 +67,10 @@ import androidx.compose.ui.unit.sp
 import com.example.data.remote.CfD1Database
 import com.example.data.remote.CfKvNamespace
 import com.example.data.remote.CfWorkerBinding
+import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.rememberGlassBorderStroke
 import com.example.ui.viewmodel.IdeUiState
 
 private enum class InfraSubTab(val label: String) {
@@ -114,12 +118,57 @@ fun CloudflareInfraPanel(
   onCreateQueue: (String) -> Unit,
   onDeleteQueue: (String) -> Unit,
   onNotifyStatus: (String) -> Unit,
+  onRenameWorker: (String, Boolean) -> Unit = { _, _ -> },
+  onUpdateSubdomain: (String) -> Unit = {},
 ) {
   val palette = LocalIdePalette.current
   var subTab by remember { mutableStateOf(InfraSubTab.BINDINGS) }
+  var showRenameWorkerDialog by remember { mutableStateOf(false) }
+  var showChangeSubdomainDialog by remember { mutableStateOf(false) }
+
+  val activeWs = uiState.workspace
+  val effectiveSubdomain =
+    activeWs?.accountSubdomain?.takeIf { it.isNotBlank() }
+      ?: uiState.accountSubdomain
+
+  if (showRenameWorkerDialog && activeWs != null) {
+    RenameWorkerDialog(
+      currentName = activeWs.scriptName,
+      subdomain = effectiveSubdomain,
+      isRemoteWorker = !uiState.isLocalScratchpad && uiState.credentials != null,
+      hasEncryptedSecrets = activeWs.bindings.any { it.type == "secret_text" },
+      onDismiss = { showRenameWorkerDialog = false },
+      onConfirm = { newName, deleteOld ->
+        showRenameWorkerDialog = false
+        onRenameWorker(newName, deleteOld)
+      },
+    )
+  }
+
+  if (showChangeSubdomainDialog) {
+    ChangeSubdomainDialog(
+      currentSubdomain = effectiveSubdomain,
+      sampleWorkerName = activeWs?.scriptName ?: uiState.workers.firstOrNull()?.id.orEmpty(),
+      isLocalMode = uiState.isLocalScratchpad || uiState.credentials == null,
+      onDismiss = { showChangeSubdomainDialog = false },
+      onConfirm = { newSubdomain ->
+        showChangeSubdomainDialog = false
+        onUpdateSubdomain(newSubdomain)
+      },
+    )
+  }
 
   if (uiState.isLocalScratchpad) {
     Column(modifier = Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+      if (activeWs != null) {
+        WorkerIdentityAndSubdomainCard(
+          scriptName = activeWs.scriptName,
+          subdomain = effectiveSubdomain,
+          canRenameWorker = true,
+          onRequestRenameWorker = { showRenameWorkerDialog = true },
+          onRequestChangeSubdomain = { showChangeSubdomainDialog = true },
+        )
+      }
       Text("CLOUDFLARE WORKERS INFRA", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
       Surface(color = palette.chromePill, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
         Text(
@@ -149,6 +198,72 @@ fun CloudflareInfraPanel(
       } else {
         IconButton(onClick = onRefreshInfra, modifier = Modifier.size(28.dp)) {
           Icon(Icons.Outlined.Refresh, contentDescription = "Refresh Cloudflare Infra", modifier = Modifier.size(16.dp))
+        }
+      }
+    }
+
+    // Compact quick-edit strip for Worker Name & *.workers.dev Subdomain right at the top
+    Row(
+      modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+      if (activeWs != null) {
+        Surface(
+          onClick = { showRenameWorkerDialog = true },
+          shape = RoundedCornerShape(12.dp),
+          color = palette.glassElevated,
+          border = rememberGlassBorderStroke(1.dp),
+          modifier = Modifier.weight(1f).testTag("infra_quick_rename_worker"),
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+          ) {
+            Icon(Icons.Outlined.DriveFileRenameOutline, contentDescription = null, tint = palette.activePillFg, modifier = Modifier.size(15.dp))
+            Column(modifier = Modifier.weight(1f)) {
+              Text("Worker Name", fontSize = 9.5.sp, color = palette.textMuted)
+              Text(
+                text = activeWs.scriptName,
+                fontFamily = JetBrainsMono,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = palette.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
+            Icon(Icons.Outlined.Edit, contentDescription = "Rename Worker", tint = palette.textSecondary, modifier = Modifier.size(14.dp))
+          }
+        }
+      }
+
+      Surface(
+        onClick = { showChangeSubdomainDialog = true },
+        shape = RoundedCornerShape(12.dp),
+        color = palette.glassElevated,
+        border = rememberGlassBorderStroke(1.dp),
+        modifier = Modifier.weight(1f).testTag("infra_quick_change_subdomain"),
+      ) {
+        Row(
+          modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          Icon(Icons.Outlined.Language, contentDescription = null, tint = EmeraldLive, modifier = Modifier.size(15.dp))
+          Column(modifier = Modifier.weight(1f)) {
+            Text("workers.dev Subdomain", fontSize = 9.5.sp, color = palette.textMuted)
+            Text(
+              text = if (effectiveSubdomain.isNotBlank()) "$effectiveSubdomain.workers.dev" else "Set subdomain",
+              fontFamily = JetBrainsMono,
+              fontSize = 11.5.sp,
+              fontWeight = FontWeight.SemiBold,
+              color = if (effectiveSubdomain.isNotBlank()) palette.textPrimary else palette.activePillFg,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+          Icon(Icons.Outlined.Edit, contentDescription = "Change subdomain", tint = palette.textSecondary, modifier = Modifier.size(14.dp))
         }
       }
     }
@@ -235,6 +350,9 @@ fun CloudflareInfraPanel(
         InfraSubTab.ROUTES ->
           RoutesDomainsCronSection(
             uiState = uiState,
+            effectiveSubdomain = effectiveSubdomain,
+            onRequestRenameWorker = { showRenameWorkerDialog = true },
+            onRequestChangeSubdomain = { showChangeSubdomainDialog = true },
             onToggleWorkersDev = onToggleWorkersDev,
             onUpdateCompat = onUpdateCompat,
             onAddCronSchedule = onAddCronSchedule,
@@ -827,8 +945,83 @@ private fun R2DoQueueSection(
 }
 
 @Composable
+private fun WorkerIdentityAndSubdomainCard(
+  scriptName: String?,
+  subdomain: String,
+  canRenameWorker: Boolean,
+  onRequestRenameWorker: () -> Unit,
+  onRequestChangeSubdomain: () -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  Surface(
+    color = palette.glassElevated,
+    shape = RoundedCornerShape(14.dp),
+    border = rememberGlassBorderStroke(1.dp),
+    modifier = Modifier.fillMaxWidth(),
+  ) {
+    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+      Text("WORKER IDENTITY & SUBDOMAIN", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+
+      if (scriptName != null && canRenameWorker) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("Worker Script Name", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+            Text(
+              text = scriptName,
+              fontFamily = JetBrainsMono,
+              fontSize = 13.5.sp,
+              fontWeight = FontWeight.SemiBold,
+              color = palette.textPrimary,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+          FilledTonalButton(
+            onClick = onRequestRenameWorker,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.testTag("infra_rename_worker_button"),
+          ) {
+            Icon(Icons.Outlined.DriveFileRenameOutline, contentDescription = null, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(5.dp))
+            Text("Rename", fontSize = 12.sp)
+          }
+        }
+        HorizontalDivider(color = palette.treeLine)
+      }
+
+      Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+          Text("Account *.workers.dev Subdomain", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+          Text(
+            text = if (subdomain.isNotBlank()) "*.$subdomain.workers.dev" else "Not configured yet",
+            fontFamily = JetBrainsMono,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = if (subdomain.isNotBlank()) EmeraldLive else palette.textSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+        FilledTonalButton(
+          onClick = onRequestChangeSubdomain,
+          shape = RoundedCornerShape(10.dp),
+          modifier = Modifier.testTag("infra_change_subdomain_button"),
+        ) {
+          Icon(Icons.Outlined.Language, contentDescription = null, modifier = Modifier.size(15.dp))
+          Spacer(Modifier.width(5.dp))
+          Text(if (subdomain.isNotBlank()) "Change" else "Set", fontSize = 12.sp)
+        }
+      }
+    }
+  }
+}
+
+@Composable
 private fun RoutesDomainsCronSection(
   uiState: IdeUiState,
+  effectiveSubdomain: String,
+  onRequestRenameWorker: () -> Unit,
+  onRequestChangeSubdomain: () -> Unit,
   onToggleWorkersDev: (Boolean) -> Unit,
   onUpdateCompat: (String, Boolean) -> Unit,
   onAddCronSchedule: (String) -> Unit,
@@ -840,8 +1033,17 @@ private fun RoutesDomainsCronSection(
 ) {
   val palette = LocalIdePalette.current
   val ws = uiState.workspace
+
+  WorkerIdentityAndSubdomainCard(
+    scriptName = ws?.scriptName,
+    subdomain = effectiveSubdomain,
+    canRenameWorker = ws != null,
+    onRequestRenameWorker = onRequestRenameWorker,
+    onRequestChangeSubdomain = onRequestChangeSubdomain,
+  )
+
   if (ws == null) {
-    Text("Open a Worker first.", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
+    Text("Open a Worker to configure its custom domains, routes & cron triggers.", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
     return
   }
 
@@ -857,7 +1059,16 @@ private fun RoutesDomainsCronSection(
     Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
       Column(modifier = Modifier.weight(1f)) {
         Text("workers.dev Route", style = MaterialTheme.typography.titleSmall, color = palette.textPrimary)
-        Text(ws.workersDevUrl ?: "No subdomain set", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(
+          text =
+            ws.workersDevUrl
+              ?: effectiveSubdomain.takeIf { it.isNotBlank() }?.let { "https://${ws.scriptName}.$it.workers.dev" }
+              ?: "No subdomain set",
+          style = MaterialTheme.typography.labelSmall,
+          color = palette.textSecondary,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
       }
       Switch(checked = ws.workersDevEnabled, onCheckedChange = onToggleWorkersDev)
     }

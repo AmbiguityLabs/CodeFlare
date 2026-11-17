@@ -18,6 +18,47 @@ enum class ApiBodyType(val label: String) {
   RAW("Raw"),
 }
 
+enum class ApiAssertionTarget(val label: String) {
+  STATUS_CODE("Status"),
+  RESPONSE_TIME_MS("Time (ms)"),
+  JSON_PATH("JSON Path"),
+  BODY_TEXT("Body"),
+  HEADER("Header"),
+}
+
+enum class ApiAssertionOperator(val label: String) {
+  EQUALS("=="),
+  NOT_EQUALS("!="),
+  CONTAINS("contains"),
+  NOT_CONTAINS("!contains"),
+  LESS_THAN("<"),
+  GREATER_THAN(">"),
+  EXISTS("exists"),
+  IS_2XX("is 2xx"),
+}
+
+data class ApiAssertionRule(
+  val id: String = UUID.randomUUID().toString().take(8),
+  val target: ApiAssertionTarget = ApiAssertionTarget.STATUS_CODE,
+  val property: String = "",
+  val operator: ApiAssertionOperator = ApiAssertionOperator.IS_2XX,
+  val expected: String = "",
+  val enabled: Boolean = true,
+)
+
+data class ApiAssertionResult(
+  val rule: ApiAssertionRule,
+  val passed: Boolean,
+  val actualValue: String,
+  val summary: String,
+)
+
+data class ApiEnvironmentProfile(
+  val id: String,
+  val name: String,
+  val vars: List<ApiEnvVar> = emptyList(),
+)
+
 data class ApiKeyValueRow(
   val id: String = UUID.randomUUID().toString().take(8),
   val key: String = "",
@@ -47,6 +88,7 @@ data class ApiTesterRequest(
   val bodyType: ApiBodyType = ApiBodyType.NONE,
   val rawBody: String = "{\n  \"ping\": true\n}",
   val formRows: List<ApiKeyValueRow> = emptyList(),
+  val assertions: List<ApiAssertionRule> = emptyList(),
 )
 
 data class ApiTesterHistoryItem(
@@ -62,6 +104,24 @@ object ApiRequestUtils {
   private val varPattern = Regex("""\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}""")
   private val workersDevRootPattern = Regex("""^https?://[^/]+\.workers\.dev/?$""", RegexOption.IGNORE_CASE)
   private val workersDevFullPattern = Regex("""^(https?://[^/]+\.workers\.dev)(/.*)?$""", RegexOption.IGNORE_CASE)
+
+  fun defaultEnvironmentProfiles(initialDevVars: List<ApiEnvVar>? = null): List<ApiEnvironmentProfile> {
+    val devVars =
+      initialDevVars?.takeIf { it.isNotEmpty() } ?: listOf(ApiEnvVar(key = "apiToken", value = ""))
+    return listOf(
+      ApiEnvironmentProfile(id = "env_dev", name = "Dev", vars = devVars),
+      ApiEnvironmentProfile(
+        id = "env_staging",
+        name = "Staging",
+        vars = listOf(ApiEnvVar(key = "baseUrl", value = ""), ApiEnvVar(key = "apiToken", value = "")),
+      ),
+      ApiEnvironmentProfile(
+        id = "env_prod",
+        name = "Prod",
+        vars = listOf(ApiEnvVar(key = "baseUrl", value = ""), ApiEnvVar(key = "apiToken", value = "")),
+      ),
+    )
+  }
 
   fun applyDeployedWorkerUrl(
     current: ApiTesterRequest,
@@ -251,6 +311,209 @@ object ApiRequestUtils {
       }
       appendLine("});")
       append("const text = await response.text();")
+    }
+  }
+
+  private sealed interface JsonLookup {
+    data object Missing : JsonLookup
+    data class Found(val value: Any?) : JsonLookup
+  }
+
+  fun extractJsonPath(jsonText: String, rawPath: String): String? {
+    return when (val res = lookupJsonPath(jsonText, rawPath)) {
+      is JsonLookup.Missing -> null
+      is JsonLookup.Found -> res.value?.takeIf { it !== org.json.JSONObject.NULL }?.toString() ?: "null"
+    }
+  }
+
+  private fun lookupJsonPath(jsonText: String, rawPath: String): JsonLookup {
+    val cleanPath = rawPath.trim().removePrefix("$").removePrefix(".")
+    if (cleanPath.isBlank()) return JsonLookup.Missing
+    val trimmedJson = jsonText.trim()
+    if (trimmedJson.isEmpty()) return JsonLookup.Missing
+    var current: Any? =
+      runCatching { org.json.JSONTokener(trimmedJson).nextValue() }.getOrNull() ?: return JsonLookup.Missing
+
+    val tokens = tokenizePath(cleanPath)
+    for (token in tokens) {
+      current =
+        when (val node = current) {
+          is org.json.JSONObject -> {
+            if (!node.has(token)) return JsonLookup.Missing
+            node.get(token)
+          }
+          is org.json.JSONArray -> {
+            val idx = token.toIntOrNull() ?: return JsonLookup.Missing
+            if (idx !in 0 until node.length()) return JsonLookup.Missing
+            node.get(idx)
+          }
+          else -> return JsonLookup.Missing
+        }
+    }
+    return JsonLookup.Found(current)
+  }
+
+  private fun tokenizePath(path: String): List<String> {
+    val out = mutableListOf<String>()
+    val regex = Regex("""([^.\[\]]+)|\[(\d+)\]""")
+    regex.findAll(path).forEach { m ->
+      val segment = m.groupValues[1].ifEmpty { m.groupValues[2] }
+      if (segment.isNotBlank()) out.add(segment)
+    }
+    return out
+  }
+
+  fun evaluateAssertions(
+    rules: List<ApiAssertionRule>,
+    result: HttpTestResult,
+  ): List<ApiAssertionResult> {
+    return rules.filter { it.enabled }.map { rule ->
+      if (result.errorMessage != null && result.statusCode == 0) {
+        return@map ApiAssertionResult(
+          rule = rule,
+          passed = false,
+          actualValue = result.errorMessage,
+          summary = "${rule.target.label}: Failed (${result.errorMessage})",
+        )
+      }
+
+      when (rule.target) {
+        ApiAssertionTarget.STATUS_CODE -> {
+          val code = result.statusCode
+          val passed =
+            when (rule.operator) {
+              ApiAssertionOperator.IS_2XX -> code in 200..299
+              ApiAssertionOperator.EQUALS -> code.toString() == rule.expected.trim()
+              ApiAssertionOperator.NOT_EQUALS -> code.toString() != rule.expected.trim()
+              ApiAssertionOperator.LESS_THAN -> {
+                val targetNum = rule.expected.trim().toDoubleOrNull()
+                targetNum != null && code < targetNum
+              }
+              ApiAssertionOperator.GREATER_THAN -> {
+                val targetNum = rule.expected.trim().toDoubleOrNull()
+                targetNum != null && code > targetNum
+              }
+              ApiAssertionOperator.CONTAINS -> code.toString().contains(rule.expected.trim())
+              ApiAssertionOperator.NOT_CONTAINS -> !code.toString().contains(rule.expected.trim())
+              ApiAssertionOperator.EXISTS -> code > 0
+            }
+          val desc =
+            if (rule.operator == ApiAssertionOperator.IS_2XX) "Status is 2xx"
+            else "Status ${rule.operator.label} ${rule.expected.trim()}"
+          ApiAssertionResult(
+            rule = rule,
+            passed = passed,
+            actualValue = code.toString(),
+            summary = "$desc (actual: $code)",
+          )
+        }
+
+        ApiAssertionTarget.RESPONSE_TIME_MS -> {
+          val ms = result.durationMs
+          val targetNum = rule.expected.trim().toDoubleOrNull()
+          val passed =
+            when (rule.operator) {
+              ApiAssertionOperator.LESS_THAN -> targetNum != null && ms < targetNum
+              ApiAssertionOperator.GREATER_THAN -> targetNum != null && ms > targetNum
+              ApiAssertionOperator.EQUALS -> targetNum != null && ms.toDouble() == targetNum
+              ApiAssertionOperator.NOT_EQUALS -> targetNum != null && ms.toDouble() != targetNum
+              else -> targetNum != null && ms <= targetNum
+            }
+          ApiAssertionResult(
+            rule = rule,
+            passed = passed,
+            actualValue = "${ms}ms",
+            summary = "Latency ${rule.operator.label} ${rule.expected.trim()}ms (actual: ${ms}ms)",
+          )
+        }
+
+        ApiAssertionTarget.JSON_PATH -> {
+          val lookup = lookupJsonPath(result.body, rule.property)
+          val exists = lookup is JsonLookup.Found
+          val actualText =
+            when (lookup) {
+              is JsonLookup.Missing -> "<missing>"
+              is JsonLookup.Found -> lookup.value?.takeIf { it !== org.json.JSONObject.NULL }?.toString() ?: "null"
+            }
+          val passed = evaluateTextOrNumericOperator(exists, actualText, rule.operator, rule.expected)
+          val pathLabel = rule.property.trim().ifBlank { "$" }
+          val opText =
+            if (rule.operator == ApiAssertionOperator.EXISTS) "exists"
+            else "${rule.operator.label} '${rule.expected}'"
+          ApiAssertionResult(
+            rule = rule,
+            passed = passed,
+            actualValue = actualText,
+            summary = "JSON $pathLabel $opText (actual: $actualText)",
+          )
+        }
+
+        ApiAssertionTarget.BODY_TEXT -> {
+          val actual = result.body
+          val passed =
+            when (rule.operator) {
+              ApiAssertionOperator.EXISTS -> actual.isNotBlank()
+              ApiAssertionOperator.EQUALS -> actual.trim() == rule.expected.trim()
+              ApiAssertionOperator.NOT_EQUALS -> actual.trim() != rule.expected.trim()
+              ApiAssertionOperator.CONTAINS -> actual.contains(rule.expected, ignoreCase = false)
+              ApiAssertionOperator.NOT_CONTAINS -> !actual.contains(rule.expected, ignoreCase = false)
+              else -> actual.contains(rule.expected, ignoreCase = true)
+            }
+          val preview = actual.take(48).replace('\n', ' ')
+          ApiAssertionResult(
+            rule = rule,
+            passed = passed,
+            actualValue = preview.ifBlank { "(empty)" },
+            summary = "Body ${rule.operator.label} '${rule.expected}'",
+          )
+        }
+
+        ApiAssertionTarget.HEADER -> {
+          val targetHeader = rule.property.trim()
+          val matched =
+            result.headers.entries.firstOrNull { it.key.equals(targetHeader, ignoreCase = true) }
+          val exists = matched != null
+          val actual = matched?.value ?: "<missing>"
+          val passed = evaluateTextOrNumericOperator(exists, actual, rule.operator, rule.expected)
+          ApiAssertionResult(
+            rule = rule,
+            passed = passed,
+            actualValue = actual,
+            summary = "Header '$targetHeader' ${rule.operator.label} '${rule.expected}' (actual: $actual)",
+          )
+        }
+      }
+    }
+  }
+
+  private fun evaluateTextOrNumericOperator(
+    exists: Boolean,
+    actualText: String,
+    operator: ApiAssertionOperator,
+    expectedRaw: String,
+  ): Boolean {
+    if (!exists) return false
+    val expected = expectedRaw.trim()
+    return when (operator) {
+      ApiAssertionOperator.EXISTS -> true
+      ApiAssertionOperator.EQUALS -> actualText == expected
+      ApiAssertionOperator.NOT_EQUALS -> actualText != expected
+      ApiAssertionOperator.CONTAINS -> actualText.contains(expected, ignoreCase = true)
+      ApiAssertionOperator.NOT_CONTAINS -> !actualText.contains(expected, ignoreCase = true)
+      ApiAssertionOperator.LESS_THAN -> {
+        val a = actualText.toDoubleOrNull()
+        val e = expected.toDoubleOrNull()
+        a != null && e != null && a < e
+      }
+      ApiAssertionOperator.GREATER_THAN -> {
+        val a = actualText.toDoubleOrNull()
+        val e = expected.toDoubleOrNull()
+        a != null && e != null && a > e
+      }
+      ApiAssertionOperator.IS_2XX -> {
+        val code = actualText.toIntOrNull()
+        code != null && code in 200..299
+      }
     }
   }
 }

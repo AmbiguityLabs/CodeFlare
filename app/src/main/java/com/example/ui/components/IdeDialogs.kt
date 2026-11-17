@@ -22,10 +22,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.DriveFileRenameOutline
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,7 +52,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.remote.CloudflareNamingUtils
 import com.example.data.repository.WorkerTemplate
+import com.example.ui.theme.AmberWarn
+import com.example.ui.theme.EmeraldLive
+import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.RoseError
 
@@ -590,6 +597,256 @@ fun CommandPaletteDialog(
     },
     confirmButton = {
       TextButton(onClick = onDismiss) { Text("Close") }
+    },
+  )
+}
+
+@Composable
+fun RenameWorkerDialog(
+  currentName: String,
+  subdomain: String,
+  isRemoteWorker: Boolean,
+  hasEncryptedSecrets: Boolean = false,
+  onDismiss: () -> Unit,
+  onConfirm: (newName: String, deleteOldRemote: Boolean) -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  var rawInput by remember(currentName) { mutableStateOf(currentName) }
+  var deleteOldRemote by remember { mutableStateOf(true) }
+  val sanitized =
+    remember(rawInput, isRemoteWorker) {
+      CloudflareNamingUtils.sanitizeWorkerName(rawInput, allowUnderscore = !isRemoteWorker)
+    }
+  val isValid =
+    remember(sanitized, isRemoteWorker) {
+      if (isRemoteWorker) CloudflareNamingUtils.isValidWorkerName(sanitized)
+      else sanitized.isNotBlank()
+    }
+  val changed = sanitized.isNotBlank() && sanitized != currentName
+
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    icon = {
+      Icon(
+        imageVector = Icons.Outlined.DriveFileRenameOutline,
+        contentDescription = null,
+        tint = palette.activePillFg,
+      )
+    },
+    title = { Text("Rename Worker") },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Surface(color = palette.chromePill, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) {
+          Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            Text("Current Name", fontSize = 11.sp, color = palette.textMuted)
+            Text(
+              text = currentName,
+              fontFamily = JetBrainsMono,
+              fontSize = 12.sp,
+              fontWeight = FontWeight.SemiBold,
+              color = palette.textPrimary,
+            )
+          }
+        }
+
+        OutlinedTextField(
+          value = rawInput,
+          onValueChange = { rawInput = it },
+          label = { Text("New Worker Name") },
+          placeholder = { Text("my-renamed-worker") },
+          singleLine = true,
+          isError = rawInput.isNotBlank() && !isValid,
+          textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = JetBrainsMono),
+          trailingIcon = {
+            if (rawInput.isNotEmpty()) {
+              IconButton(onClick = { rawInput = "" }) {
+                Icon(Icons.Outlined.Close, contentDescription = "Clear", modifier = Modifier.size(16.dp))
+              }
+            }
+          },
+          supportingText = {
+            Text(
+              text =
+                if (!isValid && rawInput.isNotBlank()) {
+                  "Use 1–63 lowercase letters, numbers, or hyphens (no leading/trailing hyphen)"
+                } else if (sanitized.isNotBlank() && sanitized != rawInput.trim()) {
+                  "Normalized to: $sanitized"
+                } else {
+                  "Updates wrangler.jsonc, local directory${if (isRemoteWorker) " & Cloudflare deployment" else ""}"
+                },
+              fontSize = 11.sp,
+            )
+          },
+          shape = RoundedCornerShape(14.dp),
+          modifier = Modifier.fillMaxWidth().testTag("rename_worker_input"),
+        )
+
+        if (sanitized.isNotBlank()) {
+          val subDisplay = subdomain.ifBlank { "<subdomain>" }
+          Surface(
+            color = palette.activePillBg.copy(alpha = 0.55f),
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+              Text("NEW WORKERS.DEV ENDPOINT", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = palette.activePillFg)
+              Text(
+                text = "https://$sanitized.$subDisplay.workers.dev",
+                fontFamily = JetBrainsMono,
+                fontSize = 11.5.sp,
+                color = EmeraldLive,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
+          }
+        }
+
+        if (isRemoteWorker) {
+          Surface(color = palette.chromePill, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+            Row(
+              modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Column(modifier = Modifier.weight(1f)) {
+                Text("Delete old Cloudflare script", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium, color = palette.textPrimary)
+                Text(
+                  text = "Deploys '$sanitized' then removes '$currentName'",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = palette.textMuted,
+                )
+              }
+              Switch(checked = deleteOldRemote, onCheckedChange = { deleteOldRemote = it })
+            }
+          }
+          if (hasEncryptedSecrets) {
+            Surface(color = AmberWarn.copy(alpha = 0.14f), shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) {
+              Text(
+                text = "Note: Cloudflare does not expose existing encrypted secret values via API; re-add secrets on '$sanitized' after renaming.",
+                fontSize = 11.sp,
+                color = AmberWarn,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+              )
+            }
+          }
+        }
+      }
+    },
+    confirmButton = {
+      FilledTonalButton(
+        onClick = { onConfirm(sanitized, deleteOldRemote) },
+        enabled = isValid && changed,
+        modifier = Modifier.testTag("confirm_rename_worker_button"),
+      ) {
+        Text(if (isRemoteWorker) "Rename & Deploy" else "Rename")
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) { Text("Cancel") }
+    },
+  )
+}
+
+@Composable
+fun ChangeSubdomainDialog(
+  currentSubdomain: String,
+  sampleWorkerName: String,
+  isLocalMode: Boolean,
+  onDismiss: () -> Unit,
+  onConfirm: (newSubdomain: String) -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  var rawInput by remember(currentSubdomain) { mutableStateOf(currentSubdomain) }
+  val sanitized = remember(rawInput) { CloudflareNamingUtils.sanitizeSubdomain(rawInput) }
+  val isValid = remember(sanitized) { CloudflareNamingUtils.isValidSubdomain(sanitized) }
+  val workerPreview = sampleWorkerName.ifBlank { "my-worker" }
+
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    icon = {
+      Icon(
+        imageVector = Icons.Outlined.Language,
+        contentDescription = null,
+        tint = palette.activePillFg,
+      )
+    },
+    title = { Text("Change workers.dev Subdomain") },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        OutlinedTextField(
+          value = rawInput,
+          onValueChange = { rawInput = it },
+          label = { Text("Account Subdomain") },
+          placeholder = { Text("my-edge-team") },
+          suffix = { Text(".workers.dev", fontFamily = JetBrainsMono, fontSize = 12.sp, color = palette.textMuted) },
+          singleLine = true,
+          isError = rawInput.isNotBlank() && !isValid,
+          textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = JetBrainsMono),
+          supportingText = {
+            Text(
+              text =
+                if (!isValid && rawInput.isNotBlank()) {
+                  "Must be 1–63 lowercase letters, numbers, or hyphens"
+                } else {
+                  "You can type just the prefix (e.g. my-team) or full my-team.workers.dev"
+                },
+              fontSize = 11.sp,
+            )
+          },
+          shape = RoundedCornerShape(14.dp),
+          modifier = Modifier.fillMaxWidth().testTag("change_subdomain_input"),
+        )
+
+        if (sanitized.isNotBlank()) {
+          Surface(
+            color = palette.activePillBg.copy(alpha = 0.55f),
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+              Text("LIVE PREVIEW URL", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = palette.activePillFg)
+              Text(
+                text = "https://$workerPreview.$sanitized.workers.dev",
+                fontFamily = JetBrainsMono,
+                fontSize = 11.5.sp,
+                color = EmeraldLive,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
+          }
+        }
+
+        Surface(color = palette.chromePill, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) {
+          Text(
+            text =
+              if (isLocalMode) {
+                "Updates the local preview & API tester domain prefix for your offline projects."
+              } else {
+                "Updates your Cloudflare account's *.workers.dev subdomain via Cloudflare API. All Workers on this account will serve on *.$sanitized.workers.dev."
+              },
+            fontSize = 11.sp,
+            color = palette.textSecondary,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+          )
+        }
+      }
+    },
+    confirmButton = {
+      FilledTonalButton(
+        onClick = { onConfirm(sanitized) },
+        enabled = isValid && sanitized != currentSubdomain,
+        modifier = Modifier.testTag("confirm_change_subdomain_button"),
+      ) {
+        Text("Save Subdomain")
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) { Text("Cancel") }
     },
   )
 }

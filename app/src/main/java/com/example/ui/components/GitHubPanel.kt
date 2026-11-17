@@ -143,6 +143,9 @@ fun GitHubAndDiffPanel(
   onDeployActiveWorker: () -> Unit,
   onRevertFile: (String) -> Unit,
   onCloseDrawerIfCompact: () -> Unit,
+  onOpenDiffReview: (() -> Unit)? = null,
+  onOpenPrePushDiffReview: (() -> Unit)? = null,
+  onOpenConflictResolver: (() -> Unit)? = null,
 ) {
   // 0 = Git, 1 = Repos, 2 = PRs & Issues, 3 = CF Diff
   var subTab by remember(uiState.linkedGitRepo != null) {
@@ -225,6 +228,8 @@ fun GitHubAndDiffPanel(
           },
           onRenameWorkerTarget = onRenameWorkerTarget,
           onDeployActiveWorker = onDeployActiveWorker,
+          onOpenPrePushDiffReview = onOpenPrePushDiffReview,
+          onOpenConflictResolver = onOpenConflictResolver,
         )
       1 ->
         GitCloneAndReposTab(
@@ -265,7 +270,7 @@ fun GitHubAndDiffPanel(
           onToggleIssueState = onToggleIssueState,
           onCommentOnIssue = onCommentOnIssue,
         )
-      else -> LocalWorkerDiffView(uiState = uiState, onRevertFile = onRevertFile)
+      else -> LocalWorkerDiffView(uiState = uiState, onRevertFile = onRevertFile, onOpenFullDiffReview = onOpenDiffReview)
     }
   }
 }
@@ -400,6 +405,8 @@ private fun GitSourceControlTab(
   onOpenFileInEditor: (String) -> Unit,
   onRenameWorkerTarget: (String) -> Unit,
   onDeployActiveWorker: () -> Unit,
+  onOpenPrePushDiffReview: (() -> Unit)? = null,
+  onOpenConflictResolver: (() -> Unit)? = null,
 ) {
   val palette = LocalIdePalette.current
   val linked = uiState.linkedGitRepo
@@ -647,6 +654,36 @@ private fun GitSourceControlTab(
       }
     }
 
+    if (uiState.pendingMergeConflicts.isNotEmpty() && onOpenConflictResolver != null) {
+      Surface(
+        onClick = onOpenConflictResolver,
+        color = AmberWarn.copy(alpha = 0.16f),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth().testTag("git_resolve_conflicts_banner"),
+      ) {
+        Row(
+          modifier = Modifier.padding(10.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          Icon(Icons.Outlined.MergeType, contentDescription = null, tint = AmberWarn, modifier = Modifier.size(18.dp))
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = "${uiState.pendingMergeConflicts.size} Conflicted File(s) Detected",
+              style = MaterialTheme.typography.labelMedium,
+              color = AmberWarn,
+              fontWeight = FontWeight.Bold,
+            )
+            Text(
+              text = "Tap to open 3-Way Merge Conflict Resolver",
+              style = MaterialTheme.typography.labelSmall,
+              color = palette.textPrimary,
+            )
+          }
+        }
+      }
+    }
+
     if (uiState.isGitHubBusy) {
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
@@ -715,6 +752,18 @@ private fun GitSourceControlTab(
                   else -> "Push Sync"
                 }
               Text(pushLabel, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+          }
+
+          if (onOpenPrePushDiffReview != null && changedFiles.isNotEmpty()) {
+            OutlinedButton(
+              onClick = onOpenPrePushDiffReview,
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier.fillMaxWidth().height(38.dp).testTag("git_review_diff_before_push"),
+            ) {
+              Icon(Icons.Outlined.Difference, contentDescription = null, modifier = Modifier.size(15.dp))
+              Spacer(Modifier.width(6.dp))
+              Text("Review Unified / Side-by-Side Diff", fontSize = 11.5.sp)
             }
           }
 
@@ -1862,11 +1911,19 @@ private fun BoxBranchPicker(
 private fun LocalWorkerDiffView(
   uiState: IdeUiState,
   onRevertFile: (String) -> Unit,
+  onOpenFullDiffReview: (() -> Unit)? = null,
 ) {
   val palette = LocalIdePalette.current
   val active = uiState.activeFile
   Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-    Text("LOCAL DIFF VS CLOUDFLARE", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+      Text("LOCAL DIFF VS CLOUDFLARE", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+      if (onOpenFullDiffReview != null && uiState.hasUnsavedChanges) {
+        TextButton(onClick = onOpenFullDiffReview, modifier = Modifier.height(30.dp)) {
+          Text("Full Diff", fontSize = 11.sp)
+        }
+      }
+    }
     if (active == null) {
       Text("Select a file to compare edits against deployed code.", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
       return

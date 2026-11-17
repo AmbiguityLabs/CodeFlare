@@ -33,6 +33,7 @@ import com.example.data.remote.CfR2Bucket
 import com.example.data.remote.CfR2CreateRequest
 import com.example.data.remote.CfResponse
 import com.example.data.remote.CfScriptSubdomainRequest
+import com.example.data.remote.CfSubdomainPutRequest
 import com.example.data.remote.CfTailResult
 import com.example.data.remote.CfWorkerBinding
 import com.example.data.remote.CfWorkerDomainPutRequest
@@ -44,13 +45,16 @@ import com.example.data.remote.CfWorkerSettings
 import com.example.data.remote.CfWorkerVersion
 import com.example.data.remote.CfZone
 import com.example.data.remote.CfZoneRouteCreate
+import com.example.data.remote.CloudflareApiService
 import com.example.data.remote.CloudflareClientFactory
+import com.example.data.remote.CloudflareNamingUtils
 import com.example.data.remote.HttpTestResult
 import com.example.data.remote.MultipartWorkerParser
 import com.example.data.remote.PagesDirectUploadHasher
 import com.example.data.remote.PagesDirectUploadProgress
 import com.example.data.remote.PagesPreparedAsset
 import com.example.data.remote.WorkerFile
+import com.example.data.remote.WorkerRenameOutcome
 import com.example.data.remote.WorkerWorkspace
 import com.example.data.security.AuthMethod
 import com.example.data.security.AuthPreferencesStore
@@ -274,8 +278,9 @@ data class ActiveTailSession(
 class CloudflareRepository(
   private val prefsStore: AuthPreferencesStore,
   private val clientFactory: CloudflareClientFactory,
+  apiServiceOverride: CloudflareApiService? = null,
 ) {
-  private val api = clientFactory.apiService
+  private val api = apiServiceOverride ?: clientFactory.apiService
 
   suspend fun authorizeWithApiToken(token: String): Result<List<CfAccount>> =
     withContext(Dispatchers.IO) {
@@ -492,6 +497,24 @@ class CloudflareRepository(
       }.getOrDefault("")
     }
 
+  suspend fun updateAccountSubdomain(
+    accountId: String,
+    newSubdomain: String,
+  ): Result<String> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val clean = CloudflareNamingUtils.sanitizeSubdomain(newSubdomain)
+        require(CloudflareNamingUtils.isValidSubdomain(clean)) {
+          "Subdomain must use lowercase letters, numbers, and hyphens (1-63 chars)"
+        }
+        val resp = api.setWorkersSubdomain(accountId, CfSubdomainPutRequest(clean))
+        if (!resp.isSuccessful || resp.body()?.success != true) {
+          error(extractCfError(resp) ?: "Failed to update workers.dev subdomain to '$clean'")
+        }
+        resp.body()?.result?.subdomain?.takeIf { it.isNotBlank() } ?: clean
+      }
+    }
+
   suspend fun openWorkerWorkspace(accountId: String, script: CfWorkerScript): Result<WorkerWorkspace> =
     withContext(Dispatchers.IO) {
       runCatching {
@@ -666,6 +689,69 @@ class CloudflareRepository(
         if (!resp.isSuccessful || resp.body()?.success != true) {
           error(extractCfError(resp) ?: "Failed to delete Worker '$scriptName'")
         }
+      }
+    }
+
+  suspend fun renameRemoteWorker(
+    accountId: String,
+    oldScriptName: String,
+    renamedWorkspace: WorkerWorkspace,
+    deleteOldScript: Boolean = true,
+    stagedSecrets: Map<String, String> = emptyMap(),
+  ): Result<WorkerRenameOutcome> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val newScriptName = CloudflareNamingUtils.sanitizeWorkerName(renamedWorkspace.scriptName)
+        require(CloudflareNamingUtils.isValidWorkerName(newScriptName)) {
+          "Worker name must use lowercase letters, numbers, and hyphens (1-63 chars)"
+        }
+        val normalizedWs = renamedWorkspace.copy(scriptName = newScriptName)
+        val deployedScript = deployWorkerWorkspace(accountId, normalizedWs).getOrThrow()
+
+        val warnings = mutableListOf<String>()
+        saveBindingsAndCompat(
+          accountId = accountId,
+          scriptName = newScriptName,
+          compatibilityDate = normalizedWs.compatibilityDate,
+          compatibilityFlags = normalizedWs.compatibilityFlags,
+          bindings = normalizedWs.bindings.filterNot { it.type == "secret_text" },
+        ).onFailure { warnings.add("settings: ${it.localizedMessage}") }
+
+        toggleWorkersDev(accountId, newScriptName, normalizedWs.workersDevEnabled)
+          .onFailure { warnings.add("workers.dev: ${it.localizedMessage}") }
+
+        if (normalizedWs.schedules.isNotEmpty()) {
+          updateCronSchedules(accountId, newScriptName, normalizedWs.schedules.map { it.cron })
+            .onFailure { warnings.add("cron: ${it.localizedMessage}") }
+        }
+
+        stagedSecrets.forEach { (secretName, secretVal) ->
+          putSecret(accountId, newScriptName, secretName, secretVal)
+            .onFailure { warnings.add("secret $secretName: ${it.localizedMessage}") }
+        }
+
+        val uncopiedSecrets =
+          normalizedWs.bindings
+            .filter { it.type == "secret_text" && !stagedSecrets.containsKey(it.name) }
+            .map { it.name }
+        if (uncopiedSecrets.isNotEmpty()) {
+          warnings.add("re-enter encrypted secret(s): ${uncopiedSecrets.joinToString(", ")}")
+        }
+
+        var deletedOld = false
+        if (deleteOldScript && oldScriptName.isNotBlank() && oldScriptName != newScriptName) {
+          deleteWorker(accountId, oldScriptName)
+            .onSuccess { deletedOld = true }
+            .onFailure { err ->
+              warnings.add("old script '$oldScriptName' kept: ${err.localizedMessage}")
+            }
+        }
+
+        WorkerRenameOutcome(
+          script = deployedScript,
+          deletedOldRemote = deletedOld,
+          warningMessage = warnings.takeIf { it.isNotEmpty() }?.joinToString("; "),
+        )
       }
     }
 

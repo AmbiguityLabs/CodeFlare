@@ -82,6 +82,12 @@ interface CloudflareApiService {
     @Path("accountId") accountId: String,
   ): Response<CfResponse<CfSubdomainResult>>
 
+  @PUT("accounts/{accountId}/workers/subdomain")
+  suspend fun setWorkersSubdomain(
+    @Path("accountId") accountId: String,
+    @Body request: CfSubdomainPutRequest,
+  ): Response<CfResponse<CfSubdomainResult>>
+
   @GET("accounts/{accountId}/workers/scripts/{scriptName}/subdomain")
   suspend fun getScriptSubdomain(
     @Path("accountId") accountId: String,

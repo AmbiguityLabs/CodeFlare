@@ -42,11 +42,15 @@ import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.Difference
+import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.Http
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.MergeType
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
@@ -100,11 +104,15 @@ import androidx.compose.ui.window.DialogProperties
 import com.example.R
 import com.example.ui.components.ApiTesterPane
 import com.example.ui.components.BatchUploadOptionsDialog
+import com.example.ui.components.ChangeSubdomainDialog
 import com.example.ui.components.CloudflareInfraPanel
 import com.example.ui.components.CodeEditorPane
 import com.example.ui.components.CommandPaletteDialog
+import com.example.ui.components.ConflictResolverModal
 import com.example.ui.components.ConsoleView
 import com.example.ui.components.DeployedWorkerPreviewPane
+import com.example.ui.components.DiffReviewIntent
+import com.example.ui.components.DiffReviewModal
 import com.example.ui.components.EdgeBottomDock
 import com.example.ui.components.EdgeBottomDockItem
 import com.example.ui.components.GitHubAndDiffPanel
@@ -117,6 +125,7 @@ import com.example.ui.components.PaletteCommand
 import com.example.ui.components.ProblemsView
 import com.example.ui.components.ProjectFilesSidebar
 import com.example.ui.components.RenameFileDialog
+import com.example.ui.components.RenameWorkerDialog
 import com.example.ui.components.WorkerTestWindow
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
@@ -152,6 +161,8 @@ fun IdeWorkspaceScreen(
   var overflowMenuOpen by remember { mutableStateOf(false) }
   var showProjectGitModal by remember { mutableStateOf(false) }
   var showProjectSettingsModal by remember { mutableStateOf(false) }
+  var showRenameWorkerDialog by remember { mutableStateOf(false) }
+  var showChangeSubdomainDialog by remember { mutableStateOf(false) }
 
   // Zero-permission Storage Access Framework (SAF) launchers
   val singleFileUploadLauncher =
@@ -245,6 +256,38 @@ fun IdeWorkspaceScreen(
     )
   }
 
+  if (showRenameWorkerDialog) {
+    uiState.workspace?.let { ws ->
+      val effectiveSub = ws.accountSubdomain.ifBlank { uiState.accountSubdomain }
+      RenameWorkerDialog(
+        currentName = ws.scriptName,
+        subdomain = effectiveSub,
+        isRemoteWorker = !uiState.isLocalScratchpad && uiState.credentials != null,
+        hasEncryptedSecrets = ws.bindings.any { it.type == "secret_text" },
+        onDismiss = { showRenameWorkerDialog = false },
+        onConfirm = { newName, deleteOld ->
+          showRenameWorkerDialog = false
+          viewModel.renameExistingWorker(newScriptNameRaw = newName, deleteOldRemote = deleteOld)
+        },
+      )
+    }
+  }
+
+  if (showChangeSubdomainDialog) {
+    val activeWs = uiState.workspace
+    val effectiveSub = activeWs?.accountSubdomain?.takeIf { it.isNotBlank() } ?: uiState.accountSubdomain
+    ChangeSubdomainDialog(
+      currentSubdomain = effectiveSub,
+      sampleWorkerName = activeWs?.scriptName.orEmpty(),
+      isLocalMode = uiState.isLocalScratchpad || uiState.credentials == null,
+      onDismiss = { showChangeSubdomainDialog = false },
+      onConfirm = { newSub ->
+        showChangeSubdomainDialog = false
+        viewModel.updateAccountWorkersSubdomain(newSub)
+      },
+    )
+  }
+
   newFileDialogPrefix?.let { prefix ->
     NewModuleFileDialog(
       initialPrefix = prefix,
@@ -289,6 +332,33 @@ fun IdeWorkspaceScreen(
         pendingUploadUris = emptyList()
         viewModel.uploadFilesToActiveWorker(uris, folderPrefix, autoDeploy)
       },
+    )
+  }
+
+  if (uiState.showDiffReviewModal) {
+    DiffReviewModal(
+      intent = uiState.diffReviewIntent,
+      entries = uiState.diffReviewEntries,
+      onDismiss = viewModel::dismissDiffReview,
+      onRevertFile = viewModel::revertFile,
+      onPrimaryProceed =
+        if (uiState.diffReviewIntent != DiffReviewIntent.WORKSPACE) {
+          { viewModel.proceedFromDiffReview() }
+        } else null,
+      onOpenFileInEditor = { path ->
+        viewModel.openFileTab(path, recordHistory = true)
+        viewModel.setProjectMode(ProjectMode.CODE)
+      },
+    )
+  }
+
+  if (uiState.showConflictResolverModal && uiState.pendingMergeConflicts.isNotEmpty()) {
+    ConflictResolverModal(
+      conflictFiles = uiState.pendingMergeConflicts,
+      onResolveHunk = viewModel::resolveConflictHunk,
+      onResolveAllInFile = viewModel::resolveAllConflictsInFile,
+      onApplyResolvedToWorkspace = viewModel::applyResolvedConflictsToWorkspace,
+      onDismiss = viewModel::dismissConflictResolver,
     )
   }
 
@@ -423,6 +493,9 @@ fun IdeWorkspaceScreen(
               onDeployActiveWorker = viewModel::deployActiveWorker,
               onRevertFile = viewModel::revertFile,
               onCloseDrawerIfCompact = { showProjectGitModal = false },
+              onOpenDiffReview = { viewModel.openDiffReview(DiffReviewIntent.WORKSPACE) },
+              onOpenPrePushDiffReview = { viewModel.openDiffReview(DiffReviewIntent.PRE_GIT_PUSH) },
+              onOpenConflictResolver = viewModel::openConflictResolver,
             )
           }
         }
@@ -498,6 +571,21 @@ fun IdeWorkspaceScreen(
         },
         PaletteCommand("Export / Deploy Worker to Cloudflare", "Publish all local edits, bindings & deletions live") {
           viewModel.deployActiveWorker()
+        },
+        PaletteCommand("Rename Worker", "Rename this Worker script, wrangler.jsonc & live URL") {
+          if (uiState.workspace != null) showRenameWorkerDialog = true
+        },
+        PaletteCommand("Change workers.dev Subdomain", "Update your *.workers.dev subdomain endpoint") {
+          showChangeSubdomainDialog = true
+        },
+        PaletteCommand("Review Diff Before Deploy", "Inspect Unified or Side-by-Side line changes before deploying") {
+          viewModel.openDiffReview(DiffReviewIntent.PRE_DEPLOY)
+        },
+        PaletteCommand("Open Workspace Diff Viewer", "Unified and Side-by-Side diff inspector for changed files") {
+          viewModel.openDiffReview(DiffReviewIntent.WORKSPACE)
+        },
+        PaletteCommand("Resolve Merge Conflicts", "Open interactive 3-way merge conflict resolver") {
+          viewModel.openConflictResolver()
         },
         PaletteCommand("Re-Import Worker from Cloudflare", "Discard local edits and pull fresh Worker code") {
           viewModel.reimportActiveWorkerFromCloudflare()
@@ -786,6 +874,24 @@ fun IdeWorkspaceScreen(
                     viewModel.syncWranglerFileToWorkspace()
                   },
                 )
+                if (uiState.workspace != null) {
+                  DropdownMenuItem(
+                    text = { Text("Rename Worker") },
+                    leadingIcon = { Icon(Icons.Outlined.DriveFileRenameOutline, contentDescription = null) },
+                    onClick = {
+                      overflowMenuOpen = false
+                      showRenameWorkerDialog = true
+                    },
+                  )
+                  DropdownMenuItem(
+                    text = { Text("Change Subdomain (*.workers.dev)") },
+                    leadingIcon = { Icon(Icons.Outlined.Language, contentDescription = null) },
+                    onClick = {
+                      overflowMenuOpen = false
+                      showChangeSubdomainDialog = true
+                    },
+                  )
+                }
                 DropdownMenuItem(
                   text = { Text("Export Workspace (.json)") },
                   leadingIcon = { Icon(Icons.Outlined.UploadFile, contentDescription = null) },
@@ -814,11 +920,42 @@ fun IdeWorkspaceScreen(
                 }
                 if (uiState.hasUnsavedChanges) {
                   DropdownMenuItem(
+                    text = {
+                      Text(if (uiState.isLocalScratchpad) "Review Workspace Diff" else "Review Diff & Deploy")
+                    },
+                    leadingIcon = { Icon(Icons.Outlined.Difference, contentDescription = null) },
+                    onClick = {
+                      overflowMenuOpen = false
+                      viewModel.openDiffReview(
+                        if (uiState.isLocalScratchpad) DiffReviewIntent.WORKSPACE else DiffReviewIntent.PRE_DEPLOY,
+                      )
+                    },
+                  )
+                  DropdownMenuItem(
                     text = { Text("Revert Workspace") },
                     leadingIcon = { Icon(Icons.Outlined.Restore, contentDescription = null) },
                     onClick = {
                       overflowMenuOpen = false
                       viewModel.revertWorkspaceToImportedBaseline()
+                    },
+                  )
+                } else if (uiState.workspace != null) {
+                  DropdownMenuItem(
+                    text = { Text("Diff Viewer") },
+                    leadingIcon = { Icon(Icons.Outlined.Difference, contentDescription = null) },
+                    onClick = {
+                      overflowMenuOpen = false
+                      viewModel.openDiffReview(DiffReviewIntent.WORKSPACE)
+                    },
+                  )
+                }
+                if (uiState.pendingMergeConflicts.isNotEmpty()) {
+                  DropdownMenuItem(
+                    text = { Text("Resolve Merge Conflicts (${uiState.pendingMergeConflicts.size})") },
+                    leadingIcon = { Icon(Icons.Outlined.MergeType, contentDescription = null, tint = AmberWarn) },
+                    onClick = {
+                      overflowMenuOpen = false
+                      viewModel.openConflictResolver()
                     },
                   )
                 }
@@ -907,6 +1044,7 @@ fun IdeWorkspaceScreen(
                       onZoomPercentChange = viewModel::setEditorZoomPercent,
                       onJumpToLocation = viewModel::jumpToLine,
                       onHideEditorBottomBars = { viewModel.setEditorBottomBarsHidden(true) },
+                      onOpenConflictResolver = viewModel::openConflictResolver,
                       modifier = Modifier.fillMaxSize(),
                     )
                   }
@@ -954,6 +1092,10 @@ fun IdeWorkspaceScreen(
                       onCreateQueue = viewModel::createQueue,
                       onDeleteQueue = viewModel::deleteQueue,
                       onNotifyStatus = viewModel::showStatus,
+                      onRenameWorker = { newName, deleteOld ->
+                        viewModel.renameExistingWorker(newScriptNameRaw = newName, deleteOldRemote = deleteOld)
+                      },
+                      onUpdateSubdomain = viewModel::updateAccountWorkersSubdomain,
                     )
                   }
 
@@ -1235,6 +1377,10 @@ private fun ProjectTestModeWorkspace(
             onDeleteCollectionItem = viewModel::deleteApiCollectionItem,
             onClearHistory = viewModel::clearApiHistory,
             onNotifyStatus = viewModel::showStatus,
+            onSelectEnvProfile = viewModel::selectApiEnvProfile,
+            onCreateEnvProfile = viewModel::createApiEnvProfile,
+            onDeleteEnvProfile = viewModel::deleteApiEnvProfile,
+            onImportCollection = viewModel::importApiCollection,
             modifier = Modifier.fillMaxSize(),
           )
       }

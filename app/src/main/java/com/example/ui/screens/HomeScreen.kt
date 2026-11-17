@@ -16,6 +16,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,6 +34,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -47,10 +49,13 @@ import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.CloudQueue
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.DriveFileRenameOutline
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
@@ -93,12 +98,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.RamWorkspaceRecord
 import com.example.data.remote.CfWorkerScript
+import com.example.ui.components.ChangeSubdomainDialog
 import com.example.ui.components.CloudflareInfraPanel
 import com.example.ui.components.CloudflarePagesPanel
 import com.example.ui.components.EdgeBottomDock
 import com.example.ui.components.EdgeBottomDockItem
 import com.example.ui.components.GitHubAndDiffPanel
 import com.example.ui.components.NewWorkerDialog
+import com.example.ui.components.RenameWorkerDialog
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
@@ -128,6 +135,8 @@ fun HomeScreen(
   var pickedNewWorkerUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
   var pendingDeleteCloudWorker by remember { mutableStateOf<String?>(null) }
   var pendingDeleteLocalKey by remember { mutableStateOf<Pair<String, String>?>(null) }
+  var pendingRenameTarget by remember { mutableStateOf<HomeRenameTarget?>(null) }
+  var showChangeSubdomainDialog by remember { mutableStateOf(false) }
 
   val newWorkerFilesLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -250,6 +259,38 @@ fun HomeScreen(
       },
       dismissButton = {
         TextButton(onClick = { pendingDeleteLocalKey = null }) { Text("Cancel") }
+      },
+    )
+  }
+
+  pendingRenameTarget?.let { target ->
+    RenameWorkerDialog(
+      currentName = target.currentName,
+      subdomain = uiState.accountSubdomain,
+      isRemoteWorker = target.isRemoteWorker,
+      hasEncryptedSecrets = target.hasEncryptedSecrets,
+      onDismiss = { pendingRenameTarget = null },
+      onConfirm = { newName, deleteOld ->
+        pendingRenameTarget = null
+        viewModel.renameExistingWorker(
+          newScriptNameRaw = newName,
+          targetRamKey = target.ramKey,
+          remoteScriptName = target.remoteScriptName,
+          deleteOldRemote = deleteOld,
+        )
+      },
+    )
+  }
+
+  if (showChangeSubdomainDialog) {
+    ChangeSubdomainDialog(
+      currentSubdomain = uiState.accountSubdomain,
+      sampleWorkerName = uiState.workspace?.scriptName ?: uiState.workers.firstOrNull()?.id.orEmpty(),
+      isLocalMode = uiState.isLocalScratchpad || uiState.credentials == null,
+      onDismiss = { showChangeSubdomainDialog = false },
+      onConfirm = { newSub ->
+        showChangeSubdomainDialog = false
+        viewModel.updateAccountWorkersSubdomain(newSub)
       },
     )
   }
@@ -436,49 +477,93 @@ fun HomeScreen(
               color = palette.textPrimary,
             )
             if (!uiState.isLocalScratchpad && uiState.accounts.isNotEmpty()) {
-              Box {
+              Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                Box {
+                  Surface(
+                    onClick = { accountMenuOpen = true },
+                    shape = RoundedCornerShape(999.dp),
+                    color = palette.glassSurface,
+                    border = rememberGlassBorderStroke(1.dp),
+                  ) {
+                    Row(
+                      modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                      Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(EmeraldLive))
+                      Text(
+                        text =
+                          uiState.selectedAccount?.name?.let(::formatAccountDisplayName)
+                            ?: "Account",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = palette.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                      )
+                      Icon(
+                        Icons.Outlined.KeyboardArrowDown,
+                        contentDescription = "Switch account",
+                        tint = palette.textSecondary,
+                        modifier = Modifier.size(15.dp),
+                      )
+                    }
+                  }
+                  DropdownMenu(expanded = accountMenuOpen, onDismissRequest = { accountMenuOpen = false }) {
+                    uiState.accounts.forEach { acc ->
+                      DropdownMenuItem(
+                        text = {
+                          Text(
+                            text = formatAccountDisplayName(acc.name),
+                            fontWeight = if (acc.id == uiState.selectedAccount?.id) FontWeight.Bold else FontWeight.Normal,
+                          )
+                        },
+                        onClick = {
+                          accountMenuOpen = false
+                          viewModel.selectAccount(acc)
+                        },
+                      )
+                    }
+                  }
+                }
+
                 Surface(
-                  onClick = { accountMenuOpen = true },
+                  onClick = { showChangeSubdomainDialog = true },
                   shape = RoundedCornerShape(999.dp),
-                  color = palette.glassSurface,
+                  color = palette.activePillBg.copy(alpha = 0.55f),
                   border = rememberGlassBorderStroke(1.dp),
+                  modifier = Modifier.testTag("home_subdomain_chip"),
                 ) {
                   Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                   ) {
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(EmeraldLive))
+                    Icon(
+                      Icons.Outlined.Language,
+                      contentDescription = null,
+                      tint = palette.activePillFg,
+                      modifier = Modifier.size(13.dp),
+                    )
                     Text(
                       text =
-                        uiState.selectedAccount?.name?.let(::formatAccountDisplayName)
-                          ?: "Account",
-                      style = MaterialTheme.typography.labelMedium,
-                      color = palette.textPrimary,
+                        if (uiState.accountSubdomain.isNotBlank()) "${uiState.accountSubdomain}.workers.dev"
+                        else "Set *.workers.dev",
+                      fontFamily = JetBrainsMono,
+                      fontSize = 10.5.sp,
+                      fontWeight = FontWeight.SemiBold,
+                      color = palette.activePillFg,
                       maxLines = 1,
                       overflow = TextOverflow.Ellipsis,
                     )
                     Icon(
-                      Icons.Outlined.KeyboardArrowDown,
-                      contentDescription = "Switch account",
-                      tint = palette.textSecondary,
-                      modifier = Modifier.size(15.dp),
-                    )
-                  }
-                }
-                DropdownMenu(expanded = accountMenuOpen, onDismissRequest = { accountMenuOpen = false }) {
-                  uiState.accounts.forEach { acc ->
-                    DropdownMenuItem(
-                      text = {
-                        Text(
-                          text = formatAccountDisplayName(acc.name),
-                          fontWeight = if (acc.id == uiState.selectedAccount?.id) FontWeight.Bold else FontWeight.Normal,
-                        )
-                      },
-                      onClick = {
-                        accountMenuOpen = false
-                        viewModel.selectAccount(acc)
-                      },
+                      Icons.Outlined.Edit,
+                      contentDescription = "Change subdomain",
+                      tint = palette.activePillFg,
+                      modifier = Modifier.size(11.dp),
                     )
                   }
                 }
@@ -662,12 +747,33 @@ fun HomeScreen(
               onOpenSettings = { viewModel.setShowHomeSettings(true) },
               onOpenGitHubHub = { viewModel.setShowHomeGitHubHub(true) },
               onOpenRamWorkspace = viewModel::openRamWorkspace,
+              onRequestRenameRamWorkspace = { rec ->
+                val isRemote = !rec.key.startsWith("local_") && !rec.isNewUnexportedWorker && !uiState.isLocalScratchpad
+                pendingRenameTarget =
+                  HomeRenameTarget(
+                    currentName = rec.workingWorkspace.scriptName,
+                    ramKey = rec.key,
+                    remoteScriptName = null,
+                    isRemoteWorker = isRemote,
+                    hasEncryptedSecrets = rec.workingWorkspace.bindings.any { it.type == "secret_text" },
+                  )
+              },
               onRequestDeleteRamWorkspace = { rec ->
                 pendingDeleteLocalKey = rec.key to rec.workingWorkspace.scriptName
               },
               onRequestStorageAccess = requestStorageAccess,
               onRefreshWorkers = viewModel::refreshWorkers,
               onOpenWorker = { script -> viewModel.openWorker(script) },
+              onRequestRenameWorker = { script, cached ->
+                pendingRenameTarget =
+                  HomeRenameTarget(
+                    currentName = script.id,
+                    ramKey = cached?.key,
+                    remoteScriptName = script.id,
+                    isRemoteWorker = true,
+                    hasEncryptedSecrets = cached?.workingWorkspace?.bindings?.any { it.type == "secret_text" } == true,
+                  )
+              },
               onRequestDeleteWorker = { script -> pendingDeleteCloudWorker = script.id },
             )
 
@@ -737,6 +843,10 @@ fun HomeScreen(
               onCreateQueue = viewModel::createQueue,
               onDeleteQueue = viewModel::deleteQueue,
               onNotifyStatus = viewModel::showStatus,
+              onRenameWorker = { newName, deleteOld ->
+                viewModel.renameExistingWorker(newScriptNameRaw = newName, deleteOldRemote = deleteOld)
+              },
+              onUpdateSubdomain = viewModel::updateAccountWorkersSubdomain,
             )
         }
       }
@@ -790,10 +900,12 @@ private fun HomeProjectsTabContent(
   onOpenSettings: () -> Unit,
   onOpenGitHubHub: () -> Unit,
   onOpenRamWorkspace: (String) -> Unit,
+  onRequestRenameRamWorkspace: (RamWorkspaceRecord) -> Unit,
   onRequestDeleteRamWorkspace: (RamWorkspaceRecord) -> Unit,
   onRequestStorageAccess: () -> Unit,
   onRefreshWorkers: () -> Unit,
   onOpenWorker: (CfWorkerScript) -> Unit,
+  onRequestRenameWorker: (CfWorkerScript, RamWorkspaceRecord?) -> Unit,
   onRequestDeleteWorker: (CfWorkerScript) -> Unit,
 ) {
   val palette = LocalIdePalette.current
@@ -1033,6 +1145,7 @@ private fun HomeProjectsTabContent(
         RamProjectCard(
           record = rec,
           onOpen = { onOpenRamWorkspace(rec.key) },
+          onRename = { onRequestRenameRamWorkspace(rec) },
           onDelete = { onRequestDeleteRamWorkspace(rec) },
           modifier = Modifier.animateItem(),
         )
@@ -1161,6 +1274,7 @@ private fun HomeProjectsTabContent(
             script = script,
             cachedRecord = cached,
             onOpen = { onOpenWorker(script) },
+            onRename = { onRequestRenameWorker(script, cached) },
             onDelete = { onRequestDeleteWorker(script) },
             modifier = Modifier.animateItem(),
           )
@@ -1272,10 +1386,19 @@ private fun formatAccountDisplayName(rawName: String): String =
     .replace(Regex("'s\\s+Account$", RegexOption.IGNORE_CASE), "")
     .ifBlank { rawName.trim() }
 
+private data class HomeRenameTarget(
+  val currentName: String,
+  val ramKey: String?,
+  val remoteScriptName: String?,
+  val isRemoteWorker: Boolean,
+  val hasEncryptedSecrets: Boolean = false,
+)
+
 @Composable
 private fun RamProjectCard(
   record: RamWorkspaceRecord,
   onOpen: () -> Unit,
+  onRename: () -> Unit,
   onDelete: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -1297,7 +1420,7 @@ private fun RamProjectCard(
     Row(
       modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(14.dp),
+      horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
       Surface(
         color = if (dirty) AmberWarn.copy(alpha = 0.2f) else Color(0xFF28C76F),
@@ -1354,6 +1477,18 @@ private fun RamProjectCard(
       }
 
       IconButton(
+        onClick = onRename,
+        modifier = Modifier.size(34.dp).testTag("rename_ram_project_${ws.scriptName}"),
+      ) {
+        Icon(
+          imageVector = Icons.Outlined.DriveFileRenameOutline,
+          contentDescription = "Rename ${ws.scriptName}",
+          tint = palette.textSecondary,
+          modifier = Modifier.size(18.dp),
+        )
+      }
+
+      IconButton(
         onClick = onDelete,
         modifier = Modifier.size(34.dp).testTag("delete_ram_project_${ws.scriptName}"),
       ) {
@@ -1380,6 +1515,7 @@ private fun CloudWorkerCard(
   script: CfWorkerScript,
   cachedRecord: RamWorkspaceRecord?,
   onOpen: () -> Unit,
+  onRename: () -> Unit,
   onDelete: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -1443,6 +1579,18 @@ private fun CloudWorkerCard(
           color = palette.textSecondary,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
+        )
+      }
+
+      IconButton(
+        onClick = onRename,
+        modifier = Modifier.size(34.dp).testTag("rename_worker_${script.id}"),
+      ) {
+        Icon(
+          imageVector = Icons.Outlined.DriveFileRenameOutline,
+          contentDescription = "Rename ${script.id}",
+          tint = palette.textSecondary,
+          modifier = Modifier.size(18.dp),
         )
       }
 

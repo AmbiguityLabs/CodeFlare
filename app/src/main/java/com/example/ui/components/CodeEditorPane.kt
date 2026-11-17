@@ -125,6 +125,7 @@ import com.example.editor.CodeAnalyzer
 import com.example.editor.CodeEditHelper
 import com.example.editor.CodeSymbol
 import com.example.editor.CodeSyntaxVisualTransformation
+import com.example.editor.MergeConflictResolver
 import com.example.editor.WranglerSyncParser
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
@@ -178,6 +179,7 @@ fun CodeEditorPane(
   onZoomPercentChange: (Int) -> Unit = {},
   onJumpToLocation: (String, Int, Int) -> Unit = { path, line, _ -> onJumpToLine(path, line) },
   onHideEditorBottomBars: () -> Unit = {},
+  onOpenConflictResolver: (() -> Unit)? = null,
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
@@ -237,6 +239,36 @@ fun CodeEditorPane(
           }
           TextButton(onClick = onDiscardRestoredDraft) {
             Text("Discard", color = MaterialTheme.colorScheme.error)
+          }
+        }
+      }
+    }
+
+    val activeConflicts =
+      remember(activeFile?.path, activeFile?.content) {
+        activeFile?.let { MergeConflictResolver.parseConflictMarkers(it.content) }.orEmpty()
+      }
+    if (activeConflicts.isNotEmpty() && onOpenConflictResolver != null) {
+      Surface(
+        color = AmberWarn.copy(alpha = 0.16f),
+        modifier = Modifier.fillMaxWidth().testTag("editor_conflict_banner"),
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          Text(
+            text = "${activeConflicts.size} merge conflict(s) in ${activeFile?.fileName.orEmpty()}",
+            style = MaterialTheme.typography.labelSmall,
+            color = AmberWarn,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+          )
+          TextButton(onClick = onOpenConflictResolver) {
+            Text("Resolve", color = AmberWarn, fontWeight = FontWeight.Bold)
           }
         }
       }

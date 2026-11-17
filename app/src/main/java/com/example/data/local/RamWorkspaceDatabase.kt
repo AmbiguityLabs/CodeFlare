@@ -286,6 +286,72 @@ class RamWorkspaceDatabase {
     publishStats()
   }
 
+  fun renameWorkspaceKey(
+    oldKey: String,
+    newKey: String,
+    updatedWorkspace: WorkerWorkspace,
+    updatedFieldValues: Map<String, TextFieldValue>,
+    markCleanBaseline: Boolean = false,
+  ): RamWorkspaceRecord? {
+    val current = workspaces[oldKey] ?: return null
+    val nextSnapshot =
+      if (markCleanBaseline) {
+        updatedWorkspace.copy(
+          files = updatedWorkspace.files.map { it.copy(originalContent = it.content) },
+          hasModuleSetChanged = false,
+        )
+      } else {
+        current.importedSnapshot.copy(
+          scriptName = updatedWorkspace.scriptName,
+          accountSubdomain = updatedWorkspace.accountSubdomain,
+        )
+      }
+    val nextWorking =
+      if (markCleanBaseline) nextSnapshot
+      else updatedWorkspace
+    val updated =
+      current.copy(
+        key = newKey,
+        importedSnapshot = nextSnapshot,
+        workingWorkspace = nextWorking,
+        fieldValues = updatedFieldValues,
+        isNewUnexportedWorker = if (markCleanBaseline) false else current.isNewUnexportedWorker,
+        hasPendingConfigSync = if (markCleanBaseline) false else current.hasPendingConfigSync,
+      )
+    if (oldKey != newKey) {
+      workspaces.remove(oldKey)
+      undoStacksByWorkspace.remove(oldKey)?.let { undoStacksByWorkspace[newKey] = it }
+      redoStacksByWorkspace.remove(oldKey)?.let { redoStacksByWorkspace[newKey] = it }
+      if (activeKey == oldKey) activeKey = newKey
+    }
+    workspaces[newKey] = updated
+    publishStats()
+    return updated
+  }
+
+  fun updateAllSubdomainsForAccount(
+    accountId: String?,
+    newSubdomain: String,
+  ): List<RamWorkspaceRecord> {
+    val prefix = if (accountId.isNullOrBlank()) "local_" else "${accountId}_"
+    val updatedRecords = mutableListOf<RamWorkspaceRecord>()
+    workspaces.entries.forEach { (key, rec) ->
+      if (key.startsWith(prefix)) {
+        val updated =
+          rec.copy(
+            importedSnapshot = rec.importedSnapshot.copy(accountSubdomain = newSubdomain),
+            workingWorkspace = rec.workingWorkspace.copy(accountSubdomain = newSubdomain),
+          )
+        workspaces[key] = updated
+        updatedRecords.add(updated)
+      }
+    }
+    if (updatedRecords.isNotEmpty()) {
+      publishStats()
+    }
+    return updatedRecords
+  }
+
   // Per-workspace in-RAM undo/redo stacks
   fun recordUndoSnapshot(key: String, filePath: String, previousValue: TextFieldValue) {
     val map = undoStacksByWorkspace.getOrPut(key) { mutableMapOf() }

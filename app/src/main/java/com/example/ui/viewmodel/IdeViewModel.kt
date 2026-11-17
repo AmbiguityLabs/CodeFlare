@@ -24,7 +24,11 @@ import com.example.data.local.RamWorkspaceDatabase
 import com.example.data.local.RamWorkspaceRecord
 import com.example.data.local.RawPickedAsset
 import com.example.data.local.WorkerTestRunRecord
+import com.example.data.remote.ApiAssertionResult
+import com.example.data.remote.ApiCollectionImporter
 import com.example.data.remote.ApiEnvVar
+import com.example.data.remote.ApiEnvironmentProfile
+import com.example.data.remote.ApiImportResult
 import com.example.data.remote.ApiRequestUtils
 import com.example.data.remote.ApiTesterHistoryItem
 import com.example.data.remote.ApiTesterRequest
@@ -49,6 +53,7 @@ import com.example.data.remote.CfWorkerScript
 import com.example.data.remote.CfWorkerVersion
 import com.example.data.remote.CfZone
 import com.example.data.remote.CloudflareClientFactory
+import com.example.data.remote.CloudflareNamingUtils
 import com.example.data.remote.DiagnosticItem
 import com.example.data.remote.DiffType
 import com.example.data.remote.GitChangedFile
@@ -86,7 +91,13 @@ import com.example.data.security.StoredGitHubCredentials
 import com.example.editor.CodeAnalyzer
 import com.example.editor.CodeEditHelper
 import com.example.editor.CodeFormatter
+import com.example.editor.ConflictChoice
+import com.example.editor.DiffFileOrigin
+import com.example.editor.FileDiffEntry
+import com.example.editor.MergeConflictFile
+import com.example.editor.MergeConflictResolver
 import com.example.editor.WranglerSyncParser
+import com.example.ui.components.DiffReviewIntent
 import com.example.terminal.LinuxTerminalEngine
 import com.example.terminal.ShellExecutionResult
 import com.example.terminal.TerminalEntry
@@ -179,6 +190,7 @@ data class IdeUiState(
   val authError: String? = null,
   val accounts: List<CfAccount> = emptyList(),
   val selectedAccount: CfAccount? = null,
+  val accountSubdomain: String = "",
   val workers: List<CfWorkerScript> = emptyList(),
   val isLoadingWorkers: Boolean = false,
   val isOpeningWorker: Boolean = false,
@@ -284,13 +296,21 @@ data class IdeUiState(
   val gitPushStatusMessage: String? = null,
   val isGitHubBusy: Boolean = false,
   val gitHubError: String? = null,
-  // API Test & Linux Terminal
+  // API Test Pro, Diff Review & 3-Way Merge Conflict Resolver
   val isRunningHttpTest: Boolean = false,
   val httpTestResult: HttpTestResult? = null,
   val apiRequest: ApiTesterRequest = ApiTesterRequest(),
   val apiCollections: List<ApiTesterRequest> = emptyList(),
   val apiHistory: List<ApiTesterHistoryItem> = emptyList(),
   val apiEnvVars: List<ApiEnvVar> = listOf(ApiEnvVar(key = "apiToken", value = "")),
+  val apiEnvProfiles: List<ApiEnvironmentProfile> = ApiRequestUtils.defaultEnvironmentProfiles(),
+  val activeApiEnvProfileId: String = "env_dev",
+  val apiAssertionResults: List<ApiAssertionResult> = emptyList(),
+  val showDiffReviewModal: Boolean = false,
+  val diffReviewIntent: DiffReviewIntent = DiffReviewIntent.WORKSPACE,
+  val diffReviewEntries: List<FileDiffEntry> = emptyList(),
+  val showConflictResolverModal: Boolean = false,
+  val pendingMergeConflicts: List<MergeConflictFile> = emptyList(),
   val restoredDraftBanner: String? = null,
   val lastAutoSavedEpochMs: Long? = null,
   val workerVersions: List<CfWorkerVersion> = emptyList(),
@@ -444,6 +464,8 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
           apiCollections = persistedApi.collections,
           apiHistory = persistedApi.history,
           apiEnvVars = persistedApi.envVars,
+          apiEnvProfiles = persistedApi.environmentProfiles,
+          activeApiEnvProfileId = persistedApi.activeEnvProfileId,
         )
       }
     }
@@ -744,6 +766,11 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
           gitHubUser = _uiState.value.gitHubUser,
           gitHubRateLimitLabel = _uiState.value.gitHubRateLimitLabel,
           gitHubRepos = _uiState.value.gitHubRepos,
+          apiCollections = _uiState.value.apiCollections,
+          apiHistory = _uiState.value.apiHistory,
+          apiEnvVars = _uiState.value.apiEnvVars,
+          apiEnvProfiles = _uiState.value.apiEnvProfiles,
+          activeApiEnvProfileId = _uiState.value.activeApiEnvProfileId,
         )
     }
   }
@@ -1248,6 +1275,7 @@ export default {
       _uiState.update {
         it.copy(
           selectedAccount = account,
+          accountSubdomain = ramDb.getInfraCache(account.id)?.subdomain.orEmpty(),
           workspace = null,
           openTabPaths = emptyList(),
           activeFilePath = null,
@@ -1281,7 +1309,13 @@ export default {
             subdomain = cachedSub.ifBlank { it.subdomain },
           )
         }
-        _uiState.update { it.copy(workers = list, isLoadingWorkers = false) }
+        _uiState.update {
+          it.copy(
+            workers = list,
+            accountSubdomain = cachedSub.ifBlank { it.accountSubdomain },
+            isLoadingWorkers = false,
+          )
+        }
         appendLog("INFO", "Loaded ${list.size} Worker(s) from Cloudflare")
 
         val pointer = pendingRestoreSessionPointer
@@ -1345,6 +1379,7 @@ export default {
           showHomeGitHubHub = false,
           projectMode = ProjectMode.CODE,
           sidebarSection = SidebarSection.EXPLORER,
+          accountSubdomain = ws.accountSubdomain.ifBlank { state.accountSubdomain },
           workspace = ws,
           openTabPaths = cachedRecord.openTabPaths,
           activeFilePath = cachedRecord.activeFilePath,
@@ -1456,6 +1491,7 @@ export default {
               showHomeGitHubHub = false,
               projectMode = ProjectMode.CODE,
               sidebarSection = SidebarSection.EXPLORER,
+              accountSubdomain = ws.accountSubdomain.ifBlank { state.accountSubdomain },
               workspace = ws,
               openTabPaths = activeRecord.openTabPaths,
               activeFilePath = activeRecord.activeFilePath,
@@ -2880,7 +2916,15 @@ export default {
     if (target.isVirtualReadOnly) return
     val restored = target.originalContent
     applyDirectTextValue(filePath, TextFieldValue(restored))
-    _uiState.update { it.copy(statusMessage = "Reverted $filePath") }
+    _uiState.update { state ->
+      val refreshedDiffs =
+        if (state.showDiffReviewModal) buildDiffEntries(state.diffReviewIntent, state)
+        else state.diffReviewEntries
+      state.copy(
+        diffReviewEntries = refreshedDiffs,
+        statusMessage = "Reverted $filePath",
+      )
+    }
   }
 
   fun deployActiveWorker() {
@@ -3036,6 +3080,7 @@ export default {
                 "Deployed '${ws.scriptName}' with warnings: ${pendingErrors.joinToString("; ")}"
             }
           state.copy(
+            accountSubdomain = resolvedSubdomain.ifBlank { state.accountSubdomain },
             workspace = if (activeWorkspaceKey(state) == workspaceKey) updatedWs else state.workspace,
             restoredDraftBanner = null,
             isDeploying = false,
@@ -3235,6 +3280,416 @@ export default {
     }
     appendLog("INFO", "Staged workers.dev=$enabled in RAM for ${ws.scriptName}")
   }
+
+  fun updateAccountWorkersSubdomain(newSubdomainRaw: String) {
+    val cleanSub = CloudflareNamingUtils.sanitizeSubdomain(newSubdomainRaw)
+    if (!CloudflareNamingUtils.isValidSubdomain(cleanSub)) {
+      _uiState.update {
+        it.copy(
+          statusMessage = "Subdomain must use lowercase letters, numbers, and hyphens (1-63 chars)",
+        )
+      }
+      return
+    }
+    val stateNow = _uiState.value
+    val isScratchpad = stateNow.isLocalScratchpad || stateNow.selectedAccount == null
+    if (isScratchpad) {
+      val updatedRecords = ramDb.updateAllSubdomainsForAccount(null, cleanSub)
+      val activeKey = activeWorkspaceKey()
+      val updatedActiveWs =
+        stateNow.workspace?.copy(accountSubdomain = cleanSub)
+      val liveUrl = resolveDefaultPreviewUrl(updatedActiveWs)
+      autoSaveIoScope.launch {
+        updatedRecords.forEach { rec -> projectDirManager.saveWorkspaceRecord(rec) }
+      }
+      _uiState.update { s ->
+        s.copy(
+          accountSubdomain = cleanSub,
+          workspace = updatedActiveWs,
+          ramWorkspaces = ramDb.listWorkspaces(),
+          ramDbStats = ramDb.computeStats(activeKey),
+          previewUrl = liveUrl.ifBlank { s.previewUrl },
+          apiRequest =
+            if (liveUrl.isNotBlank()) ApiRequestUtils.applyDeployedWorkerUrl(s.apiRequest, liveUrl, forceReplace = true)
+            else s.apiRequest,
+          statusMessage = "Preview subdomain updated to *.$cleanSub.workers.dev",
+        )
+      }
+      appendLog("INFO", "Updated local preview subdomain to *.$cleanSub.workers.dev")
+      return
+    }
+
+    val accountId = stateNow.selectedAccount?.id ?: return
+    viewModelScope.launch {
+      _uiState.update {
+        it.copy(
+          isInfraBusy = true,
+          statusMessage = "Updating Cloudflare subdomain to *.$cleanSub.workers.dev…",
+        )
+      }
+      repository
+        .updateAccountSubdomain(accountId, cleanSub)
+        .onSuccess { confirmedSub ->
+          ramDb.updateInfraCache(accountId) { it.copy(subdomain = confirmedSub) }
+          val updatedRecords = ramDb.updateAllSubdomainsForAccount(accountId, confirmedSub)
+          withContext(Dispatchers.IO) {
+            updatedRecords.forEach { rec -> projectDirManager.saveWorkspaceRecord(rec) }
+          }
+          val activeKey = activeWorkspaceKey()
+          val updatedActiveWs =
+            _uiState.value.workspace?.let { cur ->
+              val updated = cur.copy(accountSubdomain = confirmedSub)
+              terminalEngine.syncWorkspaceToDisk(updated)
+              updated
+            }
+          val liveUrl = resolveDefaultPreviewUrl(updatedActiveWs)
+          _uiState.update { s ->
+            s.copy(
+              isInfraBusy = false,
+              accountSubdomain = confirmedSub,
+              workspace = updatedActiveWs,
+              ramWorkspaces = ramDb.listWorkspaces(),
+              ramDbStats = ramDb.computeStats(activeKey),
+              previewUrl = liveUrl.ifBlank { s.previewUrl },
+              previewReloadNonce = s.previewReloadNonce + 1L,
+              apiRequest =
+                if (liveUrl.isNotBlank()) {
+                  ApiRequestUtils.applyDeployedWorkerUrl(s.apiRequest, liveUrl, forceReplace = true)
+                } else {
+                  s.apiRequest
+                },
+              deployBannerMessage = "workers.dev subdomain updated to *.$confirmedSub.workers.dev",
+              isDeployError = false,
+              statusMessage = null,
+            )
+          }
+          appendLog("DEPLOY", "Updated Cloudflare account subdomain -> *.$confirmedSub.workers.dev")
+        }
+        .onFailure { err ->
+          _uiState.update {
+            it.copy(
+              isInfraBusy = false,
+              isDeployError = true,
+              statusMessage = err.localizedMessage ?: "Could not update workers.dev subdomain",
+            )
+          }
+          appendLog("ERROR", err.localizedMessage ?: "Failed to update workers.dev subdomain")
+        }
+    }
+  }
+
+  fun renameExistingWorker(
+    newScriptNameRaw: String,
+    targetRamKey: String? = null,
+    remoteScriptName: String? = null,
+    deleteOldRemote: Boolean = true,
+  ) {
+    val activeKey = activeWorkspaceKey()
+    val stateNow = _uiState.value
+    val isScratchpad = stateNow.isLocalScratchpad || stateNow.selectedAccount == null
+    val resolvedLocalOnly =
+      (targetRamKey?.startsWith("local_") == true) || (targetRamKey == null && remoteScriptName == null && isScratchpad)
+    val cleanName = CloudflareNamingUtils.sanitizeWorkerName(newScriptNameRaw, allowUnderscore = resolvedLocalOnly)
+    if (cleanName.isBlank() || (!resolvedLocalOnly && !CloudflareNamingUtils.isValidWorkerName(cleanName))) {
+      _uiState.update {
+        it.copy(
+          statusMessage = "Worker name must use lowercase letters, numbers, and hyphens (1-63 chars)",
+        )
+      }
+      return
+    }
+
+    // Determine which worker is being renamed: active workspace, cached Home card, or remote-only Home Worker card.
+    val resolvedRamKey =
+      when {
+        targetRamKey != null -> targetRamKey
+        remoteScriptName != null && stateNow.selectedAccount != null -> {
+          val candidateKey = ramDb.workspaceKey(stateNow.selectedAccount.id, remoteScriptName)
+          candidateKey.takeIf { ramDb.hasWorkspace(it) }
+        }
+        else -> activeKey
+      }
+
+    // Case 1 & 2: Workspace is in RAM/ProjectDirectory (active or unopened Home project card)
+    if (resolvedRamKey != null) {
+      val isTargetActive = resolvedRamKey == activeKey
+      if (isTargetActive) {
+        flushAutoSaveNow()
+        syncActiveStateToRamDb()
+      }
+      val rec = ramDb.getWorkspace(resolvedRamKey)
+      if (rec != null) {
+        val oldWs = rec.workingWorkspace
+        val oldName = oldWs.scriptName
+        if (oldName == cleanName) {
+          _uiState.update { it.copy(statusMessage = "Worker is already named '$cleanName'") }
+          return
+        }
+        val oldWasLocal = resolvedRamKey.startsWith("local_")
+        val accountIdForKey = if (oldWasLocal || isScratchpad) null else stateNow.selectedAccount?.id
+        val newKey = ramDb.workspaceKey(accountIdForKey, cleanName)
+        if (newKey != resolvedRamKey && ramDb.hasWorkspace(newKey)) {
+          _uiState.update { it.copy(statusMessage = "A project named '$cleanName' already exists") }
+          return
+        }
+
+        val withUpdatedTomlFiles = updateWranglerTomlNameInFiles(oldWs.files, cleanName)
+        val updatedBase =
+          oldWs.copy(
+            scriptName = cleanName,
+            files = withUpdatedTomlFiles,
+          )
+        val updatedWs =
+          regenerateWranglerFileInWorkspace(updatedBase).let { built ->
+            built.copy(files = ProjectDirectoryManager.organizeWorkspaceFiles(built.files))
+          }
+        val nextFields = syncWranglerFieldMap(rec.fieldValues, updatedWs)
+
+        val shouldDeployRemote = !oldWasLocal && !isScratchpad && stateNow.selectedAccount != null && !rec.isNewUnexportedWorker
+        if (!shouldDeployRemote || accountIdForKey == null) {
+          val renamedRec =
+            ramDb.renameWorkspaceKey(
+              oldKey = resolvedRamKey,
+              newKey = newKey,
+              updatedWorkspace = updatedWs,
+              updatedFieldValues = nextFields,
+              markCleanBaseline = false,
+            ) ?: return
+          autoSaveIoScope.launch {
+            autoSaveStore.clearWorkspaceDraft(resolvedRamKey)
+            projectDirManager.deleteWorkspaceDirectory(resolvedRamKey)
+            projectDirManager.saveWorkspaceRecord(renamedRec)
+            val summary = projectDirManager.computeStorageSummary()
+            _uiState.update { it.copy(projectStorageSummary = summary) }
+          }
+          if (isTargetActive) {
+            terminalEngine.syncWorkspaceToDisk(updatedWs)
+            val diags = rebuildDiagnosticsFull(updatedWs.files)
+            val liveUrl = resolveDefaultPreviewUrl(updatedWs)
+            _uiState.update { s ->
+              val updatedWorkersList =
+                s.workers.map { w -> if (w.id == oldName) w.copy(id = cleanName) else w }
+              s.copy(
+                workers = updatedWorkersList,
+                workspace = updatedWs,
+                editorFieldValues = nextFields,
+                editorRevision = s.editorRevision + 1L,
+                diagnostics = diags,
+                ramWorkspaces = ramDb.listWorkspaces(),
+                ramDbStats = ramDb.computeStats(newKey),
+                previewUrl = liveUrl.ifBlank { s.previewUrl },
+                apiRequest =
+                  if (liveUrl.isNotBlank()) ApiRequestUtils.applyDeployedWorkerUrl(s.apiRequest, liveUrl, forceReplace = true)
+                  else s.apiRequest,
+                statusMessage = "Renamed Worker '$oldName' to '$cleanName'",
+                terminalPromptPath = terminalEngine.currentPromptPath(updatedWs),
+              )
+            }
+            recordActiveSessionPointer()
+          } else {
+            _uiState.update { s ->
+              s.copy(
+                ramWorkspaces = ramDb.listWorkspaces(),
+                statusMessage = "Renamed project '$oldName' to '$cleanName'",
+              )
+            }
+          }
+          appendLog("INFO", "Renamed local project '$oldName' -> '$cleanName'")
+          return
+        }
+
+        // Connected Cloudflare Worker in RAM: deploy under new name, sync settings, optionally delete old remote, migrate disk & RAM!
+        viewModelScope.launch {
+          _uiState.update {
+            it.copy(
+              isDeploying = true,
+              deployBannerMessage = null,
+              statusMessage = "Renaming Worker '$oldName' -> '$cleanName' on Cloudflare…",
+            )
+          }
+          repository
+            .renameRemoteWorker(
+              accountId = accountIdForKey,
+              oldScriptName = oldName,
+              renamedWorkspace = updatedWs,
+              deleteOldScript = deleteOldRemote,
+              stagedSecrets = rec.stagedSecrets,
+            )
+            .onSuccess { outcome ->
+              val finalWs =
+                updatedWs.copy(
+                  deployments = repository.listDeployments(accountIdForKey, cleanName).getOrDefault(updatedWs.deployments),
+                  hasModuleSetChanged = false,
+                )
+              val renamedRec =
+                ramDb.renameWorkspaceKey(
+                  oldKey = resolvedRamKey,
+                  newKey = newKey,
+                  updatedWorkspace = finalWs,
+                  updatedFieldValues = nextFields,
+                  markCleanBaseline = true,
+                )
+              withContext(Dispatchers.IO) {
+                autoSaveStore.clearWorkspaceDraft(resolvedRamKey)
+                projectDirManager.deleteWorkspaceDirectory(resolvedRamKey)
+                if (renamedRec != null) {
+                  projectDirManager.saveWorkspaceRecord(renamedRec)
+                }
+              }
+              lastPersistedDraftDigests.remove(resolvedRamKey)
+              pendingCloudDrafts.remove(resolvedRamKey)
+              val summary = withContext(Dispatchers.IO) { projectDirManager.computeStorageSummary() }
+              val liveUrl = resolveDefaultPreviewUrl(finalWs)
+              val banner =
+                buildString {
+                  append("Renamed '$oldName' -> '$cleanName'")
+                  if (liveUrl.isNotBlank()) append(" ($liveUrl)")
+                  outcome.warningMessage?.let { append(" · Note: $it") }
+                }
+              if (isTargetActive) {
+                terminalEngine.syncWorkspaceToDisk(finalWs)
+                val diags = rebuildDiagnosticsFull(finalWs.files)
+                _uiState.update { s ->
+                  s.copy(
+                    isDeploying = false,
+                    isDeployError = false,
+                    workspace = finalWs,
+                    editorFieldValues = nextFields,
+                    editorRevision = s.editorRevision + 1L,
+                    diagnostics = diags,
+                    activeWorkspaceHasPendingConfig = false,
+                    ramWorkspaces = ramDb.listWorkspaces(),
+                    ramDbStats = ramDb.computeStats(newKey),
+                    projectStorageSummary = summary,
+                    previewUrl = liveUrl.ifBlank { s.previewUrl },
+                    previewReloadNonce = s.previewReloadNonce + 1L,
+                    apiRequest =
+                      if (liveUrl.isNotBlank()) ApiRequestUtils.applyDeployedWorkerUrl(s.apiRequest, liveUrl, forceReplace = true)
+                      else s.apiRequest,
+                    deployBannerMessage = banner,
+                    statusMessage = null,
+                    terminalPromptPath = terminalEngine.currentPromptPath(finalWs),
+                  )
+                }
+                recordActiveSessionPointer()
+              } else {
+                _uiState.update { s ->
+                  s.copy(
+                    isDeploying = false,
+                    isDeployError = false,
+                    ramWorkspaces = ramDb.listWorkspaces(),
+                    projectStorageSummary = summary,
+                    deployBannerMessage = banner,
+                    statusMessage = null,
+                  )
+                }
+              }
+              appendLog("DEPLOY", banner)
+              refreshWorkersInternal(accountIdForKey)
+            }
+            .onFailure { err ->
+              _uiState.update {
+                it.copy(
+                  isDeploying = false,
+                  isDeployError = true,
+                  deployBannerMessage = err.localizedMessage ?: "Failed to rename Worker '$oldName'",
+                  statusMessage = null,
+                )
+              }
+              appendLog("ERROR", err.localizedMessage ?: "Failed to rename Worker '$oldName'")
+            }
+        }
+        return
+      }
+    }
+
+    // Case 3: Remote-only Worker from HomeScreen (not cached locally yet)
+    val oldRemote = remoteScriptName?.takeIf { it.isNotBlank() } ?: return
+    val accountId = stateNow.selectedAccount?.id ?: return
+    if (oldRemote == cleanName) {
+      _uiState.update { it.copy(statusMessage = "Worker is already named '$cleanName'") }
+      return
+    }
+    viewModelScope.launch {
+      _uiState.update {
+        it.copy(
+          isDeploying = true,
+          deployBannerMessage = null,
+          statusMessage = "Renaming Worker '$oldRemote' -> '$cleanName' on Cloudflare…",
+        )
+      }
+      val fetched = repository.openWorkerWorkspace(accountId, CfWorkerScript(id = oldRemote)).getOrElse { err ->
+        _uiState.update {
+          it.copy(
+            isDeploying = false,
+            isDeployError = true,
+            statusMessage = err.localizedMessage ?: "Could not load '$oldRemote' for rename",
+          )
+        }
+        return@launch
+      }
+      val updatedFiles = updateWranglerTomlNameInFiles(fetched.files, cleanName)
+      val renamedWs =
+        regenerateWranglerFileInWorkspace(fetched.copy(scriptName = cleanName, files = updatedFiles))
+      repository
+        .renameRemoteWorker(
+          accountId = accountId,
+          oldScriptName = oldRemote,
+          renamedWorkspace = renamedWs,
+          deleteOldScript = deleteOldRemote,
+        )
+        .onSuccess { outcome ->
+          val liveUrl = resolveDefaultPreviewUrl(renamedWs)
+          val banner =
+            buildString {
+              append("Renamed '$oldRemote' -> '$cleanName'")
+              if (liveUrl.isNotBlank()) append(" ($liveUrl)")
+              outcome.warningMessage?.let { append(" · Note: $it") }
+            }
+          _uiState.update {
+            it.copy(
+              isDeploying = false,
+              isDeployError = false,
+              deployBannerMessage = banner,
+              statusMessage = null,
+            )
+          }
+          appendLog("DEPLOY", banner)
+          refreshWorkersInternal(accountId)
+        }
+        .onFailure { err ->
+          _uiState.update {
+            it.copy(
+              isDeploying = false,
+              isDeployError = true,
+              deployBannerMessage = err.localizedMessage ?: "Failed to rename Worker '$oldRemote'",
+              statusMessage = null,
+            )
+          }
+        }
+    }
+  }
+
+  private fun updateWranglerTomlNameInFiles(
+    files: List<WorkerFile>,
+    newScriptName: String,
+  ): List<WorkerFile> =
+    files.map { wf ->
+      if (wf.path.equals("wrangler.toml", ignoreCase = true)) {
+        val replaced =
+          if (Regex("""(?m)^\s*name\s*=\s*["'][^"']*["']""").containsMatchIn(wf.content)) {
+            wf.content.replaceFirst(
+              Regex("""(?m)^(\s*name\s*=\s*)["'][^"']*["']"""),
+              "$1\"$newScriptName\"",
+            )
+          } else {
+            "name = \"$newScriptName\"\n${wf.content}"
+          }
+        wf.copy(content = replaced)
+      } else {
+        wf
+      }
+    }
 
   fun updateCompatibilitySettings(compatDate: String, nodejsCompat: Boolean) {
     val ws = _uiState.value.workspace ?: return
@@ -5293,31 +5748,48 @@ jobs:
 
           val existingWs = _uiState.value.workspace
           if (mergeIntoCurrentWorker && existingWs != null) {
-            val editable = existingWs.files.filterNot { it.isVirtualReadOnly }.toMutableList()
-            val virtual = existingWs.files.filter { it.isVirtualReadOnly }
-            bundle.files.forEach { cf ->
-              val idx = editable.indexOfFirst { it.path == cf.path }
-              if (idx >= 0) editable[idx] = cf.copy(isEntryPoint = editable[idx].isEntryPoint)
-              else editable.add(cf.copy(isEntryPoint = false))
-            }
-            val nextFiles = editable + virtual
+            val mergeOutput =
+              performThreeWayMergeIntoWorkspace(
+                existingWs = existingWs,
+                remoteFiles = bundle.files,
+                oldBaseline = _uiState.value.gitWorkingBaseline,
+                remoteLabel = "${bundle.repo.name}/${bundle.branch}",
+              )
+            val nextFiles = mergeOutput.mergedEditable + mergeOutput.virtualFiles
             val firstCloned = bundle.detectedEntryPath
+            val conflicts = mergeOutput.conflicts
+            val updatedBaseline =
+              if (conflicts.isEmpty()) baselineMap
+              else {
+                // Keep remote baseline for clean files, hold previous baseline for conflicted paths until resolved
+                val conflictedPaths = conflicts.map { it.path }.toSet()
+                baselineMap.filterKeys { it !in conflictedPaths } +
+                  _uiState.value.gitWorkingBaseline.filterKeys { it in conflictedPaths }
+              }
             _uiState.update { state ->
               state.copy(
                 isGitHubBusy = false,
                 selectedGitHubRepo = bundle.repo,
                 selectedGitHubBranch = bundle.branch,
                 linkedGitRepo = linkedState,
-                gitWorkingBaseline = baselineMap,
+                gitWorkingBaseline = updatedBaseline,
                 gitUnstagedExcludedPaths = emptySet(),
                 localGitCommits = emptyList(),
                 workspace = existingWs.copy(files = nextFiles, isEsModuleFormat = true, hasModuleSetChanged = true),
-                openTabPaths = (state.openTabPaths + firstCloned).distinct(),
-                activeFilePath = firstCloned,
+                openTabPaths = (state.openTabPaths + firstCloned + conflicts.map { it.path }).distinct(),
+                activeFilePath = conflicts.firstOrNull()?.path ?: firstCloned,
                 editorFieldValues =
-                  state.editorFieldValues + bundle.files.associate { it.path to TextFieldValue(it.content) },
+                  state.editorFieldValues + mergeOutput.mergedEditable.associate { it.path to TextFieldValue(it.content) },
+                editorRevision = state.editorRevision + 1L,
                 diagnostics = nextFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
-                statusMessage = "Cloned ${bundle.files.size} files from ${bundle.repo.fullName}@${bundle.branch} into ${existingWs.scriptName}",
+                pendingMergeConflicts = conflicts,
+                showConflictResolverModal = conflicts.isNotEmpty(),
+                statusMessage =
+                  if (conflicts.isNotEmpty()) {
+                    "Pull merged with ${conflicts.size} conflict file(s) — resolve in Merge Conflict Resolver"
+                  } else {
+                    "Merged ${bundle.files.size} files cleanly from ${bundle.repo.fullName}@${bundle.branch}"
+                  },
               )
             }
           } else {
@@ -5479,17 +5951,11 @@ jobs:
   }
 
   fun renameActiveWorkerTarget(newScriptName: String) {
-    val ws = _uiState.value.workspace ?: return
-    val clean = newScriptName.trim().lowercase().replace(Regex("[^a-z0-9_-]"), "-")
-    if (clean.isBlank()) return
-    _uiState.update { state ->
-      val nextWs = ws.copy(scriptName = clean)
-      terminalEngine.syncWorkspaceToDisk(nextWs)
-      state.copy(
-        workspace = nextWs,
-        statusMessage = "Worker target set to '$clean'",
-      )
-    }
+    renameExistingWorker(
+      newScriptNameRaw = newScriptName,
+      targetRamKey = activeWorkspaceKey(),
+      deleteOldRemote = false,
+    )
   }
 
   fun commitStagedChangesLocally(commitMessageOverride: String? = null) {
@@ -5744,17 +6210,18 @@ jobs:
               )
             }
           } else {
-            val currentEditable = existingWs.files.filterNot { it.isVirtualReadOnly }.toMutableList()
-            val virtual = existingWs.files.filter { it.isVirtualReadOnly }
-            pulledFiles.forEach { pf ->
-              val idx = currentEditable.indexOfFirst { it.path == pf.path }
-              if (idx >= 0) currentEditable[idx] = pf.copy(isEntryPoint = currentEditable[idx].isEntryPoint)
-              else currentEditable.add(pf.copy(isEntryPoint = false))
-            }
-            val nextFiles = currentEditable + virtual
-            val firstPulled = pulledFiles.first().path
+            val mergeOutput =
+              performThreeWayMergeIntoWorkspace(
+                existingWs = existingWs,
+                remoteFiles = pulledFiles,
+                oldBaseline = _uiState.value.gitWorkingBaseline,
+                remoteLabel = "${repo.name}/${_uiState.value.selectedGitHubBranch}",
+              )
+            val nextFiles = mergeOutput.mergedEditable + mergeOutput.virtualFiles
+            val firstPulled = mergeOutput.conflicts.firstOrNull()?.path ?: pulledFiles.first().path
+            val conflictedPaths = mergeOutput.conflicts.map { it.path }.toSet()
             val updatedBaseline = _uiState.value.gitWorkingBaseline.toMutableMap().apply {
-              pulledFiles.forEach { put(it.path, it.content) }
+              pulledFiles.filter { it.path !in conflictedPaths }.forEach { put(it.path, it.content) }
             }
             _uiState.update { state ->
               state.copy(
@@ -5764,10 +6231,17 @@ jobs:
                 openTabPaths = (state.openTabPaths + pulledFiles.map { it.path }).distinct(),
                 activeFilePath = firstPulled,
                 editorFieldValues =
-                  state.editorFieldValues + pulledFiles.associate { it.path to TextFieldValue(it.content) },
+                  state.editorFieldValues + mergeOutput.mergedEditable.associate { it.path to TextFieldValue(it.content) },
                 editorRevision = state.editorRevision + 1L,
                 diagnostics = nextFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
-                statusMessage = "Pulled ${pulledFiles.size} file(s) into ${existingWs.scriptName}",
+                pendingMergeConflicts = mergeOutput.conflicts,
+                showConflictResolverModal = mergeOutput.conflicts.isNotEmpty(),
+                statusMessage =
+                  if (mergeOutput.conflicts.isNotEmpty()) {
+                    "Pulled ${pulledFiles.size} file(s) with ${mergeOutput.conflicts.size} conflict(s) to resolve"
+                  } else {
+                    "Merged ${pulledFiles.size} file(s) cleanly into ${existingWs.scriptName}"
+                  },
               )
             }
           }
@@ -6201,14 +6675,399 @@ jobs:
     }
   }
 
-  // API Tester (Postman-style GUI) + Draft Auto-Save + Helpers
+  // Diff Viewer & 3-Way Merge Conflict Resolver Actions
+  private data class WorkspaceMergeOutput(
+    val mergedEditable: List<WorkerFile>,
+    val virtualFiles: List<WorkerFile>,
+    val conflicts: List<MergeConflictFile>,
+  )
+
+  private fun performThreeWayMergeIntoWorkspace(
+    existingWs: WorkerWorkspace,
+    remoteFiles: List<WorkerFile>,
+    oldBaseline: Map<String, String>,
+    remoteLabel: String,
+  ): WorkspaceMergeOutput {
+    val editable = existingWs.files.filterNot { it.isVirtualReadOnly }.toMutableList()
+    val virtual = existingWs.files.filter { it.isVirtualReadOnly }
+    val conflicts = mutableListOf<MergeConflictFile>()
+
+    remoteFiles.forEach { rf ->
+      val idx = editable.indexOfFirst { it.path == rf.path }
+      if (idx < 0) {
+        editable.add(rf.copy(isEntryPoint = false))
+      } else {
+        val localFile = editable[idx]
+        if (localFile.content == rf.content) {
+          editable[idx] = localFile.copy(originalContent = rf.content)
+        } else {
+          val baseText = oldBaseline[rf.path].orEmpty()
+          val res =
+            MergeConflictResolver.threeWayMerge(
+              path = rf.path,
+              baseContent = baseText,
+              localContent = localFile.content,
+              remoteContent = rf.content,
+              localLabel = existingWs.scriptName,
+              remoteLabel = remoteLabel,
+            )
+          editable[idx] =
+            localFile.copy(
+              content = res.mergedContent,
+              originalContent = rf.content,
+            )
+          if (res.hasConflicts) {
+            conflicts.add(
+              MergeConflictFile(
+                path = rf.path,
+                baseContent = baseText,
+                localContent = localFile.content,
+                remoteContent = rf.content,
+                mergedContent = res.mergedContent,
+                hunks = res.hunks,
+              ),
+            )
+          }
+        }
+      }
+    }
+    return WorkspaceMergeOutput(editable, virtual, conflicts)
+  }
+
+  private fun buildDiffEntries(
+    intent: DiffReviewIntent,
+    state: IdeUiState = _uiState.value,
+  ): List<FileDiffEntry> {
+    val ws = state.workspace ?: return emptyList()
+    if (intent == DiffReviewIntent.PRE_GIT_PUSH) {
+      return state.gitChangedFiles.map { change ->
+        val diff = CodeFormatter.computeLineDiff(change.baseContent, change.currentContent)
+        val added = diff.count { it.type == DiffType.ADDED }
+        val removed = diff.count { it.type == DiffType.REMOVED }
+        val hasConflict = MergeConflictResolver.hasConflictMarkers(change.currentContent)
+        val origin =
+          when {
+            hasConflict -> DiffFileOrigin.CONFLICT
+            change.status == GitFileChangeStatus.ADDED -> DiffFileOrigin.ADDED
+            change.status == GitFileChangeStatus.DELETED -> DiffFileOrigin.DELETED
+            else -> DiffFileOrigin.MODIFIED
+          }
+        FileDiffEntry(
+          path = change.path,
+          origin = origin,
+          originalLabel = "Git Baseline",
+          modifiedLabel = if (change.isStaged) "Staged Local" else "Working Tree",
+          originalContent = change.baseContent,
+          modifiedContent = change.currentContent,
+          addedCount = added,
+          removedCount = removed,
+          hasConflicts = hasConflict,
+        )
+      }
+    }
+
+    return ws.files
+      .filterNot { it.isVirtualReadOnly }
+      .filter { it.isDirty || MergeConflictResolver.hasConflictMarkers(it.content) }
+      .map { wf ->
+        val diff = CodeFormatter.computeLineDiff(wf.originalContent, wf.content)
+        val added = diff.count { it.type == DiffType.ADDED }
+        val removed = diff.count { it.type == DiffType.REMOVED }
+        val hasConflict = MergeConflictResolver.hasConflictMarkers(wf.content)
+        val origin =
+          when {
+            hasConflict -> DiffFileOrigin.CONFLICT
+            wf.originalContent.isEmpty() -> DiffFileOrigin.ADDED
+            else -> DiffFileOrigin.MODIFIED
+          }
+        FileDiffEntry(
+          path = wf.path,
+          origin = origin,
+          originalLabel = if (state.isLocalScratchpad) "Disk Baseline" else "Deployed CF",
+          modifiedLabel = "Local Edits",
+          originalContent = wf.originalContent,
+          modifiedContent = wf.content,
+          addedCount = added,
+          removedCount = removed,
+          hasConflicts = hasConflict,
+        )
+      }
+  }
+
+  fun openDiffReview(intent: DiffReviewIntent) {
+    val state = _uiState.value
+    val entries = buildDiffEntries(intent, state)
+    _uiState.update {
+      it.copy(
+        showDiffReviewModal = true,
+        diffReviewIntent = intent,
+        diffReviewEntries = entries,
+      )
+    }
+  }
+
+  fun dismissDiffReview() {
+    _uiState.update { it.copy(showDiffReviewModal = false) }
+  }
+
+  fun proceedFromDiffReview() {
+    val intent = _uiState.value.diffReviewIntent
+    _uiState.update { it.copy(showDiffReviewModal = false) }
+    when (intent) {
+      DiffReviewIntent.PRE_DEPLOY -> deployActiveWorker()
+      DiffReviewIntent.PRE_GIT_PUSH -> pushQueuedAndActiveChangesToGitHub()
+      DiffReviewIntent.WORKSPACE -> Unit
+    }
+  }
+
+  fun openConflictResolver() {
+    val state = _uiState.value
+    val existing = state.pendingMergeConflicts
+    if (existing.isNotEmpty()) {
+      _uiState.update { it.copy(showConflictResolverModal = true) }
+      return
+    }
+    val ws = state.workspace ?: return
+    val detected =
+      ws.files
+        .filterNot { it.isVirtualReadOnly }
+        .mapNotNull { wf ->
+          val hunks = MergeConflictResolver.parseConflictMarkers(wf.content)
+          if (hunks.isEmpty()) null
+          else
+            MergeConflictFile(
+              path = wf.path,
+              baseContent = wf.originalContent,
+              localContent = wf.content,
+              remoteContent = wf.originalContent,
+              mergedContent = wf.content,
+              hunks = hunks,
+            )
+        }
+    if (detected.isEmpty()) {
+      _uiState.update { it.copy(statusMessage = "No merge conflicts detected in workspace.") }
+      return
+    }
+    _uiState.update {
+      it.copy(
+        pendingMergeConflicts = detected,
+        showConflictResolverModal = true,
+      )
+    }
+  }
+
+  fun dismissConflictResolver() {
+    _uiState.update { it.copy(showConflictResolverModal = false) }
+  }
+
+  fun resolveConflictHunk(
+    filePath: String,
+    hunkIndex: Int,
+    choice: ConflictChoice,
+  ) {
+    _uiState.update { state ->
+      val updatedConflicts =
+        state.pendingMergeConflicts.map { cf ->
+          if (cf.path != filePath) cf
+          else {
+            val nextContent = MergeConflictResolver.resolveConflictHunk(cf.mergedContent, hunkIndex, choice)
+            cf.copy(
+              mergedContent = nextContent,
+              hunks = MergeConflictResolver.parseConflictMarkers(nextContent),
+            )
+          }
+        }
+      state.copy(pendingMergeConflicts = updatedConflicts)
+    }
+  }
+
+  fun resolveAllConflictsInFile(
+    filePath: String,
+    choice: ConflictChoice,
+  ) {
+    _uiState.update { state ->
+      val updatedConflicts =
+        state.pendingMergeConflicts.map { cf ->
+          if (cf.path != filePath) cf
+          else {
+            val nextContent = MergeConflictResolver.resolveAllConflicts(cf.mergedContent, choice)
+            cf.copy(
+              mergedContent = nextContent,
+              hunks = emptyList(),
+            )
+          }
+        }
+      state.copy(pendingMergeConflicts = updatedConflicts)
+    }
+  }
+
+  fun applyResolvedConflictsToWorkspace() {
+    val state = _uiState.value
+    val ws = state.workspace ?: return
+    val conflicts = state.pendingMergeConflicts
+    if (conflicts.any { it.hunks.isNotEmpty() }) {
+      _uiState.update { it.copy(statusMessage = "Resolve all remaining conflict hunks first.") }
+      return
+    }
+    val resolvedMap = conflicts.associate { it.path to it.mergedContent }
+    val nextFiles =
+      ws.files.map { wf ->
+        val resolved = resolvedMap[wf.path]
+        if (resolved != null) wf.copy(content = resolved) else wf
+      }
+    val nextWs = ws.copy(files = nextFiles, hasModuleSetChanged = true)
+    val nextFields =
+      state.editorFieldValues + resolvedMap.mapValues { (_, text) -> TextFieldValue(text) }
+    val nextBaseline =
+      state.gitWorkingBaseline.toMutableMap().apply {
+        conflicts.forEach { put(it.path, it.remoteContent) }
+      }
+    val ramKey = activeWorkspaceKey(state)
+    if (ramKey != null) {
+      ramDb.updateWorkspace(ramKey) { rec ->
+        rec.copy(workingWorkspace = nextWs, fieldValues = nextFields)
+      }
+    }
+    _uiState.update { s ->
+      s.copy(
+        workspace = nextWs,
+        editorFieldValues = nextFields,
+        editorRevision = s.editorRevision + 1L,
+        gitWorkingBaseline = nextBaseline,
+        diagnostics = nextFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+        pendingMergeConflicts = emptyList(),
+        showConflictResolverModal = false,
+        statusMessage = "Applied merged changes across ${conflicts.size} resolved file(s)",
+      )
+    }
+    terminalEngine.syncWorkspaceToDisk(nextWs)
+    appendLog("INFO", "Resolved merge conflicts for ${conflicts.joinToString { it.path }}")
+  }
+
+  // API Tester Pro (Environment Profiles, Importer, Assertions & Collections)
   fun updateApiRequest(transform: (ApiTesterRequest) -> ApiTesterRequest) {
     _uiState.update { it.copy(apiRequest = transform(it.apiRequest)) }
   }
 
   fun updateApiEnvVars(vars: List<ApiEnvVar>) {
-    _uiState.update { it.copy(apiEnvVars = vars) }
+    _uiState.update { state ->
+      val updatedProfiles =
+        state.apiEnvProfiles.map { profile ->
+          if (profile.id == state.activeApiEnvProfileId) profile.copy(vars = vars) else profile
+        }
+      state.copy(
+        apiEnvVars = vars,
+        apiEnvProfiles = updatedProfiles,
+      )
+    }
     persistApiTester()
+  }
+
+  fun selectApiEnvProfile(profileId: String) {
+    _uiState.update { state ->
+      val target = state.apiEnvProfiles.firstOrNull { it.id == profileId } ?: return@update state
+      state.copy(
+        activeApiEnvProfileId = target.id,
+        apiEnvVars = target.vars,
+        statusMessage = "API Environment: ${target.name}",
+      )
+    }
+    persistApiTester()
+  }
+
+  fun createApiEnvProfile(name: String) {
+    val clean = name.trim()
+    if (clean.isBlank()) return
+    val newId = "env_${UUID.randomUUID().toString().take(8)}"
+    val newProfile =
+      ApiEnvironmentProfile(
+        id = newId,
+        name = clean,
+        vars = listOf(ApiEnvVar(key = "baseUrl", value = ""), ApiEnvVar(key = "apiToken", value = "")),
+      )
+    _uiState.update { state ->
+      state.copy(
+        apiEnvProfiles = state.apiEnvProfiles + newProfile,
+        activeApiEnvProfileId = newId,
+        apiEnvVars = newProfile.vars,
+        statusMessage = "Created environment '$clean'",
+      )
+    }
+    persistApiTester()
+  }
+
+  fun renameApiEnvProfile(profileId: String, newName: String) {
+    val clean = newName.trim()
+    if (clean.isBlank()) return
+    _uiState.update { state ->
+      state.copy(
+        apiEnvProfiles = state.apiEnvProfiles.map { if (it.id == profileId) it.copy(name = clean) else it },
+        statusMessage = "Renamed environment to '$clean'",
+      )
+    }
+    persistApiTester()
+  }
+
+  fun deleteApiEnvProfile(profileId: String) {
+    _uiState.update { state ->
+      if (state.apiEnvProfiles.size <= 1) {
+        return@update state.copy(statusMessage = "At least one environment profile is required.")
+      }
+      val remaining = state.apiEnvProfiles.filterNot { it.id == profileId }
+      val nextActive =
+        if (state.activeApiEnvProfileId == profileId) remaining.first()
+        else remaining.firstOrNull { it.id == state.activeApiEnvProfileId } ?: remaining.first()
+      state.copy(
+        apiEnvProfiles = remaining,
+        activeApiEnvProfileId = nextActive.id,
+        apiEnvVars = nextActive.vars,
+        statusMessage = "Switched to environment '${nextActive.name}'",
+      )
+    }
+    persistApiTester()
+  }
+
+  fun importApiCollection(
+    rawJson: String,
+    importEnvVars: Boolean = true,
+    loadFirstRequest: Boolean = true,
+  ): Result<ApiImportResult> {
+    val parsedResult = ApiCollectionImporter.parseImportJson(rawJson)
+    val parsed = parsedResult.getOrElse { err ->
+      _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Import failed") }
+      return Result.failure(err)
+    }
+    _uiState.update { state ->
+      val nextCollections = parsed.requests + state.apiCollections
+      val nextEnvVars =
+        if (importEnvVars && parsed.extractedEnvVars.isNotEmpty()) {
+          val existingKeys = state.apiEnvVars.map { it.key.lowercase() }.toSet()
+          val merged = state.apiEnvVars.toMutableList()
+          parsed.extractedEnvVars.forEach { ev ->
+            if (ev.key.lowercase() !in existingKeys) {
+              merged.add(ev)
+            }
+          }
+          merged
+        } else {
+          state.apiEnvVars
+        }
+      val nextProfiles =
+        state.apiEnvProfiles.map { profile ->
+          if (profile.id == state.activeApiEnvProfileId) profile.copy(vars = nextEnvVars) else profile
+        }
+      state.copy(
+        apiCollections = nextCollections,
+        apiEnvVars = nextEnvVars,
+        apiEnvProfiles = nextProfiles,
+        apiRequest = if (loadFirstRequest) parsed.requests.first() else state.apiRequest,
+        apiAssertionResults = if (loadFirstRequest) emptyList() else state.apiAssertionResults,
+        statusMessage = "Imported ${parsed.requests.size} request(s) from ${parsed.sourceFormat.label} '${parsed.title}'",
+      )
+    }
+    persistApiTester()
+    appendLog("INFO", "Imported ${parsed.requests.size} API requests from ${parsed.title}")
+    return Result.success(parsed)
   }
 
   fun runApiTesterRequest() {
@@ -6233,6 +7092,7 @@ jobs:
 
     viewModelScope.launch {
       val result = repository.executeLiveHttpTest(url, req.method, headersMap, bodyText)
+      val assertionsEval = ApiRequestUtils.evaluateAssertions(req.assertions, result)
       val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
       val historyItem =
         ApiTesterHistoryItem(
@@ -6247,13 +7107,17 @@ jobs:
         s.copy(
           isRunningHttpTest = false,
           httpTestResult = result,
+          apiAssertionResults = assertionsEval,
           apiHistory = (listOf(historyItem) + s.apiHistory).take(25),
         )
       }
       persistApiTester()
+      val assertNote =
+        if (assertionsEval.isEmpty()) ""
+        else " • ${assertionsEval.count { it.passed }}/${assertionsEval.size} assertions passed"
       appendLog(
         if (result.statusCode in 200..399) "HTTP" else "WARN",
-        "${result.method} ${result.url} -> ${result.statusCode} (${result.durationMs}ms)",
+        "${result.method} ${result.url} -> ${result.statusCode} (${result.durationMs}ms)$assertNote",
       )
     }
   }
@@ -6275,7 +7139,7 @@ jobs:
   }
 
   fun loadApiRequest(request: ApiTesterRequest) {
-    _uiState.update { it.copy(apiRequest = request) }
+    _uiState.update { it.copy(apiRequest = request, apiAssertionResults = emptyList()) }
   }
 
   fun deleteApiCollectionItem(id: String) {
@@ -6296,6 +7160,8 @@ jobs:
           collections = s.apiCollections,
           history = s.apiHistory,
           envVars = s.apiEnvVars,
+          environmentProfiles = s.apiEnvProfiles,
+          activeEnvProfileId = s.activeApiEnvProfileId,
         ),
       )
     }
