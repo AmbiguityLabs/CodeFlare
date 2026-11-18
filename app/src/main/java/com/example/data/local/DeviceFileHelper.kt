@@ -194,6 +194,38 @@ object DeviceFileHelper {
     return assets
   }
 
+  suspend fun isZipUri(context: Context, uri: Uri): Boolean =
+    withContext(Dispatchers.IO) {
+      val name = resolveDisplayName(context, uri)
+      if (name.endsWith(".zip", ignoreCase = true)) return@withContext true
+      val mime = runCatching { context.contentResolver.getType(uri) }.getOrNull().orEmpty()
+      if (mime.equals("application/zip", ignoreCase = true) ||
+        mime.equals("application/x-zip-compressed", ignoreCase = true)
+      ) {
+        return@withContext true
+      }
+      runCatching {
+        context.contentResolver.openInputStream(uri)?.use { input ->
+          val header = ByteArray(4)
+          val count = input.read(header)
+          count >= 4 && ZipWorkspaceImporter.isZipArchiveHeader(header)
+        } ?: false
+      }.getOrDefault(false)
+    }
+
+  suspend fun readZipForWorkspace(
+    context: Context,
+    zipUri: Uri,
+  ): Result<ZipArchiveReadResult> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val archiveName = resolveDisplayName(context, zipUri)
+        context.contentResolver.openInputStream(zipUri)?.use { stream ->
+          ZipWorkspaceImporter.readZipStream(stream, archiveName).getOrThrow()
+        } ?: error("Unable to open ZIP archive")
+      }
+    }
+
   suspend fun writeTextToUri(context: Context, uri: Uri, content: String): Result<Unit> =
     withContext(Dispatchers.IO) {
       runCatching {

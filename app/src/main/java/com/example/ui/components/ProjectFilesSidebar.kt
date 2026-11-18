@@ -31,6 +31,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.DeleteOutline
@@ -120,6 +121,7 @@ fun ProjectFilesSidebar(
   onShowNewDirectoryDialog: (String) -> Unit,
   onUploadSingleFile: () -> Unit,
   onUploadBatchFiles: () -> Unit,
+  onImportZipIntoProject: () -> Unit = {},
   onExportActiveFile: () -> Unit,
   onDeleteModuleFile: (String) -> Unit,
   onRequestRenameModuleFile: (String) -> Unit,
@@ -338,6 +340,15 @@ fun ProjectFilesSidebar(
                 onClick = {
                   uploadMenuOpen = false
                   onUploadBatchFiles()
+                },
+              )
+              EdgeMenuItem(
+                label = "Import ZIP Archive",
+                icon = Icons.Outlined.Archive,
+                badgeText = ".zip",
+                onClick = {
+                  uploadMenuOpen = false
+                  onImportZipIntoProject()
                 },
               )
               uiState.activeFile?.let { active ->

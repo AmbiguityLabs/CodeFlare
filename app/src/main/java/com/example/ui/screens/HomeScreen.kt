@@ -43,6 +43,7 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudDownload
@@ -94,11 +95,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.RamWorkspaceRecord
+import com.example.data.local.ZipImportTargetMode
 import com.example.data.remote.CfWorkerScript
 import com.example.ui.components.ChangeSubdomainDialog
 import com.example.ui.components.EdgeMenu
 import com.example.ui.components.EdgeMenuCompactItem
 import com.example.ui.components.EdgeMenuHeader
+import com.example.ui.components.EdgeMenuItem
 import com.example.ui.components.CloudflareInfraPanel
 import com.example.ui.components.CloudflarePagesPanel
 import com.example.ui.components.EdgeBottomDock
@@ -106,6 +109,7 @@ import com.example.ui.components.EdgeBottomDockItem
 import com.example.ui.components.GitHubAndDiffPanel
 import com.example.ui.components.NewWorkerDialog
 import com.example.ui.components.RenameWorkerDialog
+import com.example.ui.components.ZipImportPreviewDialog
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
@@ -151,6 +155,19 @@ fun HomeScreen(
         viewModel.importWorkspaceBundleFromUri(uri)
       }
     }
+
+  val importZipProjectLauncher =
+    rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+      if (uri != null) {
+        viewModel.inspectZipForImport(uri, ZipImportTargetMode.NEW_PROJECT)
+      }
+    }
+
+  val launchZipPicker = {
+    importZipProjectLauncher.launch(
+      arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*"),
+    )
+  }
 
   val pagesFolderLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
@@ -203,18 +220,48 @@ fun HomeScreen(
       onDismiss = {
         showNewProjectDialog = false
         pickedNewWorkerUris = emptyList()
+        viewModel.dismissZipImportPreview()
       },
       onCreateFromTemplate = { name, template ->
         showNewProjectDialog = false
         pickedNewWorkerUris = emptyList()
+        viewModel.dismissZipImportPreview()
         viewModel.createNewWorker(name, template)
       },
       onCreateFromFiles = { name, uris, folderPrefix ->
         showNewProjectDialog = false
         pickedNewWorkerUris = emptyList()
+        viewModel.dismissZipImportPreview()
         viewModel.createNewWorkerFromUris(name, uris, folderPrefix)
       },
+      zipPreview = uiState.zipImportPreview,
+      onPickZip = launchZipPicker,
+      onToggleZipStripRoot = viewModel::toggleZipPreviewStripRoot,
+      onClearPickedZip = viewModel::dismissZipImportPreview,
+      onCreateFromZip = { name ->
+        showNewProjectDialog = false
+        pickedNewWorkerUris = emptyList()
+        viewModel.confirmImportZipAsNewProject(name)
+      },
     )
+  }
+
+  uiState.zipImportPreview?.let { preview ->
+    if (!showNewProjectDialog) {
+      ZipImportPreviewDialog(
+        preview = preview,
+        activeWorkerName = uiState.workspace?.scriptName,
+        isLocalScratchpad = uiState.isLocalScratchpad || uiState.credentials == null,
+        onToggleStripRoot = viewModel::toggleZipPreviewStripRoot,
+        onDismiss = viewModel::dismissZipImportPreview,
+        onConfirmNewProject = { name, deployNow ->
+          viewModel.confirmImportZipAsNewProject(name, deployNow)
+        },
+        onConfirmMergeIntoActive = { prefix, deploy ->
+          viewModel.confirmMergeZipIntoActiveWorkspace(prefix, deploy)
+        },
+      )
+    }
   }
 
   pendingDeleteCloudWorker?.let { scriptName ->
@@ -739,6 +786,7 @@ fun HomeScreen(
               searchQuery = projectSearch,
               onSearchChange = { projectSearch = it },
               onNewProject = { showNewProjectDialog = true },
+              onImportZip = launchZipPicker,
               onImportBundle = {
                 importWorkspaceBundleLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
               },
@@ -894,6 +942,7 @@ private fun HomeProjectsTabContent(
   searchQuery: String,
   onSearchChange: (String) -> Unit,
   onNewProject: () -> Unit,
+  onImportZip: () -> Unit,
   onImportBundle: () -> Unit,
   onOpenSettings: () -> Unit,
   onOpenGitHubHub: () -> Unit,
@@ -962,19 +1011,51 @@ private fun HomeProjectsTabContent(
           }
         }
 
-        Surface(
-          onClick = onImportBundle,
-          shape = RoundedCornerShape(14.dp),
-          color = palette.glassElevated,
-          border = rememberGlassBorderStroke(0.75.dp),
-          modifier = Modifier.size(50.dp).testTag("home_import_bundle_button"),
-        ) {
-          Box(contentAlignment = Alignment.Center) {
-            Icon(
-              imageVector = Icons.Outlined.CloudDownload,
-              contentDescription = "Import workspace JSON",
-              tint = palette.textPrimary,
-              modifier = Modifier.size(20.dp),
+        var importMenuOpen by remember { mutableStateOf(false) }
+        Box {
+          Surface(
+            onClick = { importMenuOpen = true },
+            shape = RoundedCornerShape(14.dp),
+            color = palette.glassElevated,
+            border = rememberGlassBorderStroke(0.75.dp),
+            modifier = Modifier.size(50.dp).testTag("home_import_bundle_button"),
+          ) {
+            Box(contentAlignment = Alignment.Center) {
+              Icon(
+                imageVector = Icons.Outlined.CloudDownload,
+                contentDescription = "Import ZIP or JSON project",
+                tint = palette.textPrimary,
+                modifier = Modifier.size(20.dp),
+              )
+            }
+          }
+          EdgeMenu(
+            expanded = importMenuOpen,
+            onDismissRequest = { importMenuOpen = false },
+            minWidth = 216.dp,
+            maxWidth = 264.dp,
+          ) {
+            EdgeMenuHeader(
+              title = "Import Project",
+              leadingIcon = Icons.Outlined.CloudDownload,
+            )
+            EdgeMenuItem(
+              label = "Import .zip Archive",
+              icon = Icons.Outlined.Archive,
+              badgeText = ".zip",
+              onClick = {
+                importMenuOpen = false
+                onImportZip()
+              },
+            )
+            EdgeMenuItem(
+              label = "Import .json Bundle",
+              icon = Icons.Outlined.CloudDownload,
+              badgeText = ".json",
+              onClick = {
+                importMenuOpen = false
+                onImportBundle()
+              },
             )
           }
         }

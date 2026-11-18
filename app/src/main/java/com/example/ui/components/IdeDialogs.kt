@@ -8,8 +8,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -20,14 +23,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -40,18 +46,24 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.local.ZipImportTargetMode
+import com.example.data.local.ZipPreviewState
 import com.example.data.remote.CloudflareNamingUtils
 import com.example.data.repository.WorkerTemplate
 import com.example.ui.theme.AmberWarn
@@ -69,14 +81,44 @@ fun NewWorkerDialog(
   onDismiss: () -> Unit,
   onCreateFromTemplate: (name: String, template: WorkerTemplate) -> Unit,
   onCreateFromFiles: (name: String, uris: List<Uri>, folderPrefix: String) -> Unit,
+  zipPreview: ZipPreviewState? = null,
+  onPickZip: () -> Unit = {},
+  onToggleZipStripRoot: (Boolean) -> Unit = {},
+  onClearPickedZip: () -> Unit = {},
+  onCreateFromZip: (name: String) -> Unit = {},
 ) {
   val palette = LocalIdePalette.current
   val context = LocalContext.current
   var name by remember { mutableStateOf("my-edge-worker") }
-  var uploadMode by remember { mutableStateOf(pickedUris.isNotEmpty()) }
+  var sourceMode by remember {
+    mutableIntStateOf(
+      when {
+        zipPreview != null -> 2
+        pickedUris.isNotEmpty() -> 1
+        else -> 0
+      },
+    )
+  }
   var selectedTemplate by remember { mutableStateOf(WorkerTemplate.HELLO_FETCH) }
   var folderPrefix by remember { mutableStateOf("") }
   var showMissingFilesHint by remember { mutableStateOf(false) }
+  var showMissingZipHint by remember { mutableStateOf(false) }
+
+  LaunchedEffect(zipPreview?.plan?.suggestedProjectName) {
+    val suggested = zipPreview?.plan?.suggestedProjectName
+    if (!suggested.isNullOrBlank()) {
+      sourceMode = 2
+      if (name == "my-edge-worker" || name.isBlank()) {
+        name = suggested
+      }
+    }
+  }
+
+  LaunchedEffect(pickedUris.size) {
+    if (pickedUris.isNotEmpty()) {
+      sourceMode = 1
+    }
+  }
 
   val pickedNames =
     remember(pickedUris) {
@@ -114,7 +156,6 @@ fun NewWorkerDialog(
           modifier = Modifier.fillMaxWidth().testTag("new_worker_name_input"),
         )
 
-        // Source Mode Pill Switcher: Template vs Upload Files
         Surface(
           color = palette.chromePill,
           shape = RoundedCornerShape(12.dp),
@@ -124,165 +165,246 @@ fun NewWorkerDialog(
             modifier = Modifier.fillMaxWidth().padding(4.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
           ) {
-            Surface(
-              onClick = {
-                uploadMode = false
-                showMissingFilesHint = false
-              },
-              shape = RoundedCornerShape(9.dp),
-              color = if (!uploadMode) palette.activePillBg else palette.chromePill,
-              modifier = Modifier.weight(1f).testTag("new_worker_template_mode"),
-            ) {
-              Text(
-                text = "Template",
-                style = MaterialTheme.typography.labelLarge,
-                color = if (!uploadMode) palette.activePillFg else palette.textSecondary,
-                fontWeight = if (!uploadMode) FontWeight.SemiBold else FontWeight.Normal,
-                modifier = Modifier.padding(vertical = 8.dp, horizontal = 10.dp),
-              )
-            }
-            Surface(
-              onClick = { uploadMode = true },
-              shape = RoundedCornerShape(9.dp),
-              color = if (uploadMode) palette.activePillBg else palette.chromePill,
-              modifier = Modifier.weight(1f).testTag("new_worker_upload_mode"),
-            ) {
-              Text(
-                text = "Upload File(s)",
-                style = MaterialTheme.typography.labelLarge,
-                color = if (uploadMode) palette.activePillFg else palette.textSecondary,
-                fontWeight = if (uploadMode) FontWeight.SemiBold else FontWeight.Normal,
-                modifier = Modifier.padding(vertical = 8.dp, horizontal = 10.dp),
-              )
+            listOf(
+              Triple(0, "Template", "new_worker_template_mode"),
+              Triple(1, "Files", "new_worker_upload_mode"),
+              Triple(2, "ZIP", "new_worker_zip_mode"),
+            ).forEach { (idx, label, tag) ->
+              val selected = sourceMode == idx
+              Surface(
+                onClick = {
+                  sourceMode = idx
+                  showMissingFilesHint = false
+                  showMissingZipHint = false
+                },
+                shape = RoundedCornerShape(9.dp),
+                color = if (selected) palette.activePillBg else palette.chromePill,
+                modifier = Modifier.weight(1f).testTag(tag),
+              ) {
+                Text(
+                  text = label,
+                  style = MaterialTheme.typography.labelLarge,
+                  color = if (selected) palette.activePillFg else palette.textSecondary,
+                  fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                  textAlign = TextAlign.Center,
+                  maxLines = 1,
+                  modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp, horizontal = 6.dp),
+                )
+              }
             }
           }
         }
 
-        if (!uploadMode) {
-          Text(
-            text = "Starter Template",
-            style = MaterialTheme.typography.labelMedium,
-            color = palette.textSecondary,
-          )
-
-          Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            WorkerTemplate.entries.forEach { tpl ->
-              val isSelected = selectedTemplate == tpl
-              val shortTag =
-                when (tpl) {
-                  WorkerTemplate.HELLO_FETCH -> "HTTP"
-                  WorkerTemplate.JSON_ROUTER -> "Router"
-                  WorkerTemplate.CORS_PROXY -> "Proxy"
-                  WorkerTemplate.CRON_WORKER -> "Cron"
-                  WorkerTemplate.HONO_ROUTER -> "Hono"
-                  WorkerTemplate.BEARER_AUTH_WORKER -> "Auth"
-                  WorkerTemplate.PAGES_FUNCTIONS_API -> "Pages"
-                }
-              Surface(
-                onClick = { selectedTemplate = tpl },
-                shape = RoundedCornerShape(12.dp),
-                color =
-                  if (isSelected) palette.activePillBg.copy(alpha = 0.72f)
-                  else palette.chromePill,
-                modifier = Modifier.fillMaxWidth(),
-              ) {
-                Row(
-                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                  RadioButton(selected = isSelected, onClick = { selectedTemplate = tpl })
-                  Text(
-                    text = tpl.title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                    color = if (isSelected) palette.activePillFg else palette.textPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                  )
-                  Surface(
-                    color = if (isSelected) palette.ctaBg else palette.chromeSurface,
-                    shape = RoundedCornerShape(6.dp),
-                  ) {
-                    Text(
-                      text = shortTag,
-                      fontSize = 10.5.sp,
-                      fontWeight = FontWeight.SemiBold,
-                      color = if (isSelected) palette.ctaFg else palette.textMuted,
-                      modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-                    )
-                  }
-                }
-              }
-            }
-          }
-        } else {
-          OutlinedButton(
-            onClick = {
-              showMissingFilesHint = false
-              onPickFiles()
-            },
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth().testTag("new_worker_pick_files_button"),
-          ) {
-            Icon(Icons.Outlined.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
+        when (sourceMode) {
+          0 -> {
             Text(
-              if (pickedNames.isEmpty()) "Select Script File(s)"
-              else "${pickedNames.size} File(s) Selected — Change",
-            )
-          }
-
-          if (showMissingFilesHint && pickedNames.isEmpty()) {
-            Text(
-              text = "Select at least one script file from your device first.",
-              style = MaterialTheme.typography.labelSmall,
-              color = RoseError,
-            )
-          }
-
-          if (pickedNames.isNotEmpty()) {
-            FlowRow(
-              horizontalArrangement = Arrangement.spacedBy(6.dp),
-              verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-              pickedNames.forEach { fileName ->
-                Surface(
-                  color = palette.chromePill,
-                  shape = RoundedCornerShape(8.dp),
-                ) {
-                  Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                  ) {
-                    Icon(Icons.Outlined.Description, contentDescription = null, modifier = Modifier.size(14.dp))
-                    Text(fileName, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                  }
-                }
-              }
-            }
-
-            OutlinedTextField(
-              value = folderPrefix,
-              onValueChange = { folderPrefix = it },
-              label = { Text("Subfolder prefix (optional)") },
-              placeholder = { Text("src") },
-              singleLine = true,
-              shape = RoundedCornerShape(12.dp),
-              modifier = Modifier.fillMaxWidth(),
-            )
-
-            TextButton(onClick = onClearPickedFiles) {
-              Text("Clear selected files")
-            }
-          } else {
-            Text(
-              text = "Supports .js, .mjs, .ts, .json, .html, .sql",
-              style = MaterialTheme.typography.bodySmall,
+              text = "Starter Template",
+              style = MaterialTheme.typography.labelMedium,
               color = palette.textSecondary,
             )
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+              WorkerTemplate.entries.forEach { tpl ->
+                val isSelected = selectedTemplate == tpl
+                val shortTag =
+                  when (tpl) {
+                    WorkerTemplate.HELLO_FETCH -> "HTTP"
+                    WorkerTemplate.JSON_ROUTER -> "Router"
+                    WorkerTemplate.CORS_PROXY -> "Proxy"
+                    WorkerTemplate.CRON_WORKER -> "Cron"
+                    WorkerTemplate.HONO_ROUTER -> "Hono"
+                    WorkerTemplate.BEARER_AUTH_WORKER -> "Auth"
+                    WorkerTemplate.PAGES_FUNCTIONS_API -> "Pages"
+                  }
+                Surface(
+                  onClick = { selectedTemplate = tpl },
+                  shape = RoundedCornerShape(12.dp),
+                  color =
+                    if (isSelected) palette.activePillBg.copy(alpha = 0.72f)
+                    else palette.chromePill,
+                  modifier = Modifier.fillMaxWidth(),
+                ) {
+                  Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                  ) {
+                    RadioButton(selected = isSelected, onClick = { selectedTemplate = tpl })
+                    Text(
+                      text = tpl.title,
+                      style = MaterialTheme.typography.bodyMedium,
+                      fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                      color = if (isSelected) palette.activePillFg else palette.textPrimary,
+                      maxLines = 1,
+                      overflow = TextOverflow.Ellipsis,
+                      modifier = Modifier.weight(1f),
+                    )
+                    Surface(
+                      color = if (isSelected) palette.ctaBg else palette.chromeSurface,
+                      shape = RoundedCornerShape(6.dp),
+                    ) {
+                      Text(
+                        text = shortTag,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (isSelected) palette.ctaFg else palette.textMuted,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                      )
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          1 -> {
+            OutlinedButton(
+              onClick = {
+                showMissingFilesHint = false
+                onPickFiles()
+              },
+              shape = RoundedCornerShape(12.dp),
+              modifier = Modifier.fillMaxWidth().testTag("new_worker_pick_files_button"),
+            ) {
+              Icon(Icons.Outlined.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
+              Spacer(Modifier.width(8.dp))
+              Text(
+                if (pickedNames.isEmpty()) "Select Script File(s)"
+                else "${pickedNames.size} File(s) Selected — Change",
+              )
+            }
+
+            if (showMissingFilesHint && pickedNames.isEmpty()) {
+              Text(
+                text = "Select at least one script file from your device first.",
+                style = MaterialTheme.typography.labelSmall,
+                color = RoseError,
+              )
+            }
+
+            if (pickedNames.isNotEmpty()) {
+              FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                pickedNames.forEach { fileName ->
+                  Surface(
+                    color = palette.chromePill,
+                    shape = RoundedCornerShape(8.dp),
+                  ) {
+                    Row(
+                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                      Icon(Icons.Outlined.Description, contentDescription = null, modifier = Modifier.size(14.dp))
+                      Text(fileName, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                  }
+                }
+              }
+
+              OutlinedTextField(
+                value = folderPrefix,
+                onValueChange = { folderPrefix = it },
+                label = { Text("Subfolder prefix (optional)") },
+                placeholder = { Text("src") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+              )
+
+              TextButton(onClick = onClearPickedFiles) {
+                Text("Clear selected files")
+              }
+            } else {
+              Text(
+                text = "Supports .js, .mjs, .ts, .json, .html, .sql",
+                style = MaterialTheme.typography.bodySmall,
+                color = palette.textSecondary,
+              )
+            }
+          }
+
+          else -> {
+            OutlinedButton(
+              onClick = {
+                showMissingZipHint = false
+                onPickZip()
+              },
+              shape = RoundedCornerShape(12.dp),
+              modifier = Modifier.fillMaxWidth().testTag("new_worker_pick_zip_button"),
+            ) {
+              Icon(Icons.Outlined.Archive, contentDescription = null, modifier = Modifier.size(18.dp))
+              Spacer(Modifier.width(8.dp))
+              Text(
+                zipPreview?.plan?.archiveName?.let { "$it — Change" }
+                  ?: "Select .zip Archive",
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
+
+            if (showMissingZipHint && zipPreview?.plan == null) {
+              Text(
+                text = "Select a valid .zip archive first.",
+                style = MaterialTheme.typography.labelSmall,
+                color = RoseError,
+              )
+            }
+
+            when {
+              zipPreview?.isLoading == true -> {
+                Row(
+                  modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                  CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                  Text(
+                    text = "Inspecting ZIP archive…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = palette.textSecondary,
+                  )
+                }
+              }
+
+              zipPreview?.errorMessage != null -> {
+                Surface(
+                  color = RoseError.copy(alpha = 0.14f),
+                  shape = RoundedCornerShape(10.dp),
+                  modifier = Modifier.fillMaxWidth(),
+                ) {
+                  Text(
+                    text = zipPreview.errorMessage,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = RoseError,
+                    modifier = Modifier.padding(10.dp),
+                  )
+                }
+              }
+
+              zipPreview?.plan != null -> {
+                val plan = zipPreview.plan
+                ZipPlanSummarySection(
+                  plan = plan,
+                  commonRootFolder = zipPreview.archiveReadResult?.commonRootFolder,
+                  stripRootFolder = zipPreview.stripRootFolder,
+                  onToggleStripRoot = onToggleZipStripRoot,
+                )
+                TextButton(onClick = onClearPickedZip) {
+                  Text("Clear ZIP selection")
+                }
+              }
+
+              else -> {
+                Text(
+                  text = "Extracts multi-file Workers, Wrangler configs, and web projects directly from .zip archives.",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = palette.textSecondary,
+                )
+              }
+            }
           }
         }
       }
@@ -291,21 +413,35 @@ fun NewWorkerDialog(
       val resolvedName = name.trim().ifBlank { "my-edge-worker" }
       Button(
         onClick = {
-          if (uploadMode) {
-            if (pickedUris.isEmpty()) {
-              showMissingFilesHint = true
-            } else {
-              onCreateFromFiles(resolvedName, pickedUris, folderPrefix)
+          when (sourceMode) {
+            1 -> {
+              if (pickedUris.isEmpty()) {
+                showMissingFilesHint = true
+              } else {
+                onCreateFromFiles(resolvedName, pickedUris, folderPrefix)
+              }
             }
-          } else {
-            onCreateFromTemplate(resolvedName, selectedTemplate)
+            2 -> {
+              if (zipPreview?.plan == null) {
+                showMissingZipHint = true
+              } else {
+                onCreateFromZip(resolvedName)
+              }
+            }
+            else -> onCreateFromTemplate(resolvedName, selectedTemplate)
           }
         },
+        enabled = sourceMode != 2 || zipPreview?.isLoading != true,
         colors = ButtonDefaults.buttonColors(containerColor = palette.ctaBg, contentColor = palette.ctaFg),
         modifier = Modifier.testTag("confirm_create_worker_button"),
       ) {
         Text(
-          text = if (uploadMode) "Import & Create" else "Create Project",
+          text =
+            when (sourceMode) {
+              1 -> "Import & Create"
+              2 -> "Import ZIP"
+              else -> "Create Project"
+            },
           fontWeight = FontWeight.SemiBold,
         )
       }
@@ -314,6 +450,350 @@ fun NewWorkerDialog(
       TextButton(onClick = onDismiss) { Text("Cancel") }
     },
   )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ZipImportPreviewDialog(
+  preview: ZipPreviewState,
+  activeWorkerName: String? = null,
+  isLocalScratchpad: Boolean = true,
+  onToggleStripRoot: (Boolean) -> Unit,
+  onDismiss: () -> Unit,
+  onConfirmNewProject: (projectName: String, deployNow: Boolean) -> Unit,
+  onConfirmMergeIntoActive: (folderPrefix: String, autoDeploy: Boolean) -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  val plan = preview.plan
+  val isMergeMode = preview.targetMode == ZipImportTargetMode.MERGE_INTO_ACTIVE
+  var projectName by remember(plan?.suggestedProjectName) {
+    mutableStateOf(plan?.suggestedProjectName.orEmpty())
+  }
+  var folderPrefix by remember { mutableStateOf("") }
+  var deployNow by remember { mutableStateOf(false) }
+
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    icon = {
+      Icon(
+        imageVector = Icons.Outlined.Archive,
+        contentDescription = null,
+        tint = palette.activePillFg,
+      )
+    },
+    title = {
+      Text(
+        text =
+          if (isMergeMode) "Import ZIP into ${activeWorkerName ?: "Project"}"
+          else "Import ZIP Project",
+      )
+    },
+    text = {
+      Column(
+        modifier = Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        when {
+          preview.isLoading -> {
+            Row(
+              modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+              CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp)
+              Text(
+                text = "Extracting & analyzing ZIP archive…",
+                style = MaterialTheme.typography.bodyMedium,
+                color = palette.textSecondary,
+              )
+            }
+          }
+
+          preview.errorMessage != null -> {
+            Surface(
+              color = RoseError.copy(alpha = 0.14f),
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Text(
+                text = preview.errorMessage,
+                style = MaterialTheme.typography.bodySmall,
+                color = RoseError,
+                modifier = Modifier.padding(12.dp),
+              )
+            }
+          }
+
+          plan != null -> {
+            Surface(
+              color = palette.chromePill,
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+              ) {
+                Text(
+                  text = plan.archiveName,
+                  fontFamily = JetBrainsMono,
+                  fontSize = 11.5.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = palette.textPrimary,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                  modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                  text = "${((plan.totalArchiveBytes + 1023L) / 1024L).coerceAtLeast(1L)} KB",
+                  fontFamily = JetBrainsMono,
+                  fontSize = 10.5.sp,
+                  color = palette.textMuted,
+                )
+              }
+            }
+
+            if (!isMergeMode) {
+              OutlinedTextField(
+                value = projectName,
+                onValueChange = { projectName = it },
+                label = { Text("Project Name") },
+                placeholder = { Text(plan.suggestedProjectName) },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = JetBrainsMono),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth().testTag("zip_import_project_name_input"),
+              )
+            } else {
+              OutlinedTextField(
+                value = folderPrefix,
+                onValueChange = { folderPrefix = it },
+                label = { Text("Target folder prefix (optional)") },
+                placeholder = { Text("src/imported") },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = JetBrainsMono),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth().testTag("zip_import_folder_prefix_input"),
+              )
+            }
+
+            ZipPlanSummarySection(
+              plan = plan,
+              commonRootFolder = preview.archiveReadResult?.commonRootFolder,
+              stripRootFolder = preview.stripRootFolder,
+              onToggleStripRoot = onToggleStripRoot,
+            )
+
+            if (!isLocalScratchpad) {
+              Surface(
+                color = palette.chromePill,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+              ) {
+                Row(
+                  modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                  Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                      text = "Deploy to Cloudflare",
+                      style = MaterialTheme.typography.bodySmall,
+                      fontWeight = FontWeight.Medium,
+                      color = palette.textPrimary,
+                    )
+                    Text(
+                      text = "Publish modules right after import",
+                      style = MaterialTheme.typography.labelSmall,
+                      color = palette.textMuted,
+                    )
+                  }
+                  Switch(
+                    checked = deployNow,
+                    onCheckedChange = { deployNow = it },
+                    modifier = Modifier.testTag("zip_import_deploy_switch"),
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    confirmButton = {
+      if (plan != null && !preview.isLoading) {
+        Button(
+          onClick = {
+            if (isMergeMode) {
+              onConfirmMergeIntoActive(folderPrefix, deployNow)
+            } else {
+              onConfirmNewProject(projectName.ifBlank { plan.suggestedProjectName }, deployNow)
+            }
+          },
+          colors = ButtonDefaults.buttonColors(containerColor = palette.ctaBg, contentColor = palette.ctaFg),
+          modifier = Modifier.testTag("confirm_zip_import_button"),
+        ) {
+          Text(
+            text =
+              when {
+                deployNow && !isLocalScratchpad -> "Import & Deploy"
+                isMergeMode -> "Import Files"
+                else -> "Import Project"
+              },
+            fontWeight = FontWeight.SemiBold,
+          )
+        }
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) { Text("Cancel") }
+    },
+  )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ZipPlanSummarySection(
+  plan: com.example.data.local.ZipImportPlan,
+  commonRootFolder: String?,
+  stripRootFolder: Boolean,
+  onToggleStripRoot: (Boolean) -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    FlowRow(
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
+      verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+      Surface(color = palette.activePillBg.copy(alpha = 0.7f), shape = RoundedCornerShape(7.dp)) {
+        Text(
+          text = "${plan.files.size} file(s)",
+          fontFamily = JetBrainsMono,
+          fontSize = 10.5.sp,
+          fontWeight = FontWeight.SemiBold,
+          color = palette.activePillFg,
+          modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+        )
+      }
+      Surface(color = EmeraldLive.copy(alpha = 0.16f), shape = RoundedCornerShape(7.dp)) {
+        Text(
+          text = "main: ${plan.entryModulePath}",
+          fontFamily = JetBrainsMono,
+          fontSize = 10.5.sp,
+          fontWeight = FontWeight.SemiBold,
+          color = EmeraldLive,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+          modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+        )
+      }
+      if (plan.bindings.isNotEmpty()) {
+        Surface(color = palette.chromePill, shape = RoundedCornerShape(7.dp)) {
+          Text(
+            text = "${plan.bindings.size} binding(s)",
+            fontFamily = JetBrainsMono,
+            fontSize = 10.5.sp,
+            color = palette.textPrimary,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+          )
+        }
+      }
+      if (plan.skippedBinaryFiles.isNotEmpty()) {
+        Surface(color = AmberWarn.copy(alpha = 0.16f), shape = RoundedCornerShape(7.dp)) {
+          Text(
+            text = "${plan.skippedBinaryFiles.size} binary skipped",
+            fontFamily = JetBrainsMono,
+            fontSize = 10.5.sp,
+            color = AmberWarn,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+          )
+        }
+      }
+    }
+
+    if (!commonRootFolder.isNullOrBlank()) {
+      Surface(
+        color = palette.chromePill,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = "Strip wrapper folder",
+              style = MaterialTheme.typography.bodySmall,
+              fontWeight = FontWeight.Medium,
+              color = palette.textPrimary,
+            )
+            Text(
+              text = "$commonRootFolder/ → root",
+              fontFamily = JetBrainsMono,
+              fontSize = 10.5.sp,
+              color = palette.textMuted,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+          Switch(
+            checked = stripRootFolder,
+            onCheckedChange = onToggleStripRoot,
+            modifier = Modifier.testTag("zip_strip_root_switch"),
+          )
+        }
+      }
+    }
+
+    val previewLimit = 24
+    val shownFiles = plan.files.take(previewLimit)
+    Surface(
+      color = palette.editorBg,
+      shape = RoundedCornerShape(10.dp),
+      modifier = Modifier.fillMaxWidth(),
+    ) {
+      Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+      ) {
+        shownFiles.forEach { wf ->
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+          ) {
+            Icon(
+              imageVector = if (wf.path.contains('/')) Icons.Outlined.Folder else Icons.Outlined.Description,
+              contentDescription = null,
+              tint = if (wf.isEntryPoint) EmeraldLive else palette.textMuted,
+              modifier = Modifier.size(13.dp),
+            )
+            Text(
+              text = wf.path,
+              fontFamily = JetBrainsMono,
+              fontSize = 11.sp,
+              color = if (wf.isEntryPoint) EmeraldLive else palette.textPrimary,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+              modifier = Modifier.weight(1f),
+            )
+          }
+        }
+        if (plan.files.size > previewLimit) {
+          Text(
+            text = "+ ${plan.files.size - previewLimit} more file(s)",
+            fontFamily = JetBrainsMono,
+            fontSize = 10.5.sp,
+            color = palette.textMuted,
+            modifier = Modifier.padding(top = 2.dp),
+          )
+        }
+      }
+    }
+  }
 }
 
 @Composable

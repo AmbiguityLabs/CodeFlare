@@ -28,6 +28,10 @@ import com.example.data.local.RamWorkspaceDatabase
 import com.example.data.local.RamWorkspaceRecord
 import com.example.data.local.RawPickedAsset
 import com.example.data.local.WorkerTestRunRecord
+import com.example.data.local.ZipImportPlan
+import com.example.data.local.ZipImportTargetMode
+import com.example.data.local.ZipPreviewState
+import com.example.data.local.ZipWorkspaceImporter
 import com.example.data.remote.ApiAssertionResult
 import com.example.data.remote.ApiCollectionImporter
 import com.example.data.remote.ApiEnvVar
@@ -352,6 +356,7 @@ data class IdeUiState(
   val tailLogs: List<ConsoleLogEntry> = emptyList(),
   val consoleLogs: List<ConsoleLogEntry> = emptyList(),
   val lastUndoableFileOpLabel: String? = null,
+  val zipImportPreview: ZipPreviewState? = null,
   val statusMessage: String? = null,
 ) {
   val activeFile: WorkerFile?
@@ -1899,95 +1904,162 @@ export default {
     if (uris.isEmpty()) return
     val ws = _uiState.value.workspace ?: return
     viewModelScope.launch {
+      if (uris.size == 1 && DeviceFileHelper.isZipUri(getApplication(), uris.first())) {
+        val readResult = DeviceFileHelper.readZipForWorkspace(getApplication(), uris.first())
+        val archive =
+          readResult.getOrElse { err ->
+            _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Could not read ZIP archive") }
+            return@launch
+          }
+        val plan =
+          ZipWorkspaceImporter.buildImportPlan(
+            readResult = archive,
+            stripCommonRootFolder = true,
+            defaultCompatibilityDate = ws.compatibilityDate,
+          ).getOrElse { err ->
+            _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "No readable files in ZIP") }
+            return@launch
+          }
+        mergeWorkerFilesIntoActiveWorkspace(
+          incomingFiles = plan.files,
+          folderPrefix = folderPrefix,
+          autoDeploy = autoDeploy,
+          sourceLabel = "ZIP '${plan.archiveName}'",
+        )
+        return@launch
+      }
+
       val picked: List<PickedDeviceFile> = DeviceFileHelper.readFiles(getApplication(), uris)
       if (picked.isEmpty()) {
         _uiState.update { it.copy(statusMessage = "No readable text/script files selected") }
         return@launch
       }
 
-      val currentEditable = ws.files.filterNot { it.isVirtualReadOnly }.toMutableList()
-      val virtualFiles = ws.files.filter { it.isVirtualReadOnly }
-      val addedOrUpdatedPaths = mutableListOf<String>()
-      val importedBatchFiles = mutableListOf<WorkerFile>()
-
-      for (item in picked) {
-        val targetPath =
-          ProjectDirectoryManager.normalizeRelativePath(item.fileName, fallbackFolder = folderPrefix)
-            .ifBlank { item.fileName }
-        addedOrUpdatedPaths.add(targetPath)
-        val existingIdx = currentEditable.indexOfFirst { it.path == targetPath }
-        val wf =
-          if (existingIdx >= 0) {
-            currentEditable[existingIdx].copy(content = item.content)
-          } else {
-            WorkerFile(
-              path = targetPath,
-              content = item.content,
-              originalContent = "",
-              contentType = MultipartWorkerParser.inferModuleMimeType(targetPath),
-              isEntryPoint = false,
-            )
-          }
-        if (existingIdx >= 0) currentEditable[existingIdx] = wf else currentEditable.add(wf)
-        importedBatchFiles.add(wf)
-      }
-
-      val nextFiles = ProjectDirectoryManager.organizeWorkspaceFiles(currentEditable + virtualFiles)
-      val nextFieldValues =
-        _uiState.value.editorFieldValues.toMutableMap().apply {
-          importedBatchFiles.forEach { wf ->
-            put(wf.path, TextFieldValue(wf.content))
-          }
-        }
-      val nextTabs = (_uiState.value.openTabPaths + addedOrUpdatedPaths).distinct()
-      val nextActive = addedOrUpdatedPaths.firstOrNull() ?: _uiState.value.activeFilePath
-      val diags = rebuildDiagnosticsFull(nextFiles)
-
-      _uiState.update { state ->
-        val updatedWs =
-          ws.copy(
-            files = nextFiles,
-            isEsModuleFormat = true,
-            hasModuleSetChanged = true,
+      val incoming =
+        picked.map { item ->
+          val targetPath =
+            ProjectDirectoryManager.normalizeRelativePath(item.fileName, fallbackFolder = folderPrefix)
+              .ifBlank { item.fileName }
+          WorkerFile(
+            path = targetPath,
+            content = item.content,
+            originalContent = "",
+            contentType = MultipartWorkerParser.inferModuleMimeType(targetPath),
+            isEntryPoint = false,
           )
-        state.copy(
-          workspace = updatedWs,
-          openTabPaths = nextTabs,
-          activeFilePath = nextActive,
-          editorFieldValues = nextFieldValues,
-          diagnostics = diags,
-          statusMessage =
-            if (autoDeploy) "Uploaded ${picked.size} file(s), deploying…"
-            else "Organized & imported ${picked.size} file(s)",
+        }
+      mergeWorkerFilesIntoActiveWorkspace(
+        incomingFiles = incoming,
+        folderPrefix = "",
+        autoDeploy = autoDeploy,
+        sourceLabel = "${picked.size} file(s)",
+      )
+    }
+  }
+
+  private fun mergeWorkerFilesIntoActiveWorkspace(
+    incomingFiles: List<WorkerFile>,
+    folderPrefix: String,
+    autoDeploy: Boolean,
+    sourceLabel: String,
+  ) {
+    val ws = _uiState.value.workspace ?: return
+    if (incomingFiles.isEmpty()) {
+      _uiState.update { it.copy(statusMessage = "No importable files found") }
+      return
+    }
+    val currentEditable = ws.files.filterNot { it.isVirtualReadOnly }.toMutableList()
+    val virtualFiles = ws.files.filter { it.isVirtualReadOnly }
+    val addedOrUpdatedPaths = mutableListOf<String>()
+    val importedBatchFiles = mutableListOf<WorkerFile>()
+
+    for (item in incomingFiles) {
+      val combinedPath =
+        if (folderPrefix.isBlank()) item.path
+        else "${folderPrefix.trim('/').replace('\\', '/')}/${item.path.trimStart('/')}"
+      val targetPath =
+        ProjectDirectoryManager.normalizeRelativePath(combinedPath, fallbackFolder = "")
+          .ifBlank { item.path }
+      addedOrUpdatedPaths.add(targetPath)
+      val existingIdx = currentEditable.indexOfFirst { it.path == targetPath }
+      val wf =
+        if (existingIdx >= 0) {
+          currentEditable[existingIdx].copy(content = item.content)
+        } else {
+          WorkerFile(
+            path = targetPath,
+            content = item.content,
+            originalContent = "",
+            contentType = MultipartWorkerParser.inferModuleMimeType(targetPath),
+            isEntryPoint = false,
+          )
+        }
+      if (existingIdx >= 0) currentEditable[existingIdx] = wf else currentEditable.add(wf)
+      importedBatchFiles.add(wf)
+    }
+
+    val nextFiles = ProjectDirectoryManager.organizeWorkspaceFiles(currentEditable + virtualFiles)
+    val nextFieldValues =
+      _uiState.value.editorFieldValues.toMutableMap().apply {
+        importedBatchFiles.forEach { wf ->
+          put(wf.path, TextFieldValue(wf.content))
+        }
+      }
+    val tabsToAdd = addedOrUpdatedPaths.take(8)
+    val nextTabs = (_uiState.value.openTabPaths + tabsToAdd).distinct()
+    val nextActive = addedOrUpdatedPaths.firstOrNull() ?: _uiState.value.activeFilePath
+    val diags = rebuildDiagnosticsFull(nextFiles)
+    val updatedWs =
+      ws.copy(
+        files = nextFiles,
+        isEsModuleFormat = true,
+        hasModuleSetChanged = true,
+      )
+
+    _uiState.update { state ->
+      state.copy(
+        workspace = updatedWs,
+        openTabPaths = nextTabs,
+        activeFilePath = nextActive,
+        editorFieldValues = nextFieldValues,
+        editorRevision = state.editorRevision + 1L,
+        diagnostics = diags,
+        zipImportPreview = null,
+        statusMessage =
+          if (autoDeploy) "Imported ${importedBatchFiles.size} file(s) from $sourceLabel, deploying…"
+          else "Imported ${importedBatchFiles.size} file(s) from $sourceLabel",
+      )
+    }
+    terminalEngine.syncWorkspaceToDisk(updatedWs)
+    activeWorkspaceKey()?.let { key ->
+      val latest = _uiState.value
+      val updatedRecord =
+        ramDb.updateWorkspace(key) { rec ->
+          rec.copy(
+            workingWorkspace = updatedWs,
+            openTabPaths = latest.openTabPaths,
+            activeFilePath = latest.activeFilePath,
+            fieldValues = latest.editorFieldValues,
+          )
+        }
+      _uiState.update {
+        it.copy(
+          ramDbStats = ramDb.computeStats(key),
+          ramWorkspaces = ramDb.listWorkspaces(),
         )
       }
-      activeWorkspaceKey()?.let { key ->
-        val latest = _uiState.value
-        latest.workspace?.let { curWs ->
-          val updatedRecord =
-            ramDb.updateWorkspace(key) { rec ->
-              rec.copy(
-                workingWorkspace = curWs,
-                openTabPaths = latest.openTabPaths,
-                activeFilePath = latest.activeFilePath,
-                fieldValues = latest.editorFieldValues,
-              )
-            }
-          _uiState.update { it.copy(ramDbStats = ramDb.computeStats(key)) }
-          autoSaveIoScope.launch {
-            projectDirManager.recordOrganizedImport(curWs.scriptName, importedBatchFiles)
-            if (updatedRecord != null) projectDirManager.saveWorkspaceRecord(updatedRecord)
-            val summary = projectDirManager.computeStorageSummary()
-            _uiState.update { it.copy(projectStorageSummary = summary) }
-          }
-        }
+      autoSaveIoScope.launch {
+        projectDirManager.recordOrganizedImport(updatedWs.scriptName, importedBatchFiles)
+        if (updatedRecord != null) projectDirManager.saveWorkspaceRecord(updatedRecord)
+        val summary = projectDirManager.computeStorageSummary()
+        _uiState.update { it.copy(projectStorageSummary = summary) }
       }
-      appendLog("INFO", "Imported & organized ${picked.size} file(s): ${addedOrUpdatedPaths.joinToString(", ")}")
-      scheduleDraftSave()
+    }
+    appendLog("INFO", "Imported & organized ${importedBatchFiles.size} file(s) from $sourceLabel")
+    scheduleDraftSave()
 
-      if (autoDeploy && !_uiState.value.isLocalScratchpad) {
-        deployActiveWorker()
-      }
+    if (autoDeploy && !_uiState.value.isLocalScratchpad) {
+      deployActiveWorker()
     }
   }
 
@@ -2043,68 +2115,359 @@ export default {
   fun importWorkspaceBundleFromUri(uri: Uri) {
     syncActiveStateToRamDb()
     viewModelScope.launch {
+      if (DeviceFileHelper.isZipUri(getApplication(), uri)) {
+        inspectZipForImport(uri, ZipImportTargetMode.NEW_PROJECT)
+        return@launch
+      }
       val picked = DeviceFileHelper.readFiles(getApplication(), listOf(uri))
       val first = picked.firstOrNull()
       if (first == null) {
         _uiState.update { it.copy(statusMessage = "Could not read workspace bundle file") }
         return@launch
       }
-      ramDb.importWorkspaceBundleJson(first.content)
-        .onSuccess { importedWs ->
-          val isScratchpad = _uiState.value.isLocalScratchpad || _uiState.value.selectedAccount == null
-          val accId = if (isScratchpad) null else _uiState.value.selectedAccount?.id
-          val ws =
-            regenerateWranglerFileInWorkspace(importedWs).let { built ->
-              built.copy(files = ProjectDirectoryManager.organizeWorkspaceFiles(built.files))
+      importEdgeCodeBundleJson(first.content)
+    }
+  }
+
+  private suspend fun importEdgeCodeBundleJson(
+    rawJson: String,
+    projectNameOverride: String? = null,
+    deployNow: Boolean = false,
+  ) {
+    ramDb.importWorkspaceBundleJson(rawJson)
+      .onSuccess { importedWs ->
+        val isScratchpad = _uiState.value.isLocalScratchpad || _uiState.value.selectedAccount == null
+        val accId = if (isScratchpad) null else _uiState.value.selectedAccount?.id
+        val resolvedName =
+          projectNameOverride
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { CloudflareNamingUtils.sanitizeWorkerName(it, allowUnderscore = isScratchpad) }
+            ?.ifBlank { importedWs.scriptName }
+            ?: importedWs.scriptName
+        val ws =
+          regenerateWranglerFileInWorkspace(importedWs.copy(scriptName = resolvedName)).let { built ->
+            built.copy(files = ProjectDirectoryManager.organizeWorkspaceFiles(built.files))
+          }
+        val key = ramDb.workspaceKey(accId, ws.scriptName)
+        val record =
+          ramDb.importWorkspace(
+            key = key,
+            workspace = ws,
+            defaultTabs = ws.files.filterNot { it.isVirtualReadOnly }.take(4).map { it.path },
+            defaultActivePath = ws.entryModulePath,
+            isNewUnexported = true,
+          )
+        terminalEngine.syncWorkspaceToDisk(ws)
+        withContext(Dispatchers.IO) {
+          projectDirManager.recordOrganizedImport(ws.scriptName, ws.files, bundleJson = rawJson)
+          projectDirManager.saveWorkspaceRecord(record)
+          val summary = projectDirManager.computeStorageSummary()
+          _uiState.update { it.copy(projectStorageSummary = summary) }
+        }
+        val diags = rebuildDiagnosticsFull(ws.files)
+        val initialPreview = resolveDefaultPreviewUrl(ws)
+        _uiState.update { state ->
+          val updatedWorkers =
+            if (!isScratchpad && state.workers.none { it.id == ws.scriptName }) {
+              listOf(CfWorkerScript(id = ws.scriptName)) + state.workers
+            } else {
+              state.workers
             }
-          val key = ramDb.workspaceKey(accId, ws.scriptName)
-          val record =
-            ramDb.importWorkspace(
-              key = key,
-              workspace = ws,
-              defaultTabs = ws.files.filterNot { it.isVirtualReadOnly }.take(4).map { it.path },
-              defaultActivePath = ws.entryModulePath,
-              isNewUnexported = true,
-            )
-          terminalEngine.syncWorkspaceToDisk(ws)
-          autoSaveIoScope.launch {
-            projectDirManager.recordOrganizedImport(ws.scriptName, ws.files, bundleJson = first.content)
-            projectDirManager.saveWorkspaceRecord(record)
-            val summary = projectDirManager.computeStorageSummary()
-            _uiState.update { it.copy(projectStorageSummary = summary) }
-          }
-          val diags = rebuildDiagnosticsFull(ws.files)
-          _uiState.update { state ->
-            val updatedWorkers =
-              if (!isScratchpad && state.workers.none { it.id == ws.scriptName }) {
-                listOf(CfWorkerScript(id = ws.scriptName)) + state.workers
+          state.copy(
+            workers = updatedWorkers,
+            workspace = ws,
+            projectMode = ProjectMode.CODE,
+            sidebarSection = SidebarSection.EXPLORER,
+            showHomeGitHubHub = false,
+            openTabPaths = record.openTabPaths,
+            activeFilePath = record.activeFilePath,
+            tabNavHistory = record.tabNavHistory,
+            tabNavIndex = record.tabNavIndex,
+            editorFieldValues = record.fieldValues,
+            editorRevision = state.editorRevision + 1L,
+            diagnostics = diags,
+            previewUrl = initialPreview,
+            apiRequest =
+              if (initialPreview.isNotBlank()) {
+                ApiRequestUtils.applyDeployedWorkerUrl(state.apiRequest, initialPreview, forceReplace = true)
               } else {
-                state.workers
+                state.apiRequest
+              },
+            activeWorkspaceHasPendingConfig = record.hasPendingChanges,
+            ramDbStats = ramDb.computeStats(key),
+            ramWorkspaces = ramDb.listWorkspaces(),
+            zipImportPreview = null,
+            statusMessage = "Imported & organized '${ws.scriptName}' (${ws.files.size} files)",
+            terminalPromptPath = terminalEngine.currentPromptPath(ws),
+          )
+        }
+        appendTerminalWelcome(ws)
+        appendLog("INFO", "Imported & organized bundle '${ws.scriptName}' into project directory")
+        recordActiveSessionPointer()
+        syncPeriodicAutoSaveLoop()
+        if (deployNow && !isScratchpad && accId != null) {
+          deployWorkspaceInternal(accountId = accId, workspaceKey = key, isNewWorker = true)
+        }
+      }
+      .onFailure { err ->
+        _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Invalid EdgeCode bundle JSON") }
+      }
+  }
+
+  fun inspectZipForImport(
+    uri: Uri,
+    targetMode: ZipImportTargetMode,
+  ) {
+    _uiState.update {
+      it.copy(
+        zipImportPreview =
+          ZipPreviewState(
+            uri = uri,
+            targetMode = targetMode,
+            isLoading = true,
+            stripRootFolder = true,
+          ),
+      )
+    }
+    viewModelScope.launch {
+      val defaultCompat = _uiState.value.editorSettings.defaultCompatibilityDate.ifBlank { "2024-11-01" }
+      val readResult = DeviceFileHelper.readZipForWorkspace(getApplication(), uri)
+      readResult
+        .onSuccess { archive ->
+          ZipWorkspaceImporter.buildImportPlan(
+            readResult = archive,
+            stripCommonRootFolder = true,
+            defaultCompatibilityDate = defaultCompat,
+          )
+            .onSuccess { plan ->
+              _uiState.update { state ->
+                val current = state.zipImportPreview
+                if (current?.uri == uri) {
+                  state.copy(
+                    zipImportPreview =
+                      current.copy(
+                        isLoading = false,
+                        errorMessage = null,
+                        stripRootFolder = true,
+                        archiveReadResult = archive,
+                        plan = plan,
+                      ),
+                  )
+                } else state
               }
-            state.copy(
-              workers = updatedWorkers,
-              workspace = ws,
-              projectMode = ProjectMode.CODE,
-              sidebarSection = SidebarSection.EXPLORER,
-              showHomeGitHubHub = false,
-              openTabPaths = record.openTabPaths,
-              activeFilePath = record.activeFilePath,
-              tabNavHistory = record.tabNavHistory,
-              tabNavIndex = record.tabNavIndex,
-              editorFieldValues = record.fieldValues,
-              diagnostics = diags,
-              activeWorkspaceHasPendingConfig = record.hasPendingChanges,
-              ramDbStats = ramDb.computeStats(key),
-              statusMessage = "Imported & organized '${ws.scriptName}' (${ws.files.size} files)",
-              terminalPromptPath = terminalEngine.currentPromptPath(ws),
-            )
-          }
-          appendLog("INFO", "Imported & organized bundle '${ws.scriptName}' into project directory")
-          recordActiveSessionPointer()
+            }
+            .onFailure { err ->
+              _uiState.update { state ->
+                val current = state.zipImportPreview
+                if (current?.uri == uri) {
+                  state.copy(
+                    zipImportPreview =
+                      current.copy(
+                        isLoading = false,
+                        errorMessage = err.localizedMessage ?: "Failed to parse ZIP contents",
+                        archiveReadResult = archive,
+                        plan = null,
+                      ),
+                  )
+                } else state
+              }
+            }
         }
         .onFailure { err ->
-          _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Invalid EdgeCode bundle JSON") }
+          _uiState.update { state ->
+            val current = state.zipImportPreview
+            if (current?.uri == uri) {
+              state.copy(
+                zipImportPreview =
+                  current.copy(
+                    isLoading = false,
+                    errorMessage = err.localizedMessage ?: "Could not open ZIP archive",
+                    plan = null,
+                  ),
+              )
+            } else state
+          }
         }
+    }
+  }
+
+  fun toggleZipPreviewStripRoot(stripRoot: Boolean) {
+    val current = _uiState.value.zipImportPreview ?: return
+    val archive = current.archiveReadResult ?: return
+    val defaultCompat = _uiState.value.editorSettings.defaultCompatibilityDate.ifBlank { "2024-11-01" }
+    val rebuilt =
+      ZipWorkspaceImporter.buildImportPlan(
+        readResult = archive,
+        stripCommonRootFolder = stripRoot,
+        defaultCompatibilityDate = defaultCompat,
+      )
+    _uiState.update { state ->
+      state.copy(
+        zipImportPreview =
+          rebuilt.fold(
+            onSuccess = { plan ->
+              current.copy(stripRootFolder = stripRoot, errorMessage = null, plan = plan)
+            },
+            onFailure = { err ->
+              current.copy(stripRootFolder = stripRoot, errorMessage = err.localizedMessage, plan = null)
+            },
+          ),
+      )
+    }
+  }
+
+  fun dismissZipImportPreview() {
+    _uiState.update { it.copy(zipImportPreview = null) }
+  }
+
+  fun confirmImportZipAsNewProject(
+    projectNameRaw: String,
+    deployNow: Boolean = false,
+  ) {
+    val preview = _uiState.value.zipImportPreview ?: return
+    val plan = preview.plan ?: return
+    flushAutoSaveNow()
+    syncActiveStateToRamDb()
+    viewModelScope.launch {
+      if (plan.edgeCodeBundleJson != null) {
+        importEdgeCodeBundleJson(
+          rawJson = plan.edgeCodeBundleJson,
+          projectNameOverride = projectNameRaw,
+          deployNow = deployNow,
+        )
+        return@launch
+      }
+
+      val isScratchpad = _uiState.value.isLocalScratchpad || _uiState.value.selectedAccount == null
+      val accountId = if (isScratchpad) null else _uiState.value.selectedAccount?.id
+      val cleanName =
+        CloudflareNamingUtils.sanitizeWorkerName(
+          projectNameRaw.ifBlank { plan.suggestedProjectName },
+          allowUnderscore = isScratchpad,
+        ).ifBlank { "zip-project" }
+
+      val settings = _uiState.value.editorSettings
+      val compatDate =
+        plan.compatibilityDate?.takeIf { it.isNotBlank() }
+          ?: settings.defaultCompatibilityDate.ifBlank { "2024-11-01" }
+      val compatFlags =
+        if (plan.compatibilityFlags.isNotEmpty()) plan.compatibilityFlags
+        else if (settings.defaultNodejsCompat) listOf("nodejs_compat") else emptyList()
+      val workersDev = plan.workersDev ?: (!isScratchpad && settings.defaultWorkersDevEnabled)
+
+      val baseWs =
+        WorkerWorkspace(
+          scriptName = cleanName,
+          isEsModuleFormat = true,
+          entryModulePath = plan.entryModulePath,
+          compatibilityDate = compatDate,
+          compatibilityFlags = compatFlags,
+          files = plan.files,
+          bindings = plan.bindings,
+          routes = emptyList(),
+          schedules = plan.schedules,
+          workersDevEnabled = workersDev,
+          accountSubdomain = accountId?.let { ramDb.getInfraCache(it)?.subdomain }.orEmpty(),
+          hasModuleSetChanged = !isScratchpad,
+        )
+      val ws =
+        regenerateWranglerFileInWorkspace(baseWs).let { built ->
+          built.copy(files = ProjectDirectoryManager.organizeWorkspaceFiles(built.files))
+        }
+      val key = ramDb.workspaceKey(accountId, cleanName)
+      val defaultTabs =
+        listOfNotNull(
+          plan.entryModulePath,
+          ws.files.firstOrNull { it.path == "wrangler.jsonc" }?.path,
+          ws.files.firstOrNull { it.path == "package.json" }?.path,
+        ).ifEmpty {
+          ws.files.filterNot { it.isVirtualReadOnly }.take(4).map { it.path }
+        }.distinct()
+      val record =
+        ramDb.importWorkspace(
+          key = key,
+          workspace = ws,
+          defaultTabs = defaultTabs,
+          defaultActivePath = plan.entryModulePath,
+          isNewUnexported = !isScratchpad,
+        )
+      terminalEngine.syncWorkspaceToDisk(ws)
+      withContext(Dispatchers.IO) {
+        projectDirManager.recordOrganizedImport(cleanName, ws.files)
+        projectDirManager.saveWorkspaceRecord(record)
+        val summary = projectDirManager.computeStorageSummary()
+        _uiState.update { it.copy(projectStorageSummary = summary) }
+      }
+      val diags = rebuildDiagnosticsFull(ws.files)
+      val initialPreview = resolveDefaultPreviewUrl(ws)
+      val skippedNote =
+        if (plan.skippedBinaryFiles.isNotEmpty()) " (${plan.skippedBinaryFiles.size} binary skipped)"
+        else ""
+      _uiState.update { state ->
+        val updatedWorkers =
+          if (!isScratchpad && state.workers.none { it.id == cleanName }) {
+            listOf(CfWorkerScript(id = cleanName)) + state.workers
+          } else {
+            state.workers
+          }
+        state.copy(
+          workers = updatedWorkers,
+          workspace = ws,
+          projectMode = ProjectMode.CODE,
+          sidebarSection = SidebarSection.EXPLORER,
+          showHomeGitHubHub = false,
+          openTabPaths = record.openTabPaths,
+          activeFilePath = record.activeFilePath,
+          tabNavHistory = record.tabNavHistory,
+          tabNavIndex = record.tabNavIndex,
+          editorFieldValues = record.fieldValues,
+          editorRevision = state.editorRevision + 1L,
+          diagnostics = diags,
+          previewUrl = initialPreview,
+          apiRequest =
+            if (initialPreview.isNotBlank()) {
+              ApiRequestUtils.applyDeployedWorkerUrl(state.apiRequest, initialPreview, forceReplace = true)
+            } else {
+              state.apiRequest
+            },
+          activeWorkspaceHasPendingConfig = record.hasPendingChanges,
+          ramDbStats = ramDb.computeStats(key),
+          ramWorkspaces = ramDb.listWorkspaces(),
+          zipImportPreview = null,
+          statusMessage =
+            if (deployNow && !isScratchpad) {
+              "Imported ${plan.files.size} file(s) from ZIP$skippedNote — deploying '$cleanName'…"
+            } else {
+              "Imported ZIP '$cleanName' (${plan.files.size} file(s)$skippedNote)"
+            },
+          terminalPromptPath = terminalEngine.currentPromptPath(ws),
+        )
+      }
+      appendTerminalWelcome(ws)
+      appendLog("INFO", "Imported ZIP archive '${plan.archiveName}' into '$cleanName' (${plan.files.size} files)")
+      recordActiveSessionPointer()
+      syncPeriodicAutoSaveLoop()
+
+      if (deployNow && !isScratchpad && accountId != null) {
+        deployWorkspaceInternal(accountId = accountId, workspaceKey = key, isNewWorker = true)
+      }
+    }
+  }
+
+  fun confirmMergeZipIntoActiveWorkspace(
+    folderPrefix: String = "",
+    autoDeploy: Boolean = false,
+  ) {
+    val preview = _uiState.value.zipImportPreview ?: return
+    val plan = preview.plan ?: return
+    viewModelScope.launch {
+      mergeWorkerFilesIntoActiveWorkspace(
+        incomingFiles = plan.files,
+        folderPrefix = folderPrefix,
+        autoDeploy = autoDeploy,
+        sourceLabel = "ZIP '${plan.archiveName}'",
+      )
     }
   }
 

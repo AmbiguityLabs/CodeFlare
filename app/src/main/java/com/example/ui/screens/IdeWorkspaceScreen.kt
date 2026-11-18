@@ -40,6 +40,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.AccountTree
+import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Code
@@ -105,6 +106,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.R
+import com.example.data.local.ZipImportTargetMode
 import com.example.ui.components.ApiTesterPane
 import com.example.ui.components.BatchUploadOptionsDialog
 import com.example.ui.components.ChangeSubdomainDialog
@@ -143,6 +145,7 @@ import com.example.ui.components.RenameFileDialog
 import com.example.ui.components.RenameWorkerDialog
 import com.example.ui.components.SmartRenameSymbolDialog
 import com.example.ui.components.WorkerTestWindow
+import com.example.ui.components.ZipImportPreviewDialog
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
@@ -220,8 +223,28 @@ fun IdeWorkspaceScreen(
       if (uri != null) viewModel.importWorkspaceBundleFromUri(uri)
     }
 
+  val importZipNewProjectLauncher =
+    rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+      if (uri != null) viewModel.inspectZipForImport(uri, ZipImportTargetMode.NEW_PROJECT)
+    }
+
+  val importZipMergeLauncher =
+    rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+      if (uri != null) viewModel.inspectZipForImport(uri, ZipImportTargetMode.MERGE_INTO_ACTIVE)
+    }
+
   val triggerSingleUpload = { singleFileUploadLauncher.launch(arrayOf("*/*")) }
   val triggerBatchUpload = { batchFileUploadLauncher.launch(arrayOf("*/*")) }
+  val triggerImportZipAsNewProject = {
+    importZipNewProjectLauncher.launch(
+      arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*"),
+    )
+  }
+  val triggerImportZipIntoActive = {
+    importZipMergeLauncher.launch(
+      arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*"),
+    )
+  }
   val triggerExportActiveFile = {
     val fileName = uiState.activeFile?.fileName ?: "index.js"
     exportFileLauncher.launch(fileName)
@@ -280,18 +303,48 @@ fun IdeWorkspaceScreen(
       onDismiss = {
         showNewWorkerDialog = false
         pickedNewWorkerUris = emptyList()
+        viewModel.dismissZipImportPreview()
       },
       onCreateFromTemplate = { name, template ->
         showNewWorkerDialog = false
         pickedNewWorkerUris = emptyList()
+        viewModel.dismissZipImportPreview()
         viewModel.createNewWorker(name, template)
       },
       onCreateFromFiles = { name, uris, folderPrefix ->
         showNewWorkerDialog = false
         pickedNewWorkerUris = emptyList()
+        viewModel.dismissZipImportPreview()
         viewModel.createNewWorkerFromUris(name, uris, folderPrefix)
       },
+      zipPreview = uiState.zipImportPreview,
+      onPickZip = triggerImportZipAsNewProject,
+      onToggleZipStripRoot = viewModel::toggleZipPreviewStripRoot,
+      onClearPickedZip = viewModel::dismissZipImportPreview,
+      onCreateFromZip = { name ->
+        showNewWorkerDialog = false
+        pickedNewWorkerUris = emptyList()
+        viewModel.confirmImportZipAsNewProject(name)
+      },
     )
+  }
+
+  uiState.zipImportPreview?.let { preview ->
+    if (!showNewWorkerDialog) {
+      ZipImportPreviewDialog(
+        preview = preview,
+        activeWorkerName = uiState.workspace?.scriptName,
+        isLocalScratchpad = uiState.isLocalScratchpad || uiState.credentials == null,
+        onToggleStripRoot = viewModel::toggleZipPreviewStripRoot,
+        onDismiss = viewModel::dismissZipImportPreview,
+        onConfirmNewProject = { name, deployNow ->
+          viewModel.confirmImportZipAsNewProject(name, deployNow)
+        },
+        onConfirmMergeIntoActive = { prefix, deploy ->
+          viewModel.confirmMergeZipIntoActiveWorkspace(prefix, deploy)
+        },
+      )
+    }
   }
 
   if (showRenameWorkerDialog) {
@@ -691,6 +744,12 @@ fun IdeWorkspaceScreen(
         PaletteCommand("Import Bundle (.json)", "IO") {
           triggerImportWorkspaceBundle()
         },
+        PaletteCommand("Import ZIP Project", "IO") {
+          triggerImportZipAsNewProject()
+        },
+        PaletteCommand("Import ZIP into Files", "IO") {
+          if (uiState.workspace != null) triggerImportZipIntoActive()
+        },
         PaletteCommand("Upload File", "IO") {
           if (uiState.workspace != null) triggerSingleUpload()
         },
@@ -736,6 +795,7 @@ fun IdeWorkspaceScreen(
         onShowNewDirectoryDialog = { base -> newDirDialogBase = base },
         onUploadSingleFile = triggerSingleUpload,
         onUploadBatchFiles = triggerBatchUpload,
+        onImportZipIntoProject = triggerImportZipIntoActive,
         onExportActiveFile = triggerExportActiveFile,
         onDeleteModuleFile = viewModel::deleteModuleFile,
         onRequestRenameModuleFile = { path -> pendingRenamePath = path },
@@ -1400,6 +1460,25 @@ fun IdeWorkspaceScreen(
 
             EdgeMenuDivider()
             EdgeMenuSection("Transfer & Git")
+            EdgeMenuItem(
+              label = "Import ZIP Project",
+              icon = Icons.Outlined.Archive,
+              badgeText = ".zip",
+              onClick = {
+                overflowMenuOpen = false
+                triggerImportZipAsNewProject()
+              },
+            )
+            EdgeMenuItem(
+              label = "Import ZIP into Files",
+              icon = Icons.Outlined.Archive,
+              badgeText = "ADD",
+              enabled = activeWs != null,
+              onClick = {
+                overflowMenuOpen = false
+                if (activeWs != null) triggerImportZipIntoActive()
+              },
+            )
             EdgeMenuItem(
               label = "Export Workspace",
               icon = Icons.Outlined.UploadFile,
