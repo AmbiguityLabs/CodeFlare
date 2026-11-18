@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.WorkerTestRunRecord
 import com.example.data.remote.ApiEnvVar
+import com.example.data.remote.ApiImportResult
 import com.example.data.remote.ApiTesterRequest
 import com.example.data.remote.DiagnosticSeverity
 import com.example.ui.theme.AmberWarn
@@ -87,6 +88,12 @@ fun BottomPanel(
   onNotifyStatus: (String) -> Unit,
   onJumpToProblem: (String, Int) -> Unit,
   onToggleLiveTail: () -> Unit,
+  onSelectApiEnvProfile: (String) -> Unit = {},
+  onCreateApiEnvProfile: (String) -> Unit = {},
+  onDeleteApiEnvProfile: (String) -> Unit = {},
+  onImportApiCollection: (String, Boolean, Boolean) -> Result<ApiImportResult> = { _, _, _ ->
+    Result.failure(UnsupportedOperationException("Collection import not wired"))
+  },
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
@@ -232,6 +239,10 @@ fun BottomPanel(
             onDeleteCollectionItem = onDeleteApiCollectionItem,
             onClearHistory = onClearApiHistory,
             onNotifyStatus = onNotifyStatus,
+            onSelectEnvProfile = onSelectApiEnvProfile,
+            onCreateEnvProfile = onCreateApiEnvProfile,
+            onDeleteEnvProfile = onDeleteApiEnvProfile,
+            onImportCollection = onImportApiCollection,
             modifier = Modifier.weight(1f),
           )
         BottomPanelTab.TERMINAL ->

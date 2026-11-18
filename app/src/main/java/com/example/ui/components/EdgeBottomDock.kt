@@ -70,13 +70,13 @@ fun EdgeBottomDock(
   Column(
     modifier = modifier.fillMaxWidth().edgeGlassDock(shape = RectangleShape),
   ) {
-    HorizontalDivider(color = palette.glassBorderHighlight, thickness = 1.dp)
+    HorizontalDivider(color = palette.border.copy(alpha = 0.55f), thickness = 0.75.dp)
     Row(
       modifier =
         Modifier
           .fillMaxWidth()
-          .height(66.dp)
-          .padding(horizontal = 8.dp, vertical = 6.dp),
+          .height(58.dp)
+          .padding(horizontal = 8.dp, vertical = 4.dp),
       horizontalArrangement = Arrangement.SpaceEvenly,
       verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -85,28 +85,28 @@ fun EdgeBottomDock(
         val active = item.selected
 
         val pillWidth by animateDpAsState(
-          targetValue = if (active) 58.dp else 32.dp,
-          animationSpec = tween(durationMillis = 210, easing = FastOutSlowInEasing),
+          targetValue = if (active) 52.dp else 30.dp,
+          animationSpec = tween(durationMillis = 190, easing = FastOutSlowInEasing),
           label = "dock_pill_w",
         )
         val pillBg by animateColorAsState(
           targetValue = if (active) palette.activePillBg else Color.Transparent,
-          animationSpec = tween(durationMillis = 200),
+          animationSpec = tween(durationMillis = 180),
           label = "dock_pill_bg",
         )
         val iconTint by animateColorAsState(
           targetValue = if (active) palette.activePillFg else palette.textSecondary,
-          animationSpec = tween(durationMillis = 180),
+          animationSpec = tween(durationMillis = 160),
           label = "dock_icon_tint",
         )
         val labelColor by animateColorAsState(
-          targetValue = if (active) palette.textPrimary else palette.textSecondary,
-          animationSpec = tween(durationMillis = 180),
+          targetValue = if (active) palette.textPrimary else palette.textMuted,
+          animationSpec = tween(durationMillis = 160),
           label = "dock_label_color",
         )
         val iconScale by animateFloatAsState(
-          targetValue = if (active) 1.07f else 1f,
-          animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+          targetValue = if (active) 1.05f else 1f,
+          animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
           label = "dock_icon_scale",
         )
 
@@ -115,7 +115,7 @@ fun EdgeBottomDock(
             Modifier
               .weight(1f)
               .fillMaxHeight()
-              .clip(RoundedCornerShape(14.dp))
+              .clip(RoundedCornerShape(10.dp))
               .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -127,27 +127,26 @@ fun EdgeBottomDock(
           verticalArrangement = Arrangement.Center,
         ) {
           Box(contentAlignment = Alignment.Center) {
-            Box(
-              modifier =
-                Modifier
-                  .width(pillWidth)
-                  .height(30.dp)
-                  .clip(RoundedCornerShape(999.dp))
-                  .background(pillBg),
-              contentAlignment = Alignment.Center,
+            Surface(
+              color = pillBg,
+              shape = RoundedCornerShape(999.dp),
+              border = if (active) BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.30f)) else null,
+              modifier = Modifier.width(pillWidth).height(28.dp),
             ) {
-              Icon(
-                imageVector = item.icon,
-                contentDescription = item.label,
-                tint = iconTint,
-                modifier =
-                  Modifier
-                    .size(19.dp)
-                    .graphicsLayer {
-                      scaleX = iconScale
-                      scaleY = iconScale
-                    },
-              )
+              Box(contentAlignment = Alignment.Center) {
+                Icon(
+                  imageVector = item.icon,
+                  contentDescription = item.label,
+                  tint = iconTint,
+                  modifier =
+                    Modifier
+                      .size(18.dp)
+                      .graphicsLayer {
+                        scaleX = iconScale
+                        scaleY = iconScale
+                      },
+                )
+              }
             }
             if (!item.badgeText.isNullOrBlank()) {
               val bColor = item.badgeColor ?: palette.ctaBg
@@ -158,12 +157,12 @@ fun EdgeBottomDock(
                     .padding(end = 2.dp)
                     .clip(RoundedCornerShape(999.dp))
                     .background(bColor)
-                    .padding(horizontal = 5.dp, vertical = 1.dp),
+                    .padding(horizontal = 4.5.dp, vertical = 1.dp),
               ) {
                 Text(
                   text = item.badgeText,
                   fontFamily = JetBrainsMono,
-                  fontSize = 8.5.sp,
+                  fontSize = 8.sp,
                   fontWeight = FontWeight.Bold,
                   color = Color(0xFF141806),
                   maxLines = 1,
@@ -172,10 +171,10 @@ fun EdgeBottomDock(
               }
             }
           }
-          Spacer(Modifier.height(4.dp))
+          Spacer(Modifier.height(2.dp))
           Text(
             text = item.label,
-            fontSize = 11.5.sp,
+            fontSize = 10.5.sp,
             fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
             color = labelColor,
             maxLines = 1,
@@ -189,12 +188,12 @@ fun EdgeBottomDock(
         Surface(
           onClick = onHideDock,
           shape = CircleShape,
-          color = palette.glassElevated,
-          border = BorderStroke(1.dp, palette.glassBorderSubtle),
+          color = palette.chromeSurface,
+          border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.7f)),
           modifier =
             Modifier
               .padding(start = 2.dp, end = 4.dp)
-              .size(34.dp)
+              .size(32.dp)
               .testTag(hideDockTestTag),
         ) {
           Box(contentAlignment = Alignment.Center) {
@@ -202,7 +201,7 @@ fun EdgeBottomDock(
               imageVector = Icons.Outlined.KeyboardArrowDown,
               contentDescription = "Hide bottom menu",
               tint = palette.textSecondary,
-              modifier = Modifier.size(18.dp),
+              modifier = Modifier.size(17.dp),
             )
           }
         }

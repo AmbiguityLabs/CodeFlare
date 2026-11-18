@@ -87,7 +87,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -325,6 +324,8 @@ fun HomeScreen(
         },
         onClearAutoSavedDrafts = viewModel::clearAllAutoSavedDrafts,
         onRequestStorageAccess = requestStorageAccess,
+        onPickEditorBackgroundImage = viewModel::setCustomEditorBackground,
+        onClearEditorBackgroundImage = viewModel::clearCustomEditorBackground,
         onNotify = viewModel::showStatus,
       )
       SnackbarHost(
@@ -487,7 +488,7 @@ fun HomeScreen(
                     onClick = { accountMenuOpen = true },
                     shape = RoundedCornerShape(999.dp),
                     color = palette.glassSurface,
-                    border = rememberGlassBorderStroke(1.dp),
+                    border = rememberGlassBorderStroke(0.75.dp),
                   ) {
                     Row(
                       modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
@@ -534,7 +535,7 @@ fun HomeScreen(
                   onClick = { showChangeSubdomainDialog = true },
                   shape = RoundedCornerShape(999.dp),
                   color = palette.activePillBg.copy(alpha = 0.55f),
-                  border = rememberGlassBorderStroke(1.dp),
+                  border = rememberGlassBorderStroke(0.75.dp),
                   modifier = Modifier.testTag("home_subdomain_chip"),
                 ) {
                   Row(
@@ -606,28 +607,28 @@ fun HomeScreen(
             }
           }
 
-          // Circular M3 Expressive Header Action Buttons with moderate glass border
+          // Slim flat header action buttons with hairline border
           Surface(
             onClick = { viewModel.setShowHomeGitHubHub(true) },
             shape = CircleShape,
-            color = palette.glassElevated,
-            border = rememberGlassBorderStroke(1.dp),
-            modifier = Modifier.size(44.dp).testTag("home_github_hub_button"),
+            color = palette.chromeSurface,
+            border = rememberGlassBorderStroke(0.75.dp),
+            modifier = Modifier.size(40.dp).testTag("home_github_hub_button"),
           ) {
             Box(contentAlignment = Alignment.Center) {
               Icon(
                 imageVector = Icons.Outlined.AccountTree,
                 contentDescription = "Optional GitHub Hub",
                 tint = if (uiState.gitHubCreds != null) palette.activePillFg else palette.textPrimary,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(19.dp),
               )
               if (uiState.gitHubCreds != null) {
                 Box(
                   modifier =
                     Modifier
                       .align(Alignment.TopEnd)
-                      .padding(8.dp)
-                      .size(7.dp)
+                      .padding(7.dp)
+                      .size(6.dp)
                       .clip(CircleShape)
                       .background(EmeraldLive),
                 )
@@ -638,16 +639,16 @@ fun HomeScreen(
           Surface(
             onClick = { viewModel.setShowHomeSettings(true) },
             shape = CircleShape,
-            color = palette.glassElevated,
-            border = rememberGlassBorderStroke(1.dp),
-            modifier = Modifier.size(44.dp).testTag("home_settings_button"),
+            color = palette.chromeSurface,
+            border = rememberGlassBorderStroke(0.75.dp),
+            modifier = Modifier.size(40.dp).testTag("home_settings_button"),
           ) {
             Box(contentAlignment = Alignment.Center) {
               Icon(
                 imageVector = Icons.Outlined.Settings,
                 contentDescription = "Settings and Credentials",
                 tint = palette.textPrimary,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(19.dp),
               )
             }
           }
@@ -707,22 +708,11 @@ fun HomeScreen(
       }
     },
   ) { innerPadding ->
-    val ambientBrush =
-      remember(palette.isDark) {
-        Brush.verticalGradient(
-          colors =
-            listOf(
-              palette.chromeBg,
-              palette.chromeSurface.copy(alpha = if (palette.isDark) 0.42f else 0.55f),
-              palette.chromeBg,
-            ),
-        )
-      }
     Box(
       modifier =
         Modifier
           .fillMaxSize()
-          .background(ambientBrush)
+          .background(palette.chromeBg)
           .padding(innerPadding)
           .imePadding(),
     ) {
@@ -930,21 +920,21 @@ private fun HomeProjectsTabContent(
     contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp),
     verticalArrangement = Arrangement.spacedBy(14.dp),
   ) {
-    // Expressive Hero Primary Action Row (+ New project + Import .json square tile)
+    // Clean Thin Primary Action Row (+ New project + Import .json square tile)
     item(key = "home_actions") {
       Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
       ) {
         Surface(
           onClick = onNewProject,
-          shape = RoundedCornerShape(20.dp),
+          shape = RoundedCornerShape(14.dp),
           color = palette.ctaBg,
-          modifier = Modifier.weight(1f).height(60.dp).testTag("home_new_project_button"),
+          modifier = Modifier.weight(1f).height(50.dp).testTag("home_new_project_button"),
         ) {
           Row(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center,
           ) {
@@ -952,12 +942,12 @@ private fun HomeProjectsTabContent(
               imageVector = Icons.Outlined.Add,
               contentDescription = null,
               tint = palette.ctaFg,
-              modifier = Modifier.size(22.dp),
+              modifier = Modifier.size(20.dp),
             )
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(8.dp))
             Text(
               text = "New project",
-              fontSize = 15.5.sp,
+              fontSize = 14.5.sp,
               fontWeight = FontWeight.SemiBold,
               color = palette.ctaFg,
             )
@@ -966,17 +956,17 @@ private fun HomeProjectsTabContent(
 
         Surface(
           onClick = onImportBundle,
-          shape = RoundedCornerShape(20.dp),
+          shape = RoundedCornerShape(14.dp),
           color = palette.glassElevated,
-          border = rememberGlassBorderStroke(1.dp),
-          modifier = Modifier.size(60.dp).testTag("home_import_bundle_button"),
+          border = rememberGlassBorderStroke(0.75.dp),
+          modifier = Modifier.size(50.dp).testTag("home_import_bundle_button"),
         ) {
           Box(contentAlignment = Alignment.Center) {
             Icon(
               imageVector = Icons.Outlined.CloudDownload,
               contentDescription = "Import workspace JSON",
               tint = palette.textPrimary,
-              modifier = Modifier.size(22.dp),
+              modifier = Modifier.size(20.dp),
             )
           }
         }
@@ -1023,7 +1013,7 @@ private fun HomeProjectsTabContent(
           }
         },
         singleLine = true,
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth().testTag("home_project_search"),
       )
     }
@@ -1033,8 +1023,8 @@ private fun HomeProjectsTabContent(
       item(key = "home_storage_permission") {
         Surface(
           color = palette.glassElevated,
-          shape = RoundedCornerShape(18.dp),
-          border = rememberGlassBorderStroke(1.dp),
+          shape = RoundedCornerShape(14.dp),
+          border = rememberGlassBorderStroke(0.75.dp),
           modifier = Modifier.fillMaxWidth().testTag("home_storage_permission_card"),
         ) {
           Row(
@@ -1122,8 +1112,8 @@ private fun HomeProjectsTabContent(
       item(key = "ram_empty") {
         Surface(
           color = palette.glassSurface,
-          shape = RoundedCornerShape(20.dp),
-          border = rememberGlassBorderStroke(1.dp),
+          shape = RoundedCornerShape(14.dp),
+          border = rememberGlassBorderStroke(0.75.dp),
           modifier = Modifier.fillMaxWidth(),
         ) {
           Row(
@@ -1152,14 +1142,15 @@ private fun HomeProjectsTabContent(
       }
     }
 
-    // Featured "Pick up where you left off" Resume Card (matches Reference 2's plum card)
+    // Featured "Pick up where you left off" Resume Card
     if (latestProject != null && q.isEmpty()) {
       item(key = "resume_featured_card") {
         val ws = latestProject.workingWorkspace
         val fileCount = ws.files.count { !it.isVirtualReadOnly }
         Surface(
           color = palette.featuredCardBg,
-          shape = RoundedCornerShape(24.dp),
+          shape = RoundedCornerShape(16.dp),
+          border = BorderStroke(0.75.dp, palette.featuredCardFg.copy(alpha = 0.14f)),
           modifier = Modifier.fillMaxWidth(),
         ) {
           Column(
@@ -1223,8 +1214,8 @@ private fun HomeProjectsTabContent(
           Surface(
             onClick = { if (!uiState.isLoadingWorkers) onRefreshWorkers() },
             shape = CircleShape,
-            color = palette.glassElevated,
-            border = rememberGlassBorderStroke(1.dp),
+            color = palette.chromeSurface,
+            border = rememberGlassBorderStroke(0.75.dp),
             modifier = Modifier.size(34.dp).testTag("home_refresh_workers_button"),
           ) {
             Box(contentAlignment = Alignment.Center) {
@@ -1243,8 +1234,8 @@ private fun HomeProjectsTabContent(
         item(key = "cf_empty") {
           Surface(
             color = palette.glassSurface,
-            shape = RoundedCornerShape(20.dp),
-            border = rememberGlassBorderStroke(1.dp),
+            shape = RoundedCornerShape(14.dp),
+            border = rememberGlassBorderStroke(0.75.dp),
             modifier = Modifier.fillMaxWidth(),
           ) {
             Column(
@@ -1338,9 +1329,9 @@ private fun CompactQuickChip(
   Surface(
     onClick = onClick,
     color = palette.glassSurface,
-    shape = RoundedCornerShape(16.dp),
-    border = rememberGlassBorderStroke(1.dp),
-    modifier = modifier.height(48.dp),
+    shape = RoundedCornerShape(12.dp),
+    border = rememberGlassBorderStroke(0.75.dp),
+    modifier = modifier.height(44.dp),
   ) {
     Row(
       modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
@@ -1411,28 +1402,29 @@ private fun RamProjectCard(
   Surface(
     onClick = onOpen,
     color = palette.glassSurface,
-    shape = RoundedCornerShape(20.dp),
+    shape = RoundedCornerShape(14.dp),
     border =
-      if (dirty) BorderStroke(1.dp, AmberWarn.copy(alpha = 0.55f))
-      else rememberGlassBorderStroke(1.dp),
+      if (dirty) BorderStroke(0.75.dp, AmberWarn.copy(alpha = 0.55f))
+      else rememberGlassBorderStroke(0.75.dp),
     modifier = modifier.fillMaxWidth().testTag("home_ram_card_${ws.scriptName}"),
   ) {
     Row(
-      modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp),
+      modifier = Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 12.dp),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
       Surface(
-        color = if (dirty) AmberWarn.copy(alpha = 0.2f) else Color(0xFF28C76F),
-        shape = RoundedCornerShape(14.dp),
-        modifier = Modifier.size(46.dp),
+        color = if (dirty) AmberWarn.copy(alpha = 0.16f) else EmeraldLive.copy(alpha = 0.16f),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(0.75.dp, (if (dirty) AmberWarn else EmeraldLive).copy(alpha = 0.35f)),
+        modifier = Modifier.size(40.dp),
       ) {
         Box(contentAlignment = Alignment.Center) {
           Icon(
             imageVector = Icons.Outlined.Folder,
             contentDescription = null,
-            tint = if (dirty) AmberWarn else Color.White,
-            modifier = Modifier.size(22.dp),
+            tint = if (dirty) AmberWarn else EmeraldLive,
+            modifier = Modifier.size(20.dp),
           )
         }
       }
@@ -1525,26 +1517,27 @@ private fun CloudWorkerCard(
   Surface(
     onClick = onOpen,
     color = palette.glassSurface,
-    shape = RoundedCornerShape(20.dp),
-    border = rememberGlassBorderStroke(1.dp),
+    shape = RoundedCornerShape(14.dp),
+    border = rememberGlassBorderStroke(0.75.dp),
     modifier = modifier.fillMaxWidth().testTag("home_worker_card_${script.id}"),
   ) {
     Row(
-      modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp),
+      modifier = Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 12.dp),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(14.dp),
+      horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
       Surface(
-        color = if (cachedRecord != null) palette.activePillBg else palette.glassElevated,
-        shape = RoundedCornerShape(14.dp),
-        modifier = Modifier.size(46.dp),
+        color = if (cachedRecord != null) palette.activePillBg else palette.chromeSurface,
+        shape = RoundedCornerShape(10.dp),
+        border = rememberGlassBorderStroke(0.75.dp),
+        modifier = Modifier.size(40.dp),
       ) {
         Box(contentAlignment = Alignment.Center) {
           Icon(
             imageVector = Icons.Outlined.CloudQueue,
             contentDescription = null,
             tint = if (cachedRecord != null) palette.activePillFg else palette.textSecondary,
-            modifier = Modifier.size(22.dp),
+            modifier = Modifier.size(20.dp),
           )
         }
       }

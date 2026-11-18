@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
@@ -43,6 +44,7 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.RocketLaunch
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.VerifiedUser
@@ -68,6 +70,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -75,6 +78,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
@@ -90,6 +95,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.remote.CfAccount
 import com.example.data.security.AuthMethod
 import com.example.data.security.EditorSettings
+import com.example.ui.components.AppearanceStudioContent
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
@@ -97,6 +103,8 @@ import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.RoseError
 import com.example.ui.theme.rememberGlassBorderStroke
 import com.example.ui.viewmodel.IdeUiState
+import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(
@@ -114,6 +122,8 @@ fun SettingsScreen(
   onOpenGitHubHub: (() -> Unit)? = null,
   onClearAutoSavedDrafts: (() -> Unit)? = null,
   onRequestStorageAccess: (() -> Unit)? = null,
+  onPickEditorBackgroundImage: (Uri) -> Unit = {},
+  onClearEditorBackgroundImage: () -> Unit = {},
   onNotify: (String) -> Unit,
 ) {
   val palette = LocalIdePalette.current
@@ -247,7 +257,57 @@ fun SettingsScreen(
       }
     }
 
-    HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
+    HorizontalDivider(color = palette.border.copy(alpha = 0.45f), thickness = 0.75.dp)
+
+    val mainScrollState = rememberScrollState()
+    val scrollScope = rememberCoroutineScope()
+    var appearanceY by remember { mutableIntStateOf(0) }
+    var editorY by remember { mutableIntStateOf(0) }
+    var credentialsY by remember { mutableIntStateOf(0) }
+    var deployY by remember { mutableIntStateOf(0) }
+    var storageY by remember { mutableIntStateOf(0) }
+
+    // Slim Quick-Jump Category Strip
+    Row(
+      modifier =
+        Modifier
+          .fillMaxWidth()
+          .background(palette.chromeBg)
+          .horizontalScroll(rememberScrollState())
+          .padding(horizontal = 14.dp, vertical = 8.dp),
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      listOf(
+        "Appearance" to appearanceY,
+        "Editor" to editorY,
+        "Credentials" to credentialsY,
+        "Deploy" to deployY,
+        "Storage" to storageY,
+      ).forEachIndexed { idx, (label, targetY) ->
+        Surface(
+          onClick = { scrollScope.launch { mainScrollState.animateScrollTo(targetY.coerceAtLeast(0)) } },
+          shape = RoundedCornerShape(999.dp),
+          color = if (idx == 0) palette.activePillBg else palette.chromeSurface,
+          border =
+            BorderStroke(
+              0.75.dp,
+              if (idx == 0) palette.activePillFg.copy(alpha = 0.35f) else palette.border.copy(alpha = 0.55f),
+            ),
+          modifier = Modifier.testTag("settings_jump_${label.lowercase()}"),
+        ) {
+          Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = if (idx == 0) FontWeight.SemiBold else FontWeight.Medium,
+            color = if (idx == 0) palette.activePillFg else palette.textSecondary,
+            modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp),
+          )
+        }
+      }
+    }
+
+    HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.75.dp)
 
     // Scrollable Settings Body
     Box(
@@ -259,16 +319,37 @@ fun SettingsScreen(
           Modifier
             .widthIn(max = 640.dp)
             .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(mainScrollState)
             .padding(horizontal = 14.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
       ) {
+        // 0. FLAGSHIP APPEARANCE & CUSTOM EDITOR BACKGROUND STUDIO
+        SettingsSectionCard(
+          title = "Appearance & Background",
+          subtitle = "Themes, custom editor wallpaper, opacity & zoom",
+          icon = Icons.Outlined.Palette,
+          modifier =
+            Modifier
+              .onGloballyPositioned { appearanceY = it.positionInParent().y.roundToInt() }
+              .testTag("settings_appearance_section"),
+        ) {
+          AppearanceStudioContent(
+            settings = settings,
+            onUpdateSettings = onUpdateSettings,
+            onPickEditorBackgroundImage = onPickEditorBackgroundImage,
+            onClearEditorBackgroundImage = onClearEditorBackgroundImage,
+          )
+        }
+
         // 1. CLOUDFLARE API CREDENTIALS FOR WORKER DEPLOYMENT
         SettingsSectionCard(
           title = "Cloudflare Credentials",
           subtitle = "Token, Global Key, or OAuth",
           icon = Icons.Outlined.Key,
-          modifier = Modifier.testTag("settings_cloudflare_section"),
+          modifier =
+            Modifier
+              .onGloballyPositioned { credentialsY = it.positionInParent().y.roundToInt() }
+              .testTag("settings_cloudflare_section"),
         ) {
           // Active session status banner
           Surface(
@@ -746,7 +827,10 @@ fun SettingsScreen(
           title = "Deployment Defaults",
           subtitle = "New Worker scaffold & publish",
           icon = Icons.Outlined.RocketLaunch,
-          modifier = Modifier.testTag("settings_deploy_defaults_section"),
+          modifier =
+            Modifier
+              .onGloballyPositioned { deployY = it.positionInParent().y.roundToInt() }
+              .testTag("settings_deploy_defaults_section"),
         ) {
           Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(
@@ -834,27 +918,16 @@ fun SettingsScreen(
           )
         }
 
-        // 3. USER & CODE EDITOR PREFERENCES
+        // 3. CODE EDITOR TYPOGRAPHY & BEHAVIOR
         SettingsSectionCard(
-          title = "Appearance & Editor",
-          subtitle = "Theme & typography",
+          title = "Editor Behavior & Typography",
+          subtitle = "Font size, indentation, wrapping & auto-save",
           icon = Icons.Outlined.Code,
-          modifier = Modifier.testTag("settings_editor_section"),
+          modifier =
+            Modifier
+              .onGloballyPositioned { editorY = it.positionInParent().y.roundToInt() }
+              .testTag("settings_editor_section"),
         ) {
-          SettingsSwitchRow(
-            title = "Dark Olive Theme",
-            subtitle = "High-contrast dark surface",
-            checked = settings.darkTheme,
-            onCheckedChange = { dark -> onUpdateSettings { it.copy(darkTheme = dark) } },
-          )
-          SettingsSwitchRow(
-            title = "Dynamic Color",
-            subtitle = "Material You accents (Android 12+)",
-            checked = settings.dynamicColor,
-            onCheckedChange = { dyn -> onUpdateSettings { it.copy(dynamicColor = dyn) } },
-          )
-
-          HorizontalDivider(color = palette.border.copy(alpha = 0.35f))
 
           SettingsSwitchRow(
             title = "Word Wrap",
@@ -1038,7 +1111,10 @@ fun SettingsScreen(
             if (storage.isUsingNativeDeviceStorage) "Dedicated native phone folder active"
             else "Grant native folder access to store outside app cache",
           icon = Icons.Outlined.Folder,
-          modifier = Modifier.testTag("settings_storage_section"),
+          modifier =
+            Modifier
+              .onGloballyPositioned { storageY = it.positionInParent().y.roundToInt() }
+              .testTag("settings_storage_section"),
         ) {
           Surface(
             color = palette.editorBg,
@@ -1218,37 +1294,38 @@ private fun SettingsSectionCard(
 ) {
   val palette = LocalIdePalette.current
   Surface(
-    color = palette.glassSurface,
-    shape = RoundedCornerShape(20.dp),
-    border = rememberGlassBorderStroke(1.dp),
+    color = palette.chromeSurface,
+    shape = RoundedCornerShape(14.dp),
+    border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.65f)),
     modifier = modifier.fillMaxWidth().animateContentSize(animationSpec = tween(180)),
   ) {
     Column(
-      modifier = Modifier.padding(16.dp),
+      modifier = Modifier.padding(14.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
       Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
       ) {
         Surface(
           color = palette.activePillBg,
-          shape = RoundedCornerShape(12.dp),
-          modifier = Modifier.size(40.dp),
+          shape = RoundedCornerShape(9.dp),
+          border = BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.25f)),
+          modifier = Modifier.size(34.dp),
         ) {
           Box(contentAlignment = Alignment.Center) {
             Icon(
               imageVector = icon,
               contentDescription = null,
               tint = palette.activePillFg,
-              modifier = Modifier.size(20.dp),
+              modifier = Modifier.size(18.dp),
             )
           }
         }
         Column(modifier = Modifier.weight(1f)) {
           Text(
             text = title,
-            fontSize = 15.5.sp,
+            fontSize = 15.sp,
             fontWeight = FontWeight.SemiBold,
             color = palette.textPrimary,
           )
@@ -1309,9 +1386,9 @@ private fun StorageStatBox(
 ) {
   val palette = LocalIdePalette.current
   Surface(
-    color = palette.glassSurface,
-    shape = RoundedCornerShape(10.dp),
-    border = rememberGlassBorderStroke(1.dp),
+    color = palette.chromeSurface,
+    shape = RoundedCornerShape(8.dp),
+    border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.55f)),
     modifier = modifier,
   ) {
     Column(

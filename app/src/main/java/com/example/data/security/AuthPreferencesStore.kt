@@ -3,6 +3,7 @@ package com.example.data.security
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -46,6 +47,14 @@ data class StoredGitHubCredentials(
 data class EditorSettings(
   val darkTheme: Boolean = true,
   val dynamicColor: Boolean = false,
+  val themePreset: String = "OLIVE_OBSIDIAN",
+  val editorBgPreset: String = "NONE",
+  val editorBgImagePath: String = "",
+  val editorBgOpacity: Float = 0.28f,
+  val editorBgZoom: Float = 1.0f,
+  val editorBgScrim: Float = 0.35f,
+  val editorBgOffsetX: Float = 0f,
+  val editorBgOffsetY: Float = 0f,
   val fontSizeSp: Int = 13,
   val zoomPercent: Int = 100,
   val tabSize: Int = 2,
@@ -79,6 +88,14 @@ class AuthPreferencesStore(private val context: Context) {
 
     val DARK_THEME = booleanPreferencesKey("editor_dark_theme")
     val DYNAMIC_COLOR = booleanPreferencesKey("editor_dynamic_color")
+    val THEME_PRESET = stringPreferencesKey("editor_theme_preset")
+    val EDITOR_BG_PRESET = stringPreferencesKey("editor_bg_preset")
+    val EDITOR_BG_IMAGE_PATH = stringPreferencesKey("editor_bg_image_path")
+    val EDITOR_BG_OPACITY = floatPreferencesKey("editor_bg_opacity")
+    val EDITOR_BG_ZOOM = floatPreferencesKey("editor_bg_zoom")
+    val EDITOR_BG_SCRIM = floatPreferencesKey("editor_bg_scrim")
+    val EDITOR_BG_OFFSET_X = floatPreferencesKey("editor_bg_offset_x")
+    val EDITOR_BG_OFFSET_Y = floatPreferencesKey("editor_bg_offset_y")
     val FONT_SIZE_SP = intPreferencesKey("editor_font_size_sp")
     val ZOOM_PERCENT = intPreferencesKey("editor_zoom_percent")
     val TAB_SIZE = intPreferencesKey("editor_tab_size")
@@ -132,6 +149,14 @@ class AuthPreferencesStore(private val context: Context) {
       EditorSettings(
         darkTheme = prefs[Keys.DARK_THEME] ?: true,
         dynamicColor = prefs[Keys.DYNAMIC_COLOR] ?: false,
+        themePreset = prefs[Keys.THEME_PRESET]?.takeIf { it.isNotBlank() } ?: "OLIVE_OBSIDIAN",
+        editorBgPreset = prefs[Keys.EDITOR_BG_PRESET]?.takeIf { it.isNotBlank() } ?: "NONE",
+        editorBgImagePath = prefs[Keys.EDITOR_BG_IMAGE_PATH].orEmpty(),
+        editorBgOpacity = (prefs[Keys.EDITOR_BG_OPACITY] ?: 0.28f).coerceIn(0.05f, 1.0f),
+        editorBgZoom = (prefs[Keys.EDITOR_BG_ZOOM] ?: 1.0f).coerceIn(1.0f, 3.0f),
+        editorBgScrim = (prefs[Keys.EDITOR_BG_SCRIM] ?: 0.35f).coerceIn(0.0f, 0.85f),
+        editorBgOffsetX = (prefs[Keys.EDITOR_BG_OFFSET_X] ?: 0f).coerceIn(-0.5f, 0.5f),
+        editorBgOffsetY = (prefs[Keys.EDITOR_BG_OFFSET_Y] ?: 0f).coerceIn(-0.5f, 0.5f),
         fontSizeSp = (prefs[Keys.FONT_SIZE_SP] ?: 13).coerceIn(10, 20),
         zoomPercent = (prefs[Keys.ZOOM_PERCENT] ?: 100).coerceIn(60, 220),
         tabSize = if ((prefs[Keys.TAB_SIZE] ?: 2) == 4) 4 else 2,
@@ -222,6 +247,14 @@ class AuthPreferencesStore(private val context: Context) {
     context.edgeCodeDataStore.edit { prefs ->
       prefs[Keys.DARK_THEME] = next.darkTheme
       prefs[Keys.DYNAMIC_COLOR] = next.dynamicColor
+      prefs[Keys.THEME_PRESET] = next.themePreset.ifBlank { "OLIVE_OBSIDIAN" }
+      prefs[Keys.EDITOR_BG_PRESET] = next.editorBgPreset.ifBlank { "NONE" }
+      prefs[Keys.EDITOR_BG_IMAGE_PATH] = next.editorBgImagePath
+      prefs[Keys.EDITOR_BG_OPACITY] = next.editorBgOpacity.coerceIn(0.05f, 1.0f)
+      prefs[Keys.EDITOR_BG_ZOOM] = next.editorBgZoom.coerceIn(1.0f, 3.0f)
+      prefs[Keys.EDITOR_BG_SCRIM] = next.editorBgScrim.coerceIn(0.0f, 0.85f)
+      prefs[Keys.EDITOR_BG_OFFSET_X] = next.editorBgOffsetX.coerceIn(-0.5f, 0.5f)
+      prefs[Keys.EDITOR_BG_OFFSET_Y] = next.editorBgOffsetY.coerceIn(-0.5f, 0.5f)
       prefs[Keys.FONT_SIZE_SP] = next.fontSizeSp.coerceIn(10, 20)
       prefs[Keys.ZOOM_PERCENT] = next.zoomPercent.coerceIn(60, 220)
       prefs[Keys.TAB_SIZE] = next.tabSize

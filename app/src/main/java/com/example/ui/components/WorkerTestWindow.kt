@@ -1,6 +1,8 @@
 package com.example.ui.components
 
 import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -47,6 +49,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -69,17 +72,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.local.WorkerTestRunRecord
+import com.example.data.remote.WorkerLanguage
+import com.example.editor.SyntaxHighlighter
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.RoseError
 import com.example.ui.viewmodel.IdeUiState
+import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
 
 private data class HeaderEntry(
+  val id: String = UUID.randomUUID().toString().take(8),
   val key: String,
   val value: String,
   val enabled: Boolean = true,
@@ -122,13 +129,23 @@ fun WorkerTestWindow(
       else -> palette.activePillFg
     }
 
-  val headerRows =
-    remember(uiState.previewHttpHeadersJson) {
-      parseHeadersJsonToList(uiState.previewHttpHeadersJson)
+  // Keep local editable list so blank/disabled rows stay visible and editable!
+  var headerRows by remember { mutableStateOf(parseHeadersJsonToList(uiState.previewHttpHeadersJson)) }
+  var lastSerializedJson by remember { mutableStateOf(serializeHeadersToJson(headerRows)) }
+
+  LaunchedEffect(uiState.previewHttpHeadersJson) {
+    if (uiState.previewHttpHeadersJson != lastSerializedJson) {
+      val parsed = parseHeadersJsonToList(uiState.previewHttpHeadersJson)
+      headerRows = parsed
+      lastSerializedJson = uiState.previewHttpHeadersJson
     }
+  }
 
   fun commitHeaderRows(rows: List<HeaderEntry>) {
-    onHeadersJsonChange(serializeHeadersToJson(rows))
+    headerRows = rows
+    val serialized = serializeHeadersToJson(rows)
+    lastSerializedJson = serialized
+    onHeadersJsonChange(serialized)
   }
 
   Column(
@@ -323,7 +340,8 @@ fun WorkerTestWindow(
       // Request Headers / Body Switcher Card
       Surface(
         color = palette.chromeSurface,
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.55f)),
         modifier = Modifier.fillMaxWidth(),
       ) {
         Column(
@@ -459,7 +477,7 @@ fun WorkerTestWindow(
                   verticalAlignment = Alignment.CenterVertically,
                 ) {
                   Surface(
-                    onClick = { commitHeaderRows(headerRows + HeaderEntry("", "", true)) },
+                    onClick = { commitHeaderRows(headerRows + HeaderEntry(key = "", value = "", enabled = true)) },
                     color = palette.activePillBg,
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.testTag("worker_test_add_header"),
@@ -481,7 +499,7 @@ fun WorkerTestWindow(
                     Surface(
                       onClick = {
                         val filtered = headerRows.filterNot { it.key.equals(pk, ignoreCase = true) }
-                        commitHeaderRows(filtered + HeaderEntry(pk, pv, true))
+                        commitHeaderRows(filtered + HeaderEntry(key = pk, value = pv, enabled = true))
                       },
                       color = palette.chromePill,
                       shape = RoundedCornerShape(8.dp),
@@ -558,7 +576,8 @@ fun WorkerTestWindow(
 
         Surface(
           color = palette.chromeSurface,
-          shape = RoundedCornerShape(12.dp),
+          shape = RoundedCornerShape(10.dp),
+          border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.55f)),
           modifier = Modifier.fillMaxWidth(),
         ) {
           Column(
@@ -630,6 +649,11 @@ fun WorkerTestWindow(
               res.headers.entries.any { it.key.equals("content-type", true) && it.value.contains("html", true) } ||
                 res.body.trimStart().startsWith("<!doctype html", true) ||
                 res.body.trimStart().startsWith("<html", true)
+            LaunchedEffect(bodyIsHtml) {
+              if (!bodyIsHtml && responseOutputTab == 2) {
+                responseOutputTab = 0
+              }
+            }
             val tabs =
               buildList {
                 add(0 to "Body")
@@ -675,8 +699,9 @@ fun WorkerTestWindow(
 
             Surface(
               color = palette.editorBg,
-              shape = RoundedCornerShape(10.dp),
-              modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 300.dp),
+              shape = RoundedCornerShape(8.dp),
+              border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.45f)),
+              modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 320.dp),
             ) {
               when (responseOutputTab) {
                 1 -> {
@@ -689,22 +714,35 @@ fun WorkerTestWindow(
                         Text("(no response headers)", style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp), color = palette.textMuted)
                       } else {
                         res.headers.forEach { (k, v) ->
-                          Text("$k: $v", style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp), color = palette.textPrimary)
+                          Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("$k:", style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold), color = palette.activePillFg)
+                            Text(v, style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp), color = palette.textPrimary)
+                          }
                         }
                       }
                     }
                   }
                 }
                 2 -> {
+                  val htmlRenderKey = remember(res.url, res.body) { res.url to res.body }
                   AndroidView(
                     factory = { ctx ->
                       WebView(ctx).apply {
+                        setBackgroundColor(android.graphics.Color.WHITE)
                         settings.javaScriptEnabled = true
-                        loadDataWithBaseURL(res.url, res.body, "text/html", "utf-8", null)
+                        settings.domStorageEnabled = true
+                        webViewClient = WebViewClient()
+                        tag = htmlRenderKey
+                        loadDataWithBaseURL(res.url.ifBlank { "https://localhost/" }, res.body, "text/html", "utf-8", null)
                       }
                     },
-                    update = { wv -> wv.loadDataWithBaseURL(res.url, res.body, "text/html", "utf-8", null) },
-                    modifier = Modifier.fillMaxWidth().height(240.dp),
+                    update = { wv ->
+                      if (wv.tag != htmlRenderKey) {
+                        wv.tag = htmlRenderKey
+                        wv.loadDataWithBaseURL(res.url.ifBlank { "https://localhost/" }, res.body, "text/html", "utf-8", null)
+                      }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(250.dp),
                   )
                 }
                 else -> {
@@ -715,6 +753,10 @@ fun WorkerTestWindow(
                       else if (prettyJson) prettyFormatJsonOrKeep(res.body)
                       else res.body
                     }
+                  val isJson =
+                    res.errorMessage == null &&
+                      prettyJson &&
+                      (displayBody.trimStart().startsWith("{") || displayBody.trimStart().startsWith("["))
                   SelectionContainer {
                     Box(
                       modifier =
@@ -724,11 +766,21 @@ fun WorkerTestWindow(
                           .horizontalScroll(rememberScrollState())
                           .padding(10.dp),
                     ) {
-                      Text(
-                        text = displayBody,
-                        style = TextStyle(fontFamily = JetBrainsMono, fontSize = 12.sp),
-                        color = if (res.errorMessage != null) RoseError else palette.textPrimary,
-                      )
+                      if (isJson) {
+                        val highlighted = remember(displayBody, palette) {
+                          SyntaxHighlighter.highlight(displayBody, WorkerLanguage.JSON, palette)
+                        }
+                        Text(
+                          text = highlighted,
+                          style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
+                        )
+                      } else {
+                        Text(
+                          text = displayBody,
+                          style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
+                          color = if (res.errorMessage != null) RoseError else palette.textPrimary,
+                        )
+                      }
                     }
                   }
                 }

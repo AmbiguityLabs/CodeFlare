@@ -3,26 +3,84 @@ package com.example.ui.theme
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 
-// Reference-matched Material 3 Expressive Olive-Obsidian + Chartreuse IDE Tokens
-val OliveBg = Color(0xFF12140E)
-val OliveSurfaceLow = Color(0xFF1B1E17)
-val OliveSurface = Color(0xFF23271E)
-val OliveSurfaceHigh = Color(0xFF2D3226)
-val OliveSelectedRow = Color(0xFF343B29)
-val OliveActivePill = Color(0xFF47571C)
-val OliveLimeText = Color(0xFFD6F462)
-val OliveCtaBg = Color(0xFFD2F258)
-val OliveCtaFg = Color(0xFF1A2302)
-val OliveBorder = Color(0xFF2C3125)
+// Curated Editor Theme Presets for the Appearance Studio
+enum class EditorThemePreset(
+  val label: String,
+  val subtitle: String,
+  val swatchBg: Color,
+  val swatchAccent: Color,
+) {
+  OLIVE_OBSIDIAN(
+    label = "Obsidian",
+    subtitle = "Warm olive-charcoal",
+    swatchBg = Color(0xFF141711),
+    swatchAccent = Color(0xFFC5E855),
+  ),
+  SLATE_CARBON(
+    label = "Nordic Slate",
+    subtitle = "Cool steel-cyan",
+    swatchBg = Color(0xFF11151C),
+    swatchAccent = Color(0xFF60A5FA),
+  ),
+  MIDNIGHT_NOIR(
+    label = "Noir OLED",
+    subtitle = "Pure deep graphite",
+    swatchBg = Color(0xFF0A0B0E),
+    swatchAccent = Color(0xFFA78BFA),
+  ),
+  AMBER_DUSK(
+    label = "Cloudflare Dusk",
+    subtitle = "Warm ember-ink",
+    swatchBg = Color(0xFF161311),
+    swatchAccent = Color(0xFFF59E42),
+  ),
+  ;
 
-val FeaturedResumeDarkBg = Color(0xFF51346E)
-val FeaturedResumeDarkFg = Color(0xFFF6EEFF)
-val FeaturedResumeDarkMuted = Color(0xFFD8C6EB)
+  companion object {
+    fun fromKey(raw: String?): EditorThemePreset =
+      entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: OLIVE_OBSIDIAN
+  }
+}
 
-val SlateEditorBg = Color(0xFF171920)
-val SlateEditorGutter = Color(0xFF171920)
-val SlateActiveLine = Color(0xFF22252F)
-val SlateGutterDivider = Color(0xFF2B2F3C)
+// Built-in Editor Backdrop Presets (used alongside Custom Photo Picker background)
+enum class EditorBackgroundPreset(
+  val key: String,
+  val label: String,
+) {
+  NONE("NONE", "Solid"),
+  AURORA_MIST("AURORA_MIST", "Aurora"),
+  DEEP_OCEAN("DEEP_OCEAN", "Deep Sea"),
+  CARBON_GRID("CARBON_GRID", "Blueprint"),
+  DUSK_HORIZON("DUSK_HORIZON", "Sunset"),
+  CUSTOM("CUSTOM", "Photo"),
+  ;
+
+  companion object {
+    fun fromKey(raw: String?): EditorBackgroundPreset =
+      entries.firstOrNull { it.key.equals(raw, ignoreCase = true) } ?: NONE
+  }
+}
+
+// Core Olive-Obsidian tokens (modern ultra-thin flat tones)
+val OliveBg = Color(0xFF11130E)
+val OliveSurfaceLow = Color(0xFF161913)
+val OliveSurface = Color(0xFF1D2119)
+val OliveSurfaceHigh = Color(0xFF252A20)
+val OliveSelectedRow = Color(0xFF293022)
+val OliveActivePill = Color(0xFF333F16)
+val OliveLimeText = Color(0xFFD2F063)
+val OliveCtaBg = Color(0xFFCDE959)
+val OliveCtaFg = Color(0xFF161E04)
+val OliveBorder = Color(0xFF262B20)
+
+val FeaturedResumeDarkBg = Color(0xFF271F33)
+val FeaturedResumeDarkFg = Color(0xFFF3EBFF)
+val FeaturedResumeDarkMuted = Color(0xFFCBBADF)
+
+val SlateEditorBg = Color(0xFF14171D)
+val SlateEditorGutter = Color(0xFF14171D)
+val SlateActiveLine = Color(0xFF1E222B)
+val SlateGutterDivider = Color(0xFF252934)
 
 val BadgeJs = Color(0xFFE0A43E)
 val BadgeTs = Color(0xFF38BDF8)
@@ -39,9 +97,11 @@ val RoseError = Color(0xFFFB7185)
 @Immutable
 data class IdePalette(
   val isDark: Boolean,
+  val preset: EditorThemePreset = EditorThemePreset.OLIVE_OBSIDIAN,
   val chromeBg: Color,
   val chromeSurface: Color,
   val chromePill: Color,
+  // Flat ultra-thin modern surfaces (kept under existing token names for clean codebase-wide migration)
   val glassSurface: Color,
   val glassElevated: Color,
   val glassDockBg: Color,
@@ -65,6 +125,9 @@ data class IdePalette(
   val textPrimary: Color,
   val textSecondary: Color,
   val textMuted: Color,
+  // Search match highlights
+  val searchMatchBg: Color,
+  val searchActiveMatchBg: Color,
   // Syntax highlighting tokens
   val syntaxKeyword: Color,
   val syntaxControl: Color,
@@ -80,14 +143,15 @@ data class IdePalette(
 val DarkIdePalette =
   IdePalette(
     isDark = true,
+    preset = EditorThemePreset.OLIVE_OBSIDIAN,
     chromeBg = OliveBg,
     chromeSurface = OliveSurfaceLow,
     chromePill = OliveSurface,
-    glassSurface = Color(0xCC1E2219),
-    glassElevated = Color(0xD9272B21),
-    glassDockBg = Color(0xD9161912),
-    glassBorderHighlight = Color(0x28FFFFFF),
-    glassBorderSubtle = Color(0x4D3A4131),
+    glassSurface = Color(0xFF161913),
+    glassElevated = Color(0xFF1C2018),
+    glassDockBg = Color(0xFF131610),
+    glassBorderHighlight = Color(0xFF2D3326),
+    glassBorderSubtle = Color(0xFF23281E),
     activePillBg = OliveActivePill,
     activePillFg = OliveLimeText,
     ctaBg = OliveCtaBg,
@@ -102,10 +166,12 @@ val DarkIdePalette =
     tabBarBg = OliveBg,
     tabActiveBg = SlateEditorBg,
     border = OliveBorder,
-    treeLine = Color(0xFF31362A),
+    treeLine = Color(0xFF282D22),
     textPrimary = Color(0xFFECEEE6),
-    textSecondary = Color(0xFFA7ACA0),
-    textMuted = Color(0xFF757B6D),
+    textSecondary = Color(0xFFA3A89C),
+    textMuted = Color(0xFF6F7567),
+    searchMatchBg = Color(0x40FBBF24),
+    searchActiveMatchBg = Color(0x8CF59E0B),
     syntaxKeyword = Color(0xFFC084FC),
     syntaxControl = Color(0xFFD8B4FE),
     syntaxString = Color(0xFFFBBF24),
@@ -117,35 +183,152 @@ val DarkIdePalette =
     syntaxOperator = Color(0xFFD1D5DB),
   )
 
+val SlateDarkIdePalette =
+  DarkIdePalette.copy(
+    preset = EditorThemePreset.SLATE_CARBON,
+    chromeBg = Color(0xFF0E1117),
+    chromeSurface = Color(0xFF131720),
+    chromePill = Color(0xFF1A202C),
+    glassSurface = Color(0xFF131720),
+    glassElevated = Color(0xFF191F2B),
+    glassDockBg = Color(0xFF10141C),
+    glassBorderHighlight = Color(0xFF2A3346),
+    glassBorderSubtle = Color(0xFF202736),
+    activePillBg = Color(0xFF1B3352),
+    activePillFg = Color(0xFF7DD3FC),
+    ctaBg = Color(0xFF60A5FA),
+    ctaFg = Color(0xFF071324),
+    featuredCardBg = Color(0xFF172235),
+    featuredCardFg = Color(0xFFE8F1FF),
+    featuredCardMuted = Color(0xFF9DB6D9),
+    selectedRowBg = Color(0xFF1E293B),
+    editorBg = Color(0xFF0F131A),
+    editorGutterBg = Color(0xFF0F131A),
+    editorActiveLineBg = Color(0xFF181F2C),
+    tabBarBg = Color(0xFF0E1117),
+    tabActiveBg = Color(0xFF0F131A),
+    border = Color(0xFF222A3A),
+    treeLine = Color(0xFF232C3D),
+    textPrimary = Color(0xFFE6ECF5),
+    textSecondary = Color(0xFF98A4B8),
+    textMuted = Color(0xFF647085),
+    syntaxKeyword = Color(0xFF7DD3FC),
+    syntaxControl = Color(0xFFC4B5FD),
+    syntaxString = Color(0xFF86EFAC),
+    syntaxNumber = Color(0xFFFCD34D),
+    syntaxFunction = Color(0xFF93C5FD),
+    syntaxType = Color(0xFF5EEAD4),
+    syntaxProperty = Color(0xFFA5B4FC),
+  )
+
+val NoirDarkIdePalette =
+  DarkIdePalette.copy(
+    preset = EditorThemePreset.MIDNIGHT_NOIR,
+    chromeBg = Color(0xFF090A0D),
+    chromeSurface = Color(0xFF101217),
+    chromePill = Color(0xFF171A21),
+    glassSurface = Color(0xFF101217),
+    glassElevated = Color(0xFF161920),
+    glassDockBg = Color(0xFF0C0E12),
+    glassBorderHighlight = Color(0xFF272B36),
+    glassBorderSubtle = Color(0xFF1E212B),
+    activePillBg = Color(0xFF2B2147),
+    activePillFg = Color(0xFFD8B4FE),
+    ctaBg = Color(0xFFC084FC),
+    ctaFg = Color(0xFF180A2B),
+    featuredCardBg = Color(0xFF1B1629),
+    featuredCardFg = Color(0xFFF5ECFF),
+    featuredCardMuted = Color(0xFFC2B0D9),
+    selectedRowBg = Color(0xFF1E1B2E),
+    editorBg = Color(0xFF0B0C10),
+    editorGutterBg = Color(0xFF0B0C10),
+    editorActiveLineBg = Color(0xFF151821),
+    tabBarBg = Color(0xFF090A0D),
+    tabActiveBg = Color(0xFF0B0C10),
+    border = Color(0xFF1E212B),
+    treeLine = Color(0xFF222633),
+    textPrimary = Color(0xFFF0F1F5),
+    textSecondary = Color(0xFF9CA0B0),
+    textMuted = Color(0xFF666B7D),
+    syntaxKeyword = Color(0xFFD8B4FE),
+    syntaxControl = Color(0xFFF0ABFC),
+    syntaxString = Color(0xFFFDE68A),
+    syntaxNumber = Color(0xFF6EE7B7),
+    syntaxFunction = Color(0xFF93C5FD),
+    syntaxType = Color(0xFF67E8F9),
+    syntaxProperty = Color(0xFFC4B5FD),
+  )
+
+val DuskDarkIdePalette =
+  DarkIdePalette.copy(
+    preset = EditorThemePreset.AMBER_DUSK,
+    chromeBg = Color(0xFF13110F),
+    chromeSurface = Color(0xFF1A1714),
+    chromePill = Color(0xFF231F1B),
+    glassSurface = Color(0xFF1A1714),
+    glassElevated = Color(0xFF221E1A),
+    glassDockBg = Color(0xFF161310),
+    glassBorderHighlight = Color(0xFF352E27),
+    glassBorderSubtle = Color(0xFF2B251F),
+    activePillBg = Color(0xFF472A12),
+    activePillFg = Color(0xFFFDBA74),
+    ctaBg = Color(0xFFF59E42),
+    ctaFg = Color(0xFF241103),
+    featuredCardBg = Color(0xFF2B1D14),
+    featuredCardFg = Color(0xFFFFF3E6),
+    featuredCardMuted = Color(0xFFDCC0A6),
+    selectedRowBg = Color(0xFF2D231A),
+    editorBg = Color(0xFF151311),
+    editorGutterBg = Color(0xFF151311),
+    editorActiveLineBg = Color(0xFF211D18),
+    tabBarBg = Color(0xFF13110F),
+    tabActiveBg = Color(0xFF151311),
+    border = Color(0xFF2C2620),
+    treeLine = Color(0xFF302922),
+    textPrimary = Color(0xFFF2ECE4),
+    textSecondary = Color(0xFFB0A496),
+    textMuted = Color(0xFF7B7064),
+    syntaxKeyword = Color(0xFFFDBA74),
+    syntaxControl = Color(0xFFFCA5A5),
+    syntaxString = Color(0xFFA7F3D0),
+    syntaxNumber = Color(0xFFFDE047),
+    syntaxFunction = Color(0xFF93C5FD),
+    syntaxType = Color(0xFF5EEAD4),
+    syntaxProperty = Color(0xFFFED7AA),
+  )
+
 val LightIdePalette =
   IdePalette(
     isDark = false,
-    chromeBg = Color(0xFFF4F6EE),
-    chromeSurface = Color(0xFFECEFE4),
-    chromePill = Color(0xFFE2E6D7),
-    glassSurface = Color(0xE0F0F3E8),
-    glassElevated = Color(0xEBFAFCF5),
-    glassDockBg = Color(0xE6EFF2E7),
-    glassBorderHighlight = Color(0xB8FFFFFF),
-    glassBorderSubtle = Color(0x66BFC6B3),
-    activePillBg = Color(0xFFD7EC9F),
+    preset = EditorThemePreset.OLIVE_OBSIDIAN,
+    chromeBg = Color(0xFFF6F7F3),
+    chromeSurface = Color(0xFFFFFFFF),
+    chromePill = Color(0xFFECEFE6),
+    glassSurface = Color(0xFFFFFFFF),
+    glassElevated = Color(0xFFFAFBF8),
+    glassDockBg = Color(0xFFFFFFFF),
+    glassBorderHighlight = Color(0xFFD8DDD0),
+    glassBorderSubtle = Color(0xFFE3E7DC),
+    activePillBg = Color(0xFFDFEEB3),
     activePillFg = Color(0xFF253402),
     ctaBg = Color(0xFF4F6B11),
     ctaFg = Color(0xFFFFFFFF),
-    featuredCardBg = Color(0xFFEDE2F8),
+    featuredCardBg = Color(0xFFF2ECFA),
     featuredCardFg = Color(0xFF2D1647),
     featuredCardMuted = Color(0xFF5D4678),
-    selectedRowBg = Color(0xFFDCE4C9),
-    editorBg = Color(0xFFFCFCFA),
-    editorGutterBg = Color(0xFFF6F7F2),
-    editorActiveLineBg = Color(0xFFEDF1E4),
-    tabBarBg = Color(0xFFF4F6EE),
-    tabActiveBg = Color(0xFFFCFCFA),
-    border = Color(0xFFD4D9C9),
-    treeLine = Color(0xFFCDD3C2),
-    textPrimary = Color(0xFF1A1C15),
-    textSecondary = Color(0xFF4E5445),
-    textMuted = Color(0xFF818876),
+    selectedRowBg = Color(0xFFE5ECDA),
+    editorBg = Color(0xFFFFFFFF),
+    editorGutterBg = Color(0xFFF8F9F6),
+    editorActiveLineBg = Color(0xFFF0F3E8),
+    tabBarBg = Color(0xFFF6F7F3),
+    tabActiveBg = Color(0xFFFFFFFF),
+    border = Color(0xFFDFE3D8),
+    treeLine = Color(0xFFD8DDD0),
+    textPrimary = Color(0xFF181A14),
+    textSecondary = Color(0xFF4F5546),
+    textMuted = Color(0xFF838A78),
+    searchMatchBg = Color(0x4DF59E0B),
+    searchActiveMatchBg = Color(0x99F59E0B),
     syntaxKeyword = Color(0xFF7C3AED),
     syntaxControl = Color(0xFF9333EA),
     syntaxString = Color(0xFFB45309),
@@ -156,3 +339,56 @@ val LightIdePalette =
     syntaxProperty = Color(0xFF4338CA),
     syntaxOperator = Color(0xFF334155),
   )
+
+fun paletteFor(darkTheme: Boolean, preset: EditorThemePreset): IdePalette {
+  if (!darkTheme) {
+    return when (preset) {
+      EditorThemePreset.OLIVE_OBSIDIAN -> LightIdePalette
+      EditorThemePreset.SLATE_CARBON ->
+        LightIdePalette.copy(
+          preset = preset,
+          chromeBg = Color(0xFFF5F7FA),
+          chromePill = Color(0xFFE8EDF5),
+          activePillBg = Color(0xFFDBEAFE),
+          activePillFg = Color(0xFF1E40AF),
+          ctaBg = Color(0xFF2563EB),
+          border = Color(0xFFDCE3EE),
+          glassBorderHighlight = Color(0xFFD3DCEB),
+          glassBorderSubtle = Color(0xFFE2E8F0),
+          editorActiveLineBg = Color(0xFFEFF4FB),
+        )
+      EditorThemePreset.MIDNIGHT_NOIR ->
+        LightIdePalette.copy(
+          preset = preset,
+          chromeBg = Color(0xFFF7F6FA),
+          chromePill = Color(0xFFEDEBF4),
+          activePillBg = Color(0xFFEDE9FE),
+          activePillFg = Color(0xFF5B21B6),
+          ctaBg = Color(0xFF6D28D9),
+          border = Color(0xFFE2DFEE),
+          glassBorderHighlight = Color(0xFFD8D3EA),
+          glassBorderSubtle = Color(0xFFE8E5F2),
+          editorActiveLineBg = Color(0xFFF3F0FA),
+        )
+      EditorThemePreset.AMBER_DUSK ->
+        LightIdePalette.copy(
+          preset = preset,
+          chromeBg = Color(0xFFFAF7F4),
+          chromePill = Color(0xFFF2EAE1),
+          activePillBg = Color(0xFFFFEDD5),
+          activePillFg = Color(0xFF9A3412),
+          ctaBg = Color(0xFFD96B16),
+          border = Color(0xFFE8DED3),
+          glassBorderHighlight = Color(0xFFDFD2C4),
+          glassBorderSubtle = Color(0xFFECE3D9),
+          editorActiveLineBg = Color(0xFFFBF2E9),
+        )
+    }
+  }
+  return when (preset) {
+    EditorThemePreset.OLIVE_OBSIDIAN -> DarkIdePalette
+    EditorThemePreset.SLATE_CARBON -> SlateDarkIdePalette
+    EditorThemePreset.MIDNIGHT_NOIR -> NoirDarkIdePalette
+    EditorThemePreset.AMBER_DUSK -> DuskDarkIdePalette
+  }
+}

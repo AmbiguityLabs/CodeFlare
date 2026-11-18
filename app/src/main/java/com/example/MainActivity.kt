@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
       EdgeCodeTheme(
         darkTheme = uiState.editorSettings.darkTheme,
         dynamicColor = uiState.editorSettings.dynamicColor,
+        themePreset = com.example.ui.theme.EditorThemePreset.fromKey(uiState.editorSettings.themePreset),
       ) {
         when {
           uiState.isBootstrapping -> {

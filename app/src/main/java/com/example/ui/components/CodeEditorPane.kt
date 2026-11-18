@@ -10,6 +10,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -38,6 +39,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.FormatIndentIncrease
@@ -111,6 +114,7 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -169,6 +173,10 @@ fun CodeEditorPane(
   onReplaceQueryChange: (String) -> Unit,
   onFindNext: () -> Unit,
   onReplaceAll: () -> Unit,
+  onFindPrevious: () -> Unit = {},
+  onReplaceCurrent: () -> Unit = {},
+  onToggleFindMatchCase: () -> Unit = {},
+  onFindScopeChange: (Int) -> Unit = {},
   onOpenProblems: () -> Unit,
   onOpenExplorer: () -> Unit,
   onShowNewWorkerDialog: () -> Unit,
@@ -533,46 +541,326 @@ fun CodeEditorPane(
       }
     }
 
-    // Collapsible Find & Replace Strip
-    AnimatedVisibility(visible = uiState.showFindBar) {
-      Surface(
-        color = palette.glassElevated,
-        border = rememberGlassBorderStroke(1.dp),
-        modifier = Modifier.fillMaxWidth(),
+    // Compute active tab find match ranges for counter & live editor canvas highlights
+    val activeFindMatches =
+      remember(uiState.showFindBar, uiState.findQuery, uiState.findMatchCase, tfv.text) {
+        if (!uiState.showFindBar || uiState.findQuery.isEmpty()) {
+          emptyList()
+        } else {
+          val q = uiState.findQuery
+          val ignoreCase = !uiState.findMatchCase
+          val hits = ArrayList<IntRange>(32)
+          var pos = 0
+          while (pos <= tfv.text.length - q.length && hits.size < 500) {
+            val found = tfv.text.indexOf(q, pos, ignoreCase = ignoreCase)
+            if (found < 0) break
+            hits.add(found until (found + q.length))
+            pos = found + q.length
+          }
+          hits
+        }
+      }
+    val activeFindMatchIndex =
+      remember(activeFindMatches, tfv.selection) {
+        if (activeFindMatches.isEmpty()) -1
+        else {
+          val selStart = tfv.selection.min
+          val selEnd = tfv.selection.max
+          activeFindMatches.indexOfFirst { it.first == selStart && (it.last + 1) == selEnd }
+            .takeIf { it >= 0 }
+            ?: activeFindMatches.indexOfFirst { selStart in it.first..(it.last + 1) }
+        }
+      }
+    val scopedTotalMatches =
+      remember(
+        uiState.showFindBar,
+        uiState.findQuery,
+        uiState.findMatchCase,
+        uiState.findScope,
+        uiState.openTabPaths,
+        uiState.workspace?.files,
+        uiState.editorFieldValues,
+        tfv.text,
       ) {
-        Column(
-          modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-          verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-          Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-              value = uiState.findQuery,
-              onValueChange = onFindQueryChange,
-              placeholder = { Text("Find") },
-              singleLine = true,
-              modifier = Modifier.weight(1f),
-            )
-            FilledTonalButton(
-              onClick = { flushThen(onFindNext) },
-              enabled = uiState.findQuery.isNotEmpty(),
-            ) {
-              Text("Next")
+        if (!uiState.showFindBar || uiState.findQuery.isEmpty() || uiState.findScope == 0) {
+          activeFindMatches.size
+        } else {
+          val q = uiState.findQuery
+          val ignoreCase = !uiState.findMatchCase
+          val targetPaths =
+            if (uiState.findScope == 1) uiState.openTabPaths
+            else uiState.workspace?.files?.map { it.path }.orEmpty()
+          var total = 0
+          targetPaths.forEach { p ->
+            val txt =
+              if (p == activeFile.path) tfv.text
+              else uiState.editorFieldValues[p]?.text
+                ?: uiState.workspace?.files?.firstOrNull { it.path == p }?.content
+                ?: ""
+            var i = 0
+            while (i <= txt.length - q.length) {
+              val hit = txt.indexOf(q, i, ignoreCase = ignoreCase)
+              if (hit < 0) break
+              total++
+              i = hit + q.length
             }
           }
-          if (!activeFile.isVirtualReadOnly) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-              OutlinedTextField(
-                value = uiState.replaceQuery,
-                onValueChange = onReplaceQueryChange,
-                placeholder = { Text("Replace") },
-                singleLine = true,
-                modifier = Modifier.weight(1f),
-              )
-              TextButton(
-                onClick = { flushThen(onReplaceAll) },
-                enabled = uiState.findQuery.isNotEmpty(),
+          total
+        }
+      }
+
+    // Collapsible Multi-File Tab Find & Replace Bar (Ultra-thin hairline style)
+    AnimatedVisibility(visible = uiState.showFindBar) {
+      Surface(
+        color = palette.chromeSurface,
+        border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.65f)),
+        modifier = Modifier.fillMaxWidth().testTag("editor_find_replace_panel"),
+      ) {
+        Column(
+          modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+          verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          // Row 1: Find input + Match Count + Case Toggle + Prev/Next + Close
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Box(
+              modifier =
+                Modifier
+                  .weight(1f)
+                  .height(34.dp)
+                  .clip(RoundedCornerShape(8.dp))
+                  .background(palette.editorBg)
+                  .border(0.75.dp, palette.border.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                  .padding(horizontal = 9.dp),
+              contentAlignment = Alignment.CenterStart,
+            ) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
               ) {
-                Text("Replace All")
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                  if (uiState.findQuery.isEmpty()) {
+                    Text(
+                      text = "Find in ${when (uiState.findScope) { 1 -> "open tabs"; 2 -> "project"; else -> "tab" }}…",
+                      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
+                      color = palette.textMuted,
+                      maxLines = 1,
+                      overflow = TextOverflow.Ellipsis,
+                    )
+                  }
+                  BasicTextField(
+                    value = uiState.findQuery,
+                    onValueChange = onFindQueryChange,
+                    singleLine = true,
+                    textStyle = TextStyle(fontFamily = JetBrainsMono, fontSize = 12.sp, color = palette.textPrimary),
+                    cursorBrush = SolidColor(palette.activePillFg),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { flushThen(onFindNext) }),
+                    modifier = Modifier.fillMaxWidth().testTag("editor_find_input"),
+                  )
+                }
+                if (uiState.findQuery.isNotEmpty()) {
+                  val countText =
+                    if (activeFindMatches.isEmpty() && scopedTotalMatches == 0) {
+                      "0/0"
+                    } else if (uiState.findScope > 0 && scopedTotalMatches != activeFindMatches.size) {
+                      "${if (activeFindMatchIndex >= 0) activeFindMatchIndex + 1 else 0}/${activeFindMatches.size} ($scopedTotalMatches)"
+                    } else {
+                      "${if (activeFindMatchIndex >= 0) activeFindMatchIndex + 1 else 0}/${activeFindMatches.size}"
+                    }
+                  Text(
+                    text = countText,
+                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
+                    color = if (scopedTotalMatches == 0) RoseError else palette.activePillFg,
+                    maxLines = 1,
+                  )
+                }
+              }
+            }
+
+            // Case-sensitive (Aa) toggle
+            Surface(
+              onClick = onToggleFindMatchCase,
+              shape = RoundedCornerShape(7.dp),
+              color = if (uiState.findMatchCase) palette.activePillBg else palette.chromePill,
+              border =
+                BorderStroke(
+                  0.75.dp,
+                  if (uiState.findMatchCase) palette.activePillFg.copy(alpha = 0.45f)
+                  else palette.border.copy(alpha = 0.5f),
+                ),
+              modifier = Modifier.height(34.dp).testTag("editor_find_case_toggle"),
+            ) {
+              Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 8.dp)) {
+                Text(
+                  text = "Aa",
+                  style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.Bold),
+                  color = if (uiState.findMatchCase) palette.activePillFg else palette.textSecondary,
+                )
+              }
+            }
+
+            Surface(
+              onClick = { if (uiState.findQuery.isNotEmpty()) flushThen(onFindPrevious) },
+              shape = RoundedCornerShape(7.dp),
+              color = palette.chromePill,
+              border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.5f)),
+              modifier = Modifier.size(34.dp).testTag("editor_find_prev"),
+            ) {
+              Box(contentAlignment = Alignment.Center) {
+                Icon(
+                  Icons.Outlined.KeyboardArrowUp,
+                  contentDescription = "Previous match",
+                  tint = if (uiState.findQuery.isNotEmpty()) palette.textPrimary else palette.textMuted.copy(alpha = 0.45f),
+                  modifier = Modifier.size(18.dp),
+                )
+              }
+            }
+
+            Surface(
+              onClick = { if (uiState.findQuery.isNotEmpty()) flushThen(onFindNext) },
+              shape = RoundedCornerShape(7.dp),
+              color = palette.chromePill,
+              border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.5f)),
+              modifier = Modifier.size(34.dp).testTag("editor_find_next"),
+            ) {
+              Box(contentAlignment = Alignment.Center) {
+                Icon(
+                  Icons.Outlined.KeyboardArrowDown,
+                  contentDescription = "Next match",
+                  tint = if (uiState.findQuery.isNotEmpty()) palette.textPrimary else palette.textMuted.copy(alpha = 0.45f),
+                  modifier = Modifier.size(18.dp),
+                )
+              }
+            }
+
+            IconButton(
+              onClick = onToggleFindBar,
+              modifier = Modifier.size(30.dp).testTag("editor_find_close"),
+            ) {
+              Icon(
+                Icons.Outlined.Close,
+                contentDescription = "Close find bar",
+                tint = palette.textSecondary,
+                modifier = Modifier.size(16.dp),
+              )
+            }
+          }
+
+          // Row 2: Replace Input + Single Replace + Replace All (when writable)
+          if (!activeFile.isVirtualReadOnly) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.spacedBy(5.dp),
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Box(
+                modifier =
+                  Modifier
+                    .weight(1f)
+                    .height(34.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(palette.editorBg)
+                    .border(0.75.dp, palette.border.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 9.dp),
+                contentAlignment = Alignment.CenterStart,
+              ) {
+                if (uiState.replaceQuery.isEmpty()) {
+                  Text(
+                    text = "Replace with…",
+                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
+                    color = palette.textMuted,
+                    maxLines = 1,
+                  )
+                }
+                BasicTextField(
+                  value = uiState.replaceQuery,
+                  onValueChange = onReplaceQueryChange,
+                  singleLine = true,
+                  textStyle = TextStyle(fontFamily = JetBrainsMono, fontSize = 12.sp, color = palette.textPrimary),
+                  cursorBrush = SolidColor(palette.activePillFg),
+                  keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                  keyboardActions = KeyboardActions(onDone = { if (uiState.findQuery.isNotEmpty()) flushThen(onReplaceCurrent) }),
+                  modifier = Modifier.fillMaxWidth().testTag("editor_replace_input"),
+                )
+              }
+              Surface(
+                onClick = { if (uiState.findQuery.isNotEmpty()) flushThen(onReplaceCurrent) },
+                shape = RoundedCornerShape(7.dp),
+                color = palette.chromePill,
+                border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.55f)),
+                modifier = Modifier.height(34.dp).testTag("editor_replace_one"),
+              ) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 10.dp)) {
+                  Text(
+                    text = "Replace",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Medium,
+                    color = if (uiState.findQuery.isNotEmpty()) palette.textPrimary else palette.textMuted,
+                  )
+                }
+              }
+              Surface(
+                onClick = { if (uiState.findQuery.isNotEmpty()) flushThen(onReplaceAll) },
+                shape = RoundedCornerShape(7.dp),
+                color = palette.activePillBg,
+                border = BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.35f)),
+                modifier = Modifier.height(34.dp).testTag("editor_replace_all"),
+              ) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 10.dp)) {
+                  Text(
+                    text = "All",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (uiState.findQuery.isNotEmpty()) palette.activePillFg else palette.textMuted,
+                  )
+                }
+              }
+            }
+          }
+
+          // Row 3: Multi-File Scope Selector (This Tab / Open Tabs / All Files)
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text(
+              text = "SCOPE",
+              style = TextStyle(fontFamily = JetBrainsMono, fontSize = 9.sp, fontWeight = FontWeight.Bold),
+              color = palette.textMuted,
+            )
+            val openCount = uiState.openTabPaths.size.coerceAtLeast(1)
+            val allCount = uiState.workspace?.files?.size ?: 1
+            listOf(
+              0 to "This Tab",
+              1 to "Open Tabs ($openCount)",
+              2 to "All Files ($allCount)",
+            ).forEach { (scopeIdx, label) ->
+              val selected = uiState.findScope == scopeIdx
+              Surface(
+                onClick = { onFindScopeChange(scopeIdx) },
+                shape = RoundedCornerShape(6.dp),
+                color = if (selected) palette.activePillBg else palette.editorBg,
+                border =
+                  BorderStroke(
+                    0.75.dp,
+                    if (selected) palette.activePillFg.copy(alpha = 0.35f) else palette.border.copy(alpha = 0.45f),
+                  ),
+                modifier = Modifier.testTag("editor_find_scope_$scopeIdx"),
+              ) {
+                Text(
+                  text = label,
+                  style = MaterialTheme.typography.labelSmall,
+                  fontSize = 10.sp,
+                  fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                  color = if (selected) palette.activePillFg else palette.textSecondary,
+                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                )
               }
             }
           }
@@ -892,6 +1180,16 @@ fun CodeEditorPane(
           },
     ) {
       val minEditorHeight = maxHeight
+      val hasCustomBg = rememberHasActiveEditorBackground(uiState.editorSettings)
+
+      // Custom Editor Background Image / Ambient Backdrop (with live Opacity, Zoom & Scrim)
+      if (hasCustomBg) {
+        EditorBackgroundLayer(
+          settings = uiState.editorSettings,
+          modifier = Modifier.matchParentSize(),
+        )
+      }
+
       Row(
         modifier =
           Modifier
@@ -912,7 +1210,7 @@ fun CodeEditorPane(
                 .widthIn(min = gutterMinWidth)
                 .heightIn(min = minEditorHeight)
                 .onSizeChanged { gutterWidthPx = it.width.toFloat() }
-                .background(palette.editorGutterBg)
+                .background(if (hasCustomBg) palette.editorGutterBg.copy(alpha = 0.62f) else palette.editorGutterBg)
                 .drawBehind {
                   val layout = textLayoutResult
                   val canUseLayout =
@@ -1064,6 +1362,39 @@ fun CodeEditorPane(
                           start = Offset(left, top + h - 1.dp.toPx()),
                           end = Offset(left + w, top + h - 1.dp.toPx()),
                           strokeWidth = 1.5.dp.toPx(),
+                        )
+                      }
+                    }
+                  }
+                }
+
+                // Live Find & Replace match highlights on the editor canvas
+                if (activeFindMatches.isNotEmpty() && docLen > 0) {
+                  val maxRender = activeFindMatches.size.coerceAtMost(200)
+                  for (mIdx in 0 until maxRender) {
+                    val range = activeFindMatches[mIdx]
+                    val startOff = range.first.coerceIn(0, docLen - 1)
+                    val endOff = range.last.coerceIn(startOff, docLen - 1)
+                    val isCurrent = mIdx == activeFindMatchIndex
+                    val highlightColor = if (isCurrent) palette.searchActiveMatchBg else palette.searchMatchBg
+                    val startBox = layout.getBoundingBox(startOff)
+                    val endBox = layout.getBoundingBox(endOff)
+                    if (startBox.top == endBox.top) {
+                      drawRect(
+                        color = highlightColor,
+                        topLeft = Offset(hPadPx + startBox.left, topPaddingPx + startBox.top),
+                        size = Size((endBox.right - startBox.left).coerceAtLeast(4.dp.toPx()), (startBox.bottom - startBox.top).coerceAtLeast(1f)),
+                      )
+                    } else {
+                      val startLine = layout.getLineForOffset(startOff)
+                      val endLine = layout.getLineForOffset(endOff)
+                      for (ln in startLine..endLine) {
+                        val segLeft = if (ln == startLine) startBox.left else layout.getLineLeft(ln)
+                        val segRight = if (ln == endLine) endBox.right else layout.getLineRight(ln)
+                        drawRect(
+                          color = highlightColor,
+                          topLeft = Offset(hPadPx + segLeft, topPaddingPx + layout.getLineTop(ln)),
+                          size = Size((segRight - segLeft).coerceAtLeast(4.dp.toPx()), (layout.getLineBottom(ln) - layout.getLineTop(ln)).coerceAtLeast(1f)),
                         )
                       }
                     }
@@ -2007,9 +2338,9 @@ private fun EditorZoomHud(
     val zoomPercent = zoomPercentProvider()
     Surface(
       color = palette.glassElevated,
-      shape = RoundedCornerShape(12.dp),
-      border = rememberGlassBorderStroke(1.dp),
-      shadowElevation = 6.dp,
+      shape = RoundedCornerShape(10.dp),
+      border = rememberGlassBorderStroke(0.75.dp),
+      shadowElevation = 1.dp,
     ) {
       Row(
         modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),

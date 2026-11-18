@@ -40,6 +40,7 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.Http
@@ -53,6 +54,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -83,6 +85,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.local.WorkerTestRunRecord
+import com.example.data.remote.ApiRequestUtils
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
@@ -118,8 +121,8 @@ fun DeployedWorkerPreviewPane(
   var pageProgress by remember { mutableIntStateOf(0) }
   var canGoBack by remember { mutableStateOf(false) }
   var canGoForward by remember { mutableStateOf(false) }
-  var loadedUrl by remember { mutableStateOf("") }
-  var lastLoadedNonce by remember { mutableStateOf(-1L) }
+  var lastAppliedLoadKey by remember { mutableStateOf<Pair<String, Long>?>(null) }
+  var loadErrorMessage by remember { mutableStateOf<String?>(null) }
 
   val latestPreviewUrl by rememberUpdatedState(uiState.previewUrl)
   val latestOnUrlChange by rememberUpdatedState(onUrlChange)
@@ -128,37 +131,51 @@ fun DeployedWorkerPreviewPane(
   fun normalizeWorkerUrl(raw: String): String {
     val trimmed = raw.trim()
     if (trimmed.isEmpty()) return ""
-    if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
-      return trimmed
-    }
     val fallbackBase =
       uiState.workspace?.workersDevUrl
         ?: uiState.workspace?.domains?.firstOrNull()?.hostname?.takeIf { it.isNotBlank() }?.let { "https://$it" }
-    return if (!fallbackBase.isNullOrBlank()) {
-      fallbackBase.trimEnd('/') + if (trimmed.startsWith("/")) trimmed else "/$trimmed"
-    } else {
-      "https://$trimmed"
+    return ApiRequestUtils.normalizeBareOrRelativeUrl(trimmed, fallbackBase).getOrElse {
+      if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
+        trimmed
+      } else {
+        "https://$trimmed"
+      }
     }
   }
 
-  fun triggerWebViewLoad() {
+  fun requestPreviewReload() {
     val target = normalizeWorkerUrl(uiState.previewUrl)
-    if (target.isNotBlank()) {
-      if (target != uiState.previewUrl) onUrlChange(target)
-      loadedUrl = target
-      webViewRef?.loadUrl(target)
-    } else {
+    if (target.isBlank()) {
       onNotifyStatus("Deploy your Worker or enter a https:// URL to preview")
+      return
+    }
+    if (target != uiState.previewUrl) {
+      onUrlChange(target)
+    }
+    loadErrorMessage = null
+    onReloadPreview()
+  }
+
+  // Single unified WebView loader: fires only when WebView is attached and target or reload nonce changes
+  LaunchedEffect(webViewRef, uiState.previewModeTab, uiState.previewReloadNonce) {
+    val wv = webViewRef
+    if (uiState.previewModeTab == 0 && wv != null) {
+      val target = normalizeWorkerUrl(uiState.previewUrl)
+      val loadKey = target to uiState.previewReloadNonce
+      if (target.isNotBlank() && lastAppliedLoadKey != loadKey) {
+        lastAppliedLoadKey = loadKey
+        loadErrorMessage = null
+        wv.loadUrl(target)
+      }
     }
   }
 
-  LaunchedEffect(uiState.previewReloadNonce) {
-    if (uiState.previewModeTab == 0 && uiState.previewReloadNonce != lastLoadedNonce) {
-      lastLoadedNonce = uiState.previewReloadNonce
-      val target = normalizeWorkerUrl(uiState.previewUrl)
-      if (target.isNotBlank()) {
-        loadedUrl = target
-        webViewRef?.loadUrl(target)
+  DisposableEffect(uiState.previewModeTab == 0) {
+    onDispose {
+      if (uiState.previewModeTab != 0) {
+        webViewRef?.destroy()
+        webViewRef = null
+        lastAppliedLoadKey = null
       }
     }
   }
@@ -167,6 +184,7 @@ fun DeployedWorkerPreviewPane(
     onDispose {
       webViewRef?.destroy()
       webViewRef = null
+      lastAppliedLoadKey = null
     }
   }
 
@@ -374,21 +392,16 @@ fun DeployedWorkerPreviewPane(
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
             keyboardActions =
               KeyboardActions(
-                onGo = {
-                  onReloadPreview()
-                  triggerWebViewLoad()
-                },
+                onGo = { requestPreviewReload() },
               ),
             modifier = Modifier.fillMaxWidth().testTag("worker_preview_url_input"),
           )
         }
 
         Surface(
-          onClick = {
-            onReloadPreview()
-            triggerWebViewLoad()
-          },
+          onClick = { requestPreviewReload() },
           color = palette.activePillBg,
+          border = BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.35f)),
           shape = RoundedCornerShape(8.dp),
           modifier = Modifier.height(36.dp).testTag("worker_preview_reload_button"),
         ) {
@@ -427,125 +440,195 @@ fun DeployedWorkerPreviewPane(
             onDeployWorker = onDeployActiveWorker,
           )
         } else {
-          val initialUrl = remember(uiState.workspace?.scriptName) { normalizeWorkerUrl(uiState.previewUrl) }
           val activeWorkerHost =
             remember(currentTarget) {
               runCatching { Uri.parse(currentTarget).host }.getOrNull()
             }
           val latestWorkerHost by rememberUpdatedState(activeWorkerHost)
 
-          AndroidView(
-            factory = { ctx ->
-              WebView(ctx).apply {
-                settings.apply {
-                  javaScriptEnabled = true
-                  domStorageEnabled = true
-                  loadsImagesAutomatically = true
-                  useWideViewPort = true
-                  loadWithOverviewMode = true
-                  mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                  cacheMode = WebSettings.LOAD_DEFAULT
-                }
-                webViewClient =
-                  object : WebViewClient() {
-                    override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                      super.onPageStarted(view, url, favicon)
-                      canGoBack = view?.canGoBack() == true
-                      canGoForward = view?.canGoForward() == true
-                      if (!url.isNullOrBlank()) {
-                        loadedUrl = url
-                        if (url != latestPreviewUrl) {
-                          latestOnUrlChange(url)
+          Box(modifier = Modifier.fillMaxSize()) {
+            AndroidView(
+              factory = { ctx ->
+                WebView(ctx).apply {
+                  // Standard white web canvas ensures plain-text/unstyled Worker responses are readable (never black-on-black)
+                  setBackgroundColor(android.graphics.Color.WHITE)
+                  settings.apply {
+                    javaScriptEnabled = true
+                    domStorageEnabled = true
+                    loadsImagesAutomatically = true
+                    useWideViewPort = true
+                    loadWithOverviewMode = true
+                    mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                    cacheMode = WebSettings.LOAD_DEFAULT
+                  }
+                  webViewClient =
+                    object : WebViewClient() {
+                      override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                        super.onPageStarted(view, url, favicon)
+                        loadErrorMessage = null
+                        canGoBack = view?.canGoBack() == true
+                        canGoForward = view?.canGoForward() == true
+                        if (!url.isNullOrBlank()) {
+                          if (url != latestPreviewUrl && url != "about:blank") {
+                            latestOnUrlChange(url)
+                          }
+                          latestOnAppendConsole("NAV", "GET", url, null, null)
                         }
-                        latestOnAppendConsole("NAV", "GET", url, null, null)
                       }
-                    }
 
-                    override fun shouldInterceptRequest(
-                      view: WebView?,
-                      request: WebResourceRequest?,
-                    ): WebResourceResponse? {
-                      val reqUrl = request?.url?.toString().orEmpty()
-                      if (request != null && !request.isForMainFrame && reqUrl.startsWith("http")) {
-                        val workerHost = latestWorkerHost
-                        val reqHost = request.url?.host
-                        if (workerHost != null && workerHost == reqHost) {
-                          val method = request.method ?: "GET"
-                          view?.post {
-                            latestOnAppendConsole("NET", method, reqUrl, null, null)
+                      override fun shouldInterceptRequest(
+                        view: WebView?,
+                        request: WebResourceRequest?,
+                      ): WebResourceResponse? {
+                        val reqUrl = request?.url?.toString().orEmpty()
+                        if (request != null && !request.isForMainFrame && reqUrl.startsWith("http")) {
+                          val workerHost = latestWorkerHost
+                          val reqHost = request.url?.host
+                          if (workerHost != null && workerHost == reqHost) {
+                            val method = request.method ?: "GET"
+                            view?.post {
+                              latestOnAppendConsole("NET", method, reqUrl, null, null)
+                            }
                           }
                         }
+                        return super.shouldInterceptRequest(view, request)
                       }
-                      return super.shouldInterceptRequest(view, request)
-                    }
 
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                      super.onPageFinished(view, url)
-                      canGoBack = view?.canGoBack() == true
-                      canGoForward = view?.canGoForward() == true
-                      pageProgress = 100
-                    }
+                      override fun onPageFinished(view: WebView?, url: String?) {
+                        super.onPageFinished(view, url)
+                        canGoBack = view?.canGoBack() == true
+                        canGoForward = view?.canGoForward() == true
+                        pageProgress = 100
+                      }
 
-                    override fun onReceivedHttpError(
-                      view: WebView?,
-                      request: WebResourceRequest?,
-                      errorResponse: WebResourceResponse?,
-                    ) {
-                      super.onReceivedHttpError(view, request, errorResponse)
-                      if (request?.isForMainFrame == true && errorResponse != null) {
-                        latestOnAppendConsole(
-                          "ERR",
-                          request.method ?: "GET",
-                          request.url?.toString().orEmpty(),
-                          errorResponse.statusCode,
-                          null,
-                        )
+                      override fun onReceivedHttpError(
+                        view: WebView?,
+                        request: WebResourceRequest?,
+                        errorResponse: WebResourceResponse?,
+                      ) {
+                        super.onReceivedHttpError(view, request, errorResponse)
+                        if (request?.isForMainFrame == true && errorResponse != null) {
+                          latestOnAppendConsole(
+                            "ERR",
+                            request.method ?: "GET",
+                            request.url?.toString().orEmpty(),
+                            errorResponse.statusCode,
+                            null,
+                          )
+                        }
+                      }
+
+                      override fun onReceivedError(
+                        view: WebView?,
+                        request: WebResourceRequest?,
+                        error: WebResourceError?,
+                      ) {
+                        super.onReceivedError(view, request, error)
+                        if (request?.isForMainFrame == true) {
+                          val desc = error?.description?.toString()?.takeIf { it.isNotBlank() } ?: "Unable to load Worker endpoint"
+                          loadErrorMessage = desc
+                          latestOnAppendConsole("ERR", request.method ?: "GET", "${request.url} • $desc", null, null)
+                        }
                       }
                     }
+                  webChromeClient =
+                    object : WebChromeClient() {
+                      override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                        pageProgress = newProgress
+                      }
 
-                    override fun onReceivedError(
-                      view: WebView?,
-                      request: WebResourceRequest?,
-                      error: WebResourceError?,
+                      override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
+                        consoleMessage?.let { cm ->
+                          val lvl = cm.messageLevel().name
+                          val kind = if (lvl == "ERROR") "ERR" else "JS"
+                          latestOnAppendConsole(kind, "JS:$lvl", "${cm.message()} (L${cm.lineNumber()})", null, null)
+                        }
+                        return true
+                      }
+                    }
+                  webViewRef = this
+                }
+              },
+              update = { wv ->
+                if (webViewRef !== wv) {
+                  webViewRef = wv
+                }
+              },
+              modifier = Modifier.fillMaxSize().testTag("deployed_worker_webview"),
+            )
+
+            // Actionable thin overlay if main-frame load failed (e.g. Worker not yet deployed or DNS error)
+            val errMsg = loadErrorMessage
+            if (errMsg != null) {
+              Box(
+                modifier = Modifier.fillMaxSize().background(palette.editorBg.copy(alpha = 0.96f)).padding(20.dp),
+                contentAlignment = Alignment.Center,
+              ) {
+                Surface(
+                  color = palette.chromeSurface,
+                  shape = RoundedCornerShape(12.dp),
+                  border = BorderStroke(0.75.dp, RoseError.copy(alpha = 0.45f)),
+                  modifier = Modifier.fillMaxWidth().testTag("worker_preview_error_card"),
+                ) {
+                  Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                  ) {
+                    Icon(
+                      Icons.Outlined.ErrorOutline,
+                      contentDescription = null,
+                      tint = RoseError,
+                      modifier = Modifier.size(28.dp),
+                    )
+                    Text(
+                      text = "Endpoint Unreachable",
+                      style = MaterialTheme.typography.titleSmall,
+                      fontWeight = FontWeight.SemiBold,
+                      color = palette.textPrimary,
+                    )
+                    Text(
+                      text = "$errMsg\n$currentTarget",
+                      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
+                      color = palette.textSecondary,
+                      textAlign = TextAlign.Center,
+                    )
+                    Row(
+                      horizontalArrangement = Arrangement.spacedBy(8.dp),
+                      verticalAlignment = Alignment.CenterVertically,
                     ) {
-                      super.onReceivedError(view, request, error)
-                      if (request?.isForMainFrame == true) {
-                        val desc = error?.description?.toString() ?: "Load failed"
-                        latestOnAppendConsole("ERR", request.method ?: "GET", "${request.url} • $desc", null, null)
+                      FilledTonalButton(
+                        onClick = { requestPreviewReload() },
+                        shape = RoundedCornerShape(9.dp),
+                      ) {
+                        Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text("Retry", fontSize = 12.sp)
+                      }
+                      if (uiState.workspace != null && !uiState.isLocalScratchpad) {
+                        OutlinedButton(
+                          onClick = onDeployActiveWorker,
+                          shape = RoundedCornerShape(9.dp),
+                        ) {
+                          Icon(Icons.Outlined.CloudUpload, contentDescription = null, modifier = Modifier.size(15.dp))
+                          Spacer(Modifier.width(5.dp))
+                          Text("Deploy", fontSize = 12.sp)
+                        }
+                      }
+                      OutlinedButton(
+                        onClick = { onSelectModeTab(1) },
+                        shape = RoundedCornerShape(9.dp),
+                      ) {
+                        Icon(Icons.Outlined.Http, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text("HTTP", fontSize = 12.sp)
                       }
                     }
                   }
-                webChromeClient =
-                  object : WebChromeClient() {
-                    override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                      pageProgress = newProgress
-                    }
-
-                    override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
-                      consoleMessage?.let { cm ->
-                        val lvl = cm.messageLevel().name
-                        val kind = if (lvl == "ERROR") "ERR" else "JS"
-                        latestOnAppendConsole(kind, "JS:$lvl", "${cm.message()} (L${cm.lineNumber()})", null, null)
-                      }
-                      return true
-                    }
-                  }
-                webViewRef = this
-                if (initialUrl.isNotBlank()) {
-                  loadedUrl = initialUrl
-                  loadUrl(initialUrl)
                 }
               }
-            },
-            update = { wv ->
-              webViewRef = wv
-              if (loadedUrl.isBlank() && currentTarget.isNotBlank()) {
-                loadedUrl = currentTarget
-                wv.loadUrl(currentTarget)
-              }
-            },
-            modifier = Modifier.fillMaxSize().testTag("deployed_worker_webview"),
-          )
+            }
+          }
         }
       } else {
         WorkerTestWindow(

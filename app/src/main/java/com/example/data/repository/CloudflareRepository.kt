@@ -60,9 +60,15 @@ import com.example.data.security.AuthMethod
 import com.example.data.security.AuthPreferencesStore
 import com.example.data.security.StoredCredentials
 import com.squareup.moshi.Types
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLHandshakeException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response as OkHttpResponse
@@ -1693,18 +1699,49 @@ class CloudflareRepository(
   ): HttpTestResult =
     withContext(Dispatchers.IO) {
       val started = System.currentTimeMillis()
+      val upperMethod = method.trim().uppercase().ifBlank { "GET" }
       try {
-        val reqBuilder = Request.Builder().url(url)
-        headersMap.forEach { (k, v) -> if (k.isNotBlank()) reqBuilder.header(k.trim(), v.trim()) }
-        val upperMethod = method.uppercase()
+        val parsedUrl = url.trim().toHttpUrlOrNull()
+          ?: return@withContext HttpTestResult(
+            url = url,
+            method = upperMethod,
+            statusCode = 0,
+            statusText = "Invalid URL",
+            durationMs = 0L,
+            headers = emptyMap(),
+            body = "",
+            errorMessage = "Malformed URL '$url'. Use a valid http:// or https:// address.",
+          )
+
+        val reqBuilder = Request.Builder().url(parsedUrl)
+        headersMap.forEach { (rawKey, rawVal) ->
+          val cleanKey = rawKey.replace("\r", "").replace("\n", "").trim()
+          val cleanVal = rawVal.replace("\r", "").replace("\n", "").trim()
+          if (cleanKey.isNotEmpty()) {
+            try {
+              reqBuilder.header(cleanKey, cleanVal)
+            } catch (headerErr: IllegalArgumentException) {
+              return@withContext HttpTestResult(
+                url = parsedUrl.toString(),
+                method = upperMethod,
+                statusCode = 0,
+                statusText = "Invalid Header",
+                durationMs = System.currentTimeMillis() - started,
+                headers = emptyMap(),
+                body = "",
+                errorMessage = "Invalid header '$cleanKey': ${headerErr.localizedMessage ?: "illegal characters"}",
+              )
+            }
+          }
+        }
+
         val reqBody =
           if (upperMethod in listOf("POST", "PUT", "PATCH") || (upperMethod == "DELETE" && bodyText.isNotEmpty())) {
+            val contentTypeHeader =
+              headersMap.entries.firstOrNull { it.key.equals("Content-Type", ignoreCase = true) }?.value?.trim()
             val media =
-              if (headersMap.keys.any { it.equals("Content-Type", ignoreCase = true) }) {
-                headersMap.entries.first { it.key.equals("Content-Type", ignoreCase = true) }.value.toMediaType()
-              } else {
-                "application/json".toMediaType()
-              }
+              contentTypeHeader?.toMediaTypeOrNull()
+                ?: "application/json; charset=utf-8".toMediaType()
             bodyText.toRequestBody(media)
           } else null
 
@@ -1713,23 +1750,113 @@ class CloudflareRepository(
           val duration = System.currentTimeMillis() - started
           val respHeaders = linkedMapOf<String, String>()
           for (i in 0 until resp.headers.size) {
-            respHeaders[resp.headers.name(i)] = resp.headers.value(i)
+            val name = resp.headers.name(i)
+            val value = resp.headers.value(i)
+            val existing = respHeaders[name]
+            respHeaders[name] =
+              if (existing == null) {
+                value
+              } else if (name.equals("Set-Cookie", ignoreCase = true)) {
+                "$existing\n$value"
+              } else {
+                "$existing, $value"
+              }
           }
-          val respBody = resp.body?.string().orEmpty()
+
+          val contentType = resp.header("Content-Type").orEmpty().lowercase()
+          val isBinary =
+            contentType.startsWith("image/") ||
+              contentType.startsWith("audio/") ||
+              contentType.startsWith("video/") ||
+              contentType.startsWith("font/") ||
+              contentType.contains("application/octet-stream") ||
+              contentType.contains("application/pdf") ||
+              contentType.contains("application/zip") ||
+              contentType.contains("application/wasm")
+
+          val maxReadBytes = 1_048_576L // 1 MB safety cap to keep UI smooth
+          val respBody =
+            if (upperMethod == "HEAD") {
+              ""
+            } else if (isBinary) {
+              val len = resp.body?.contentLength()?.takeIf { it >= 0 }
+              val sizeLabel = len?.let { "$it bytes" } ?: "streaming binary"
+              "[Binary response: ${contentType.ifBlank { "application/octet-stream" }} • $sizeLabel]"
+            } else {
+              val peeked = runCatching { resp.peekBody(maxReadBytes).bytes() }.getOrNull()
+              if (peeked == null) {
+                ""
+              } else {
+                val charset = resp.body?.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8
+                val decoded = String(peeked, charset)
+                val fullLen = resp.body?.contentLength() ?: -1L
+                if (peeked.size >= maxReadBytes.toInt() && (fullLen < 0 || fullLen > maxReadBytes)) {
+                  "$decoded\n\n/* … Response truncated at 1 MB for responsive display */"
+                } else {
+                  decoded
+                }
+              }
+            }
+
+          val statusText = resp.message.ifBlank { httpReasonPhrase(resp.code) }
           HttpTestResult(
-            url = url,
+            url = parsedUrl.toString(),
             method = upperMethod,
             statusCode = resp.code,
-            statusText = resp.message,
+            statusText = statusText,
             durationMs = duration,
             headers = respHeaders,
             body = respBody,
           )
         }
+      } catch (e: UnknownHostException) {
+        HttpTestResult(
+          url = url,
+          method = upperMethod,
+          statusCode = 0,
+          statusText = "DNS Error",
+          durationMs = System.currentTimeMillis() - started,
+          headers = emptyMap(),
+          body = "",
+          errorMessage = "Could not resolve host (${e.localizedMessage ?: "DNS lookup failed"}). Check the domain or deploy your Worker first.",
+        )
+      } catch (e: SocketTimeoutException) {
+        HttpTestResult(
+          url = url,
+          method = upperMethod,
+          statusCode = 0,
+          statusText = "Timeout",
+          durationMs = System.currentTimeMillis() - started,
+          headers = emptyMap(),
+          body = "",
+          errorMessage = "Request timed out while waiting for a response from the endpoint.",
+        )
+      } catch (e: SSLHandshakeException) {
+        HttpTestResult(
+          url = url,
+          method = upperMethod,
+          statusCode = 0,
+          statusText = "TLS Error",
+          durationMs = System.currentTimeMillis() - started,
+          headers = emptyMap(),
+          body = "",
+          errorMessage = "TLS/SSL handshake failed: ${e.localizedMessage ?: "certificate verification error"}.",
+        )
+      } catch (e: ConnectException) {
+        HttpTestResult(
+          url = url,
+          method = upperMethod,
+          statusCode = 0,
+          statusText = "Connection Refused",
+          durationMs = System.currentTimeMillis() - started,
+          headers = emptyMap(),
+          body = "",
+          errorMessage = "Connection refused: ${e.localizedMessage ?: "target server is unreachable"}.",
+        )
       } catch (e: Exception) {
         HttpTestResult(
           url = url,
-          method = method,
+          method = upperMethod,
           statusCode = 0,
           statusText = "Network Error",
           durationMs = System.currentTimeMillis() - started,
@@ -1738,6 +1865,43 @@ class CloudflareRepository(
           errorMessage = e.localizedMessage ?: "Failed to connect to Worker endpoint",
         )
       }
+    }
+
+  private fun httpReasonPhrase(code: Int): String =
+    when (code) {
+      100 -> "Continue"
+      101 -> "Switching Protocols"
+      200 -> "OK"
+      201 -> "Created"
+      202 -> "Accepted"
+      204 -> "No Content"
+      206 -> "Partial Content"
+      301 -> "Moved Permanently"
+      302 -> "Found"
+      304 -> "Not Modified"
+      307 -> "Temporary Redirect"
+      308 -> "Permanent Redirect"
+      400 -> "Bad Request"
+      401 -> "Unauthorized"
+      403 -> "Forbidden"
+      404 -> "Not Found"
+      405 -> "Method Not Allowed"
+      408 -> "Request Timeout"
+      409 -> "Conflict"
+      410 -> "Gone"
+      413 -> "Payload Too Large"
+      415 -> "Unsupported Media Type"
+      422 -> "Unprocessable Entity"
+      429 -> "Too Many Requests"
+      500 -> "Internal Server Error"
+      502 -> "Bad Gateway"
+      503 -> "Service Unavailable"
+      504 -> "Gateway Timeout"
+      520 -> "Web Server Returned Unknown Error"
+      522 -> "Connection Timed Out"
+      524 -> "A Timeout Occurred"
+      525 -> "SSL Handshake Failed"
+      else -> "HTTP $code"
     }
 
   fun buildWranglerPreviewJson(

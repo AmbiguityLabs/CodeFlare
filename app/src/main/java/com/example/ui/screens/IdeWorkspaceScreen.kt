@@ -396,6 +396,8 @@ fun IdeWorkspaceScreen(
         },
         onClearAutoSavedDrafts = viewModel::clearAllAutoSavedDrafts,
         onRequestStorageAccess = requestStorageAccess,
+        onPickEditorBackgroundImage = viewModel::setCustomEditorBackground,
+        onClearEditorBackgroundImage = viewModel::clearCustomEditorBackground,
         onNotify = viewModel::showStatus,
       )
       SnackbarHost(
@@ -413,9 +415,9 @@ fun IdeWorkspaceScreen(
     ) {
       Surface(
         color = palette.chromeBg,
-        shape = RoundedCornerShape(20.dp),
-        border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
-        modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 20.dp),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.55f)),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 18.dp),
       ) {
         Column(modifier = Modifier.fillMaxSize()) {
           Row(
@@ -749,16 +751,16 @@ fun IdeWorkspaceScreen(
               Surface(
                 onClick = { scope.launch { drawerState.open() } },
                 shape = CircleShape,
-                color = palette.glassSurface,
-                border = rememberGlassBorderStroke(1.dp),
-                modifier = Modifier.size(36.dp).testTag("workspace_quick_files_button"),
+                color = palette.chromeSurface,
+                border = rememberGlassBorderStroke(0.75.dp),
+                modifier = Modifier.size(34.dp).testTag("workspace_quick_files_button"),
               ) {
                 Box(contentAlignment = Alignment.Center) {
                   Icon(
                     imageVector = Icons.Outlined.FolderOpen,
                     contentDescription = "Open Project Files",
                     tint = palette.textSecondary,
-                    modifier = Modifier.size(18.dp),
+                    modifier = Modifier.size(17.dp),
                   )
                 }
               }
@@ -768,9 +770,9 @@ fun IdeWorkspaceScreen(
               if (uiState.isLocalScratchpad) {
                 Surface(
                   onClick = viewModel::exitScratchpadToAuth,
-                  shape = RoundedCornerShape(12.dp),
+                  shape = RoundedCornerShape(10.dp),
                   color = palette.activePillBg,
-                  border = rememberGlassBorderStroke(1.dp),
+                  border = rememberGlassBorderStroke(0.75.dp),
                   modifier = Modifier.testTag("connect_cloudflare_button"),
                 ) {
                   Text(
@@ -778,19 +780,21 @@ fun IdeWorkspaceScreen(
                     color = palette.activePillFg,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 12.sp,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
                   )
                 }
               } else {
                 Surface(
                   onClick = { if (!uiState.isDeploying) viewModel.deployActiveWorker() },
-                  shape = RoundedCornerShape(12.dp),
-                  color = if (uiState.hasUnsavedChanges) palette.activePillBg else palette.glassElevated,
-                  border = rememberGlassBorderStroke(1.dp),
+                  shape = RoundedCornerShape(10.dp),
+                  color = if (uiState.hasUnsavedChanges) palette.activePillBg else palette.chromeSurface,
+                  border =
+                    if (uiState.hasUnsavedChanges) BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.35f))
+                    else rememberGlassBorderStroke(0.75.dp),
                   modifier = Modifier.testTag("deploy_worker_button"),
                 ) {
                   Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
                   ) {
@@ -1031,7 +1035,11 @@ fun IdeWorkspaceScreen(
                       onFindQueryChange = viewModel::setFindQuery,
                       onReplaceQueryChange = viewModel::setReplaceQuery,
                       onFindNext = viewModel::findNextMatch,
+                      onFindPrevious = viewModel::findPreviousMatch,
+                      onReplaceCurrent = viewModel::replaceCurrentMatch,
                       onReplaceAll = viewModel::replaceAllMatches,
+                      onToggleFindMatchCase = viewModel::toggleFindMatchCase,
+                      onFindScopeChange = viewModel::setFindScope,
                       onOpenProblems = { viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS) },
                       onOpenExplorer = {
                         if (!isExpanded) scope.launch { drawerState.open() }
@@ -1173,7 +1181,7 @@ fun IdeWorkspaceScreen(
               .align(Alignment.BottomEnd)
               .padding(
                 end = 14.dp,
-                bottom = if (uiState.isBottomDockHidden) 14.dp else 72.dp,
+                bottom = if (uiState.isBottomDockHidden) 14.dp else 64.dp,
               ),
         ) {
           Row(
@@ -1181,7 +1189,7 @@ fun IdeWorkspaceScreen(
               Modifier
                 .edgeGlassSurface(RoundedCornerShape(999.dp), elevated = true)
                 .clickable { viewModel.toggleAllBottomMenus(false) }
-                .padding(horizontal = 13.dp, vertical = 8.dp)
+                .padding(horizontal = 12.dp, vertical = 7.dp)
                 .testTag("show_workspace_bottom_menus_button"),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -1190,7 +1198,7 @@ fun IdeWorkspaceScreen(
               imageVector = Icons.Outlined.KeyboardArrowUp,
               contentDescription = "Show bottom menus",
               tint = palette.activePillFg,
-              modifier = Modifier.size(17.dp),
+              modifier = Modifier.size(16.dp),
             )
             Text(
               text = if (uiState.isBottomDockHidden) "Menu" else "Toolbar",
@@ -1206,7 +1214,7 @@ fun IdeWorkspaceScreen(
           modifier =
             Modifier
               .align(Alignment.BottomCenter)
-              .padding(bottom = if (uiState.isBottomDockHidden) 18.dp else 72.dp),
+              .padding(bottom = if (uiState.isBottomDockHidden) 18.dp else 64.dp),
         )
       }
     }
@@ -1506,12 +1514,12 @@ private fun ModeSegmentChip(
 
   Surface(
     onClick = onClick,
-    shape = RoundedCornerShape(10.dp),
+    shape = RoundedCornerShape(8.dp),
     color = bg,
     border =
-      if (selected) BorderStroke(1.dp, palette.activePillFg.copy(alpha = 0.35f))
-      else rememberGlassBorderStroke(1.dp),
-    modifier = modifier.height(30.dp).testTag(tag),
+      if (selected) BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.35f))
+      else rememberGlassBorderStroke(0.75.dp),
+    modifier = modifier.height(28.dp).testTag(tag),
   ) {
     Row(
       modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp),

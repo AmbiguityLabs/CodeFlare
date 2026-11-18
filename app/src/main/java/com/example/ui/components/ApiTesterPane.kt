@@ -1,5 +1,8 @@
 package com.example.ui.components
 
+import android.annotation.SuppressLint
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -21,6 +24,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -54,6 +59,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -69,9 +75,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.remote.ApiAssertionOperator
 import com.example.data.remote.ApiAssertionRule
 import com.example.data.remote.ApiAssertionTarget
@@ -83,6 +91,8 @@ import com.example.data.remote.ApiImportResult
 import com.example.data.remote.ApiKeyValueRow
 import com.example.data.remote.ApiRequestUtils
 import com.example.data.remote.ApiTesterRequest
+import com.example.data.remote.WorkerLanguage
+import com.example.editor.SyntaxHighlighter
 import com.example.terminal.JqEvaluator
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.BadgeTs
@@ -92,7 +102,7 @@ import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.RoseError
 import com.example.ui.viewmodel.IdeUiState
 
-private val httpVerbs = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")
+private val httpVerbs = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
 
 @Composable
 fun ApiTesterPane(
@@ -131,6 +141,21 @@ fun ApiTesterPane(
   var showNewEnvDialog by remember { mutableStateOf(false) }
   var showImportDialog by remember { mutableStateOf(false) }
   var importJsonDraft by remember { mutableStateOf("") }
+  val mainScrollState = rememberScrollState()
+
+  // Reset response sub-tab if assertions became empty
+  LaunchedEffect(uiState.apiAssertionResults.size) {
+    if (responseSubTab == 4 && uiState.apiAssertionResults.isEmpty()) {
+      responseSubTab = 0
+    }
+  }
+
+  // Smoothly scroll response card into view whenever a new result arrives
+  LaunchedEffect(uiState.httpTestResult, uiState.isRunningHttpTest) {
+    if (!uiState.isRunningHttpTest && uiState.httpTestResult != null) {
+      mainScrollState.animateScrollTo(mainScrollState.maxValue)
+    }
+  }
 
   val importFileLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -318,7 +343,7 @@ fun ApiTesterPane(
   }
 
   Column(
-    modifier = modifier.fillMaxSize().background(palette.editorBg).verticalScroll(rememberScrollState()).padding(10.dp),
+    modifier = modifier.fillMaxSize().background(palette.editorBg).verticalScroll(mainScrollState).padding(10.dp),
     verticalArrangement = Arrangement.spacedBy(8.dp),
   ) {
     // 0. Environment Switcher Bar (Dev / Staging / Prod / Custom) + Import CTA
@@ -428,11 +453,11 @@ fun ApiTesterPane(
         modifier =
           Modifier
             .weight(1f)
-            .heightIn(min = 48.dp)
+            .heightIn(min = 44.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(palette.chromeSurface)
-            .border(1.dp, palette.border, RoundedCornerShape(10.dp))
-            .padding(horizontal = 10.dp, vertical = 12.dp),
+            .border(0.75.dp, palette.border.copy(alpha = 0.7f), RoundedCornerShape(10.dp))
+            .padding(horizontal = 10.dp, vertical = 10.dp),
         contentAlignment = Alignment.CenterStart,
       ) {
         if (req.url.isEmpty()) {
@@ -450,6 +475,8 @@ fun ApiTesterPane(
           singleLine = true,
           textStyle = TextStyle(fontFamily = JetBrainsMono, fontSize = 12.5.sp, color = palette.textPrimary),
           cursorBrush = SolidColor(palette.activePillFg),
+          keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+          keyboardActions = KeyboardActions(onSend = { if (!uiState.isRunningHttpTest) onRunRequest() }),
           modifier = Modifier.fillMaxWidth().testTag("api_url_input"),
         )
       }
@@ -458,7 +485,8 @@ fun ApiTesterPane(
         onClick = { if (!uiState.isRunningHttpTest) onRunRequest() },
         shape = RoundedCornerShape(10.dp),
         color = palette.activePillBg,
-        modifier = Modifier.height(48.dp).testTag("api_send_button"),
+        border = BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.35f)),
+        modifier = Modifier.height(44.dp).testTag("api_send_button"),
       ) {
         Row(
           modifier = Modifier.padding(horizontal = 14.dp),
@@ -468,11 +496,46 @@ fun ApiTesterPane(
           if (uiState.isRunningHttpTest) {
             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = palette.activePillFg)
           } else {
-            Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "Send HTTP request", tint = palette.activePillFg, modifier = Modifier.size(16.dp))
+            Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "Send HTTP request", tint = palette.activePillFg, modifier = Modifier.size(15.dp))
             Text("Send", style = MaterialTheme.typography.labelLarge, color = palette.activePillFg, fontWeight = FontWeight.Bold)
           }
         }
       }
+    }
+
+    // 1b. Thin Resolved Endpoint Preview Bar
+    val resolvedPreview =
+      remember(req.url, req.params, uiState.apiEnvVars, workerBaseUrl) {
+        ApiRequestUtils.resolveUrl(req, uiState.apiEnvVars, workerBaseUrl)
+      }
+    Row(
+      modifier =
+        Modifier
+          .fillMaxWidth()
+          .clip(RoundedCornerShape(8.dp))
+          .background(palette.chromeSurface.copy(alpha = 0.7f))
+          .border(0.75.dp, palette.border.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
+          .padding(horizontal = 9.dp, vertical = 5.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+      val ok = resolvedPreview.isSuccess
+      Text(
+        text = if (ok) "TARGET" else "CHECK",
+        style = TextStyle(fontFamily = JetBrainsMono, fontSize = 9.sp, fontWeight = FontWeight.Bold),
+        color = if (ok) palette.activePillFg else AmberWarn,
+      )
+      Text(
+        text = resolvedPreview.fold(
+          onSuccess = { it },
+          onFailure = { it.localizedMessage ?: "Enter a valid URL" },
+        ),
+        style = TextStyle(fontFamily = JetBrainsMono, fontSize = 10.5.sp),
+        color = if (ok) palette.textSecondary else AmberWarn,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.weight(1f),
+      )
     }
 
     // 2. Quick Actions & Presets
@@ -555,7 +618,8 @@ fun ApiTesterPane(
 
     Surface(
       color = palette.chromeSurface,
-      shape = RoundedCornerShape(12.dp),
+      shape = RoundedCornerShape(10.dp),
+      border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.55f)),
       modifier = Modifier.fillMaxWidth(),
     ) {
       Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -766,7 +830,8 @@ fun ApiTesterPane(
 
       Surface(
         color = palette.chromeSurface,
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.55f)),
         modifier = Modifier.fillMaxWidth().testTag("api_response_card"),
       ) {
         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -873,6 +938,12 @@ fun ApiTesterPane(
                 }
               }
             }
+          } else if (responseSubTab == 3 && res.errorMessage == null && isLikelyHtmlResponse(res.headers, res.body)) {
+            SandboxedHtmlPreviewBox(
+              baseUrl = res.url,
+              html = res.body,
+              modifier = Modifier.fillMaxWidth().height(260.dp).clip(RoundedCornerShape(8.dp)),
+            )
           } else {
             SelectionContainer {
               Box(
@@ -881,6 +952,7 @@ fun ApiTesterPane(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(8.dp))
                     .background(palette.editorBg)
+                    .border(0.75.dp, palette.border.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
                     .padding(10.dp),
               ) {
                 when (responseSubTab) {
@@ -888,10 +960,27 @@ fun ApiTesterPane(
                     val pretty = remember(res.body, res.errorMessage) {
                       res.errorMessage ?: JqEvaluator.prettyPrintIfJson(res.body)
                     }
-                    Text(pretty.ifBlank { "(empty body)" }, style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp), color = palette.textPrimary)
+                    val trimmed = pretty.trimStart()
+                    val isJson = res.errorMessage == null && (trimmed.startsWith("{") || trimmed.startsWith("["))
+                    if (isJson) {
+                      val highlighted = remember(pretty, palette) {
+                        SyntaxHighlighter.highlight(pretty, WorkerLanguage.JSON, palette)
+                      }
+                      Text(highlighted, style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp))
+                    } else {
+                      Text(
+                        text = pretty.ifBlank { "(empty body)" },
+                        style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
+                        color = if (res.errorMessage != null) RoseError else palette.textPrimary,
+                      )
+                    }
                   }
                   1 -> {
-                    Text((res.errorMessage ?: res.body).ifBlank { "(empty body)" }, style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp), color = palette.textPrimary)
+                    Text(
+                      text = (res.errorMessage ?: res.body).ifBlank { "(empty body)" },
+                      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
+                      color = if (res.errorMessage != null) RoseError else palette.textPrimary,
+                    )
                   }
                   2 -> {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -899,21 +988,24 @@ fun ApiTesterPane(
                         Text("(no response headers)", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
                       } else {
                         res.headers.forEach { (k, v) ->
-                          Text("$k: $v", style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp), color = palette.textPrimary)
+                          Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("$k:", style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold), color = palette.activePillFg)
+                            Text(v, style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp), color = palette.textPrimary)
+                          }
                         }
                       }
                     }
                   }
                   else -> {
                     val previewText =
-                      remember(res.body) {
-                        if (res.body.contains("<html", ignoreCase = true) || res.body.contains("<body", ignoreCase = true)) {
-                          res.body.replace(Regex("<[^>]+>"), " ").replace(Regex("\\s+"), " ").trim()
-                        } else {
-                          JqEvaluator.prettyPrintIfJson(res.body)
-                        }
+                      remember(res.body, res.errorMessage) {
+                        res.errorMessage ?: JqEvaluator.prettyPrintIfJson(res.body)
                       }
-                    Text(previewText.ifBlank { "(no preview content)" }, style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
+                    Text(
+                      text = previewText.ifBlank { "(no preview content)" },
+                      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
+                      color = if (res.errorMessage != null) RoseError else palette.textPrimary,
+                    )
                   }
                 }
               }
@@ -1239,10 +1331,11 @@ private fun ApiActionChip(
     onClick = onClick,
     shape = RoundedCornerShape(8.dp),
     color = palette.chromePill,
+    border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.5f)),
     modifier = if (tag != null) Modifier.testTag(tag) else Modifier,
   ) {
     Row(
-      modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+      modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -1252,4 +1345,44 @@ private fun ApiActionChip(
       Text(label, style = MaterialTheme.typography.labelSmall, color = palette.textPrimary, fontWeight = FontWeight.Medium)
     }
   }
+}
+
+private fun isLikelyHtmlResponse(headers: Map<String, String>, body: String): Boolean {
+  val ct = headers.entries.firstOrNull { it.key.equals("Content-Type", ignoreCase = true) }?.value.orEmpty()
+  if (ct.contains("text/html", ignoreCase = true) || ct.contains("application/xhtml", ignoreCase = true)) return true
+  val lead = body.trimStart()
+  return lead.startsWith("<!doctype html", ignoreCase = true) ||
+    lead.startsWith("<html", ignoreCase = true) ||
+    lead.startsWith("<body", ignoreCase = true)
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun SandboxedHtmlPreviewBox(
+  baseUrl: String,
+  html: String,
+  modifier: Modifier = Modifier,
+) {
+  val renderKey = remember(baseUrl, html) { baseUrl to html }
+  AndroidView(
+    factory = { ctx ->
+      WebView(ctx).apply {
+        setBackgroundColor(android.graphics.Color.WHITE)
+        settings.javaScriptEnabled = false
+        settings.loadsImagesAutomatically = true
+        settings.useWideViewPort = true
+        settings.loadWithOverviewMode = true
+        webViewClient = WebViewClient()
+        tag = renderKey
+        loadDataWithBaseURL(baseUrl.ifBlank { "https://localhost/" }, html, "text/html", "utf-8", null)
+      }
+    },
+    update = { wv ->
+      if (wv.tag != renderKey) {
+        wv.tag = renderKey
+        wv.loadDataWithBaseURL(baseUrl.ifBlank { "https://localhost/" }, html, "text/html", "utf-8", null)
+      }
+    },
+    modifier = modifier,
+  )
 }

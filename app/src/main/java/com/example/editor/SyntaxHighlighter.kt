@@ -36,6 +36,7 @@ private class PaletteSpanStyles(palette: IdePalette) {
   val control = SpanStyle(color = palette.syntaxControl, fontWeight = FontWeight.Medium)
   val type = SpanStyle(color = palette.syntaxType)
   val function = SpanStyle(color = palette.syntaxFunction)
+  val operator = SpanStyle(color = palette.syntaxOperator)
 }
 
 object SyntaxHighlighter {
@@ -60,13 +61,37 @@ object SyntaxHighlighter {
       "false",
       "null",
       "undefined",
+      "NaN",
+      "Infinity",
       "interface",
       "type",
       "enum",
       "implements",
       "private",
       "public",
+      "protected",
       "readonly",
+      "static",
+      "abstract",
+      "declare",
+      "namespace",
+      "override",
+      "satisfies",
+      "keyof",
+      "infer",
+      "is",
+      "asserts",
+      "get",
+      "set",
+      "string",
+      "number",
+      "boolean",
+      "bigint",
+      "symbol",
+      "any",
+      "unknown",
+      "never",
+      "object",
     )
 
   private val controlKeywords =
@@ -93,6 +118,7 @@ object SyntaxHighlighter {
       "finally",
       "throw",
       "yield",
+      "debugger",
     )
 
   private val cloudflareGlobals =
@@ -105,34 +131,80 @@ object SyntaxHighlighter {
       "fetch",
       "caches",
       "crypto",
+      "SubtleCrypto",
+      "CryptoKey",
       "TextEncoder",
       "TextDecoder",
       "ReadableStream",
       "WritableStream",
       "TransformStream",
+      "WebSocket",
       "WebSocketPair",
       "HTMLRewriter",
+      "ExportedHandler",
+      "ExecutionContext",
+      "ScheduledController",
+      "KVNamespace",
+      "D1Database",
+      "D1Result",
+      "R2Bucket",
+      "R2Object",
+      "DurableObject",
+      "DurableObjectState",
+      "DurableObjectNamespace",
+      "Fetcher",
+      "MessageBatch",
+      "Queue",
+      "Ai",
+      "VectorizeIndex",
+      "Hyperdrive",
+      "WorkflowEntrypoint",
+      "WorkflowEvent",
+      "WorkflowStep",
+      "AbortController",
+      "AbortSignal",
+      "FormData",
+      "Blob",
+      "File",
+      "Uint8Array",
+      "ArrayBuffer",
       "JSON",
       "Math",
       "Date",
       "Promise",
       "Map",
       "Set",
+      "WeakMap",
+      "WeakSet",
       "Array",
       "Object",
       "String",
       "Number",
+      "Boolean",
+      "RegExp",
       "Error",
+      "TypeError",
+      "Record",
+      "Partial",
+      "Required",
+      "Pick",
+      "Omit",
       "console",
       "env",
       "ctx",
+      "cf",
+      "atob",
+      "btoa",
+      "structuredClone",
+      "setTimeout",
+      "clearTimeout",
     )
 
   private data class HighlightCacheKey(
     val textHash: Int,
     val length: Int,
     val language: WorkerLanguage,
-    val isDark: Boolean,
+    val paletteHash: Int,
   )
 
   private data class HighlightCacheEntry(
@@ -141,7 +213,7 @@ object SyntaxHighlighter {
   )
 
   private val cacheLock = Any()
-  private val stylesCache = HashMap<IdePalette, PaletteSpanStyles>(4)
+  private val stylesCache = HashMap<IdePalette, PaletteSpanStyles>(8)
   private val highlightCache =
     object : LinkedHashMap<HighlightCacheKey, HighlightCacheEntry>(32, 0.75f, true) {
       override fun removeEldestEntry(eldest: MutableMap.MutableEntry<HighlightCacheKey, HighlightCacheEntry>?): Boolean {
@@ -155,7 +227,7 @@ object SyntaxHighlighter {
     }
   }
 
-  private const val MAX_HIGHLIGHT_CHARS = 30_000
+  private const val MAX_HIGHLIGHT_CHARS = 35_000
 
   fun highlightWithDiagnostics(
     code: String,
@@ -257,7 +329,7 @@ object SyntaxHighlighter {
       return AnnotatedString(code)
     }
 
-    val cacheKey = HighlightCacheKey(code.hashCode(), code.length, language, palette.isDark)
+    val cacheKey = HighlightCacheKey(code.hashCode(), code.length, language, palette.hashCode())
     synchronized(cacheLock) {
       val cached = highlightCache[cacheKey]
       if (cached != null && cached.rawText == code) {
@@ -267,37 +339,104 @@ object SyntaxHighlighter {
 
     val styles = stylesFor(palette)
     val builder = AnnotatedString.Builder(code)
-    val len = code.length
-    var i = 0
+    highlightRange(code, 0, code.length, language, styles, builder)
 
-    while (i < len) {
+    val result = builder.toAnnotatedString()
+    synchronized(cacheLock) {
+      highlightCache[cacheKey] = HighlightCacheEntry(code, result)
+    }
+    return result
+  }
+
+  private fun highlightRange(
+    code: String,
+    start: Int,
+    endLimit: Int,
+    language: WorkerLanguage,
+    styles: PaletteSpanStyles,
+    builder: AnnotatedString.Builder,
+  ) {
+    var i = start
+    while (i < endLimit) {
       val c = code[i]
 
       // Line comment //
-      if (c == '/' && i + 1 < len && code[i + 1] == '/') {
-        val end = code.indexOf('\n', i).let { if (it == -1) len else it }
+      if (c == '/' && i + 1 < endLimit && code[i + 1] == '/') {
+        val end = code.indexOf('\n', i).let { if (it == -1 || it > endLimit) endLimit else it }
         builder.addStyle(styles.comment, i, end)
         i = end
         continue
       }
 
       // Block comment /* ... */
-      if (c == '/' && i + 1 < len && code[i + 1] == '*') {
-        val end = code.indexOf("*/", i + 2).let { if (it == -1) len else it + 2 }
+      if (c == '/' && i + 1 < endLimit && code[i + 1] == '*') {
+        val end = code.indexOf("*/", i + 2).let { if (it == -1 || it + 2 > endLimit) endLimit else it + 2 }
         builder.addStyle(styles.comment, i, end)
         i = end
         continue
       }
 
-      // Strings ', ", `
-      if (c == '"' || c == '\'' || c == '`') {
-        val quote = c
+      // Template literal `...${expr}...` with interpolation highlighting
+      if (c == '`' && language != WorkerLanguage.JSON) {
+        var segStart = i
         var j = i + 1
-        while (j < len) {
-          if (quote != '`' && code[j] == '\n') {
+        while (j < endLimit) {
+          if (code[j] == '\\' && j + 1 < endLimit) {
+            j += 2
+            continue
+          }
+          if (code[j] == '$' && j + 1 < endLimit && code[j + 1] == '{') {
+            if (j > segStart) builder.addStyle(styles.string, segStart, j)
+            builder.addStyle(styles.control, j, j + 2)
+            val exprStart = j + 2
+            var depth = 1
+            var k = exprStart
+            while (k < endLimit && depth > 0) {
+              when (code[k]) {
+                '\\' -> k += 2
+                '{' -> {
+                  depth++
+                  k++
+                }
+                '}' -> {
+                  depth--
+                  if (depth > 0) k++
+                }
+                else -> k++
+              }
+            }
+            if (k > exprStart) {
+              highlightRange(code, exprStart, k, language, styles, builder)
+            }
+            if (k < endLimit && code[k] == '}') {
+              builder.addStyle(styles.control, k, k + 1)
+              j = k + 1
+              segStart = j
+              continue
+            } else {
+              j = k
+              segStart = j
+              break
+            }
+          }
+          if (code[j] == '`') {
+            j++
             break
           }
-          if (code[j] == '\\' && j + 1 < len) {
+          j++
+        }
+        if (j > segStart) builder.addStyle(styles.string, segStart, j)
+        i = j
+        continue
+      }
+
+      // Strings ', "
+      if (c == '"' || c == '\'') {
+        val quote = c
+        var j = i + 1
+        while (j < endLimit) {
+          if (code[j] == '\n') break
+          if (code[j] == '\\' && j + 1 < endLimit) {
             j += 2
             continue
           }
@@ -308,16 +447,16 @@ object SyntaxHighlighter {
           j++
         }
         val isJsonKey =
-          language == WorkerLanguage.JSON && quote == '"' && isFollowedByColon(code, j)
+          language == WorkerLanguage.JSON && quote == '"' && isFollowedByColon(code, j, endLimit)
         builder.addStyle(if (isJsonKey) styles.propertyBold else styles.string, i, j)
         i = j
         continue
       }
 
-      // Numbers
-      if (c.isDigit() && (i == 0 || !code[i - 1].isLetterOrDigit())) {
+      // Numbers (decimal, hex, binary, scientific, bigint suffix)
+      if (c.isDigit() && (i == start || !code[i - 1].isLetterOrDigit())) {
         var j = i + 1
-        while (j < len && (code[j].isLetterOrDigit() || code[j] == '.' || code[j] == '_')) {
+        while (j < endLimit && (code[j].isLetterOrDigit() || code[j] == '.' || code[j] == '_')) {
           j++
         }
         builder.addStyle(styles.number, i, j)
@@ -325,10 +464,17 @@ object SyntaxHighlighter {
         continue
       }
 
-      // Identifiers & Keywords
+      // Arrow operator => and common operators
+      if (c == '=' && i + 1 < endLimit && code[i + 1] == '>') {
+        builder.addStyle(styles.control, i, i + 2)
+        i += 2
+        continue
+      }
+
+      // Identifiers, Keywords, Cloudflare Types & Functions
       if (c.isLetter() || c == '_' || c == '$') {
         var j = i + 1
-        while (j < len && (code[j].isLetterOrDigit() || code[j] == '_' || code[j] == '$')) {
+        while (j < endLimit && (code[j].isLetterOrDigit() || code[j] == '_' || code[j] == '$')) {
           j++
         }
         val word = code.substring(i, j)
@@ -339,8 +485,12 @@ object SyntaxHighlighter {
             word in controlKeywords -> styles.control
             word in jsKeywords -> styles.keyword
             word in cloudflareGlobals -> styles.type
-            j < len && code[j] == '(' -> styles.function
-            i > 0 && code[i - 1] == '.' -> styles.property
+            j < endLimit && code[j] == '(' -> styles.function
+            i > start && code[i - 1] == '.' -> styles.property
+            language == WorkerLanguage.TYPESCRIPT &&
+              word.length > 1 &&
+              word[0].isUpperCase() &&
+              word.any { it.isLowerCase() } -> styles.type
             else -> null
           }
         if (style != null) {
@@ -352,17 +502,11 @@ object SyntaxHighlighter {
 
       i++
     }
-
-    val result = builder.toAnnotatedString()
-    synchronized(cacheLock) {
-      highlightCache[cacheKey] = HighlightCacheEntry(code, result)
-    }
-    return result
   }
 
-  private fun isFollowedByColon(code: String, startIndex: Int): Boolean {
+  private fun isFollowedByColon(code: String, startIndex: Int, endLimit: Int): Boolean {
     var k = startIndex
-    while (k < code.length && code[k].isWhitespace()) k++
-    return k < code.length && code[k] == ':'
+    while (k < endLimit && code[k].isWhitespace()) k++
+    return k < endLimit && code[k] == ':'
   }
 }

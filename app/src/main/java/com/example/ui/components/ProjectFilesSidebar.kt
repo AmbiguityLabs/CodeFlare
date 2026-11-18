@@ -186,14 +186,14 @@ fun ProjectFilesSidebar(
       horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
       Surface(
-        color = palette.glassSurface,
-        shape = RoundedCornerShape(18.dp),
-        border = rememberGlassBorderStroke(1.dp),
-        modifier = Modifier.weight(1f).height(44.dp),
+        color = palette.chromeSurface,
+        shape = RoundedCornerShape(10.dp),
+        border = rememberGlassBorderStroke(0.75.dp),
+        modifier = Modifier.weight(1f).height(38.dp),
       ) {
         Row(
-          modifier = Modifier.fillMaxSize().padding(4.dp),
-          horizontalArrangement = Arrangement.spacedBy(3.dp),
+          modifier = Modifier.fillMaxSize().padding(3.dp),
+          horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
           SidebarSegmentChip(
             selected = activeSubTab == 0,
@@ -266,13 +266,13 @@ fun ProjectFilesSidebar(
           horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
           Surface(
-            color = palette.glassElevated,
-            shape = RoundedCornerShape(999.dp),
-            border = rememberGlassBorderStroke(1.dp),
+            color = palette.chromeSurface,
+            shape = RoundedCornerShape(10.dp),
+            border = rememberGlassBorderStroke(0.75.dp),
             modifier = Modifier.weight(1f, fill = false),
           ) {
             Row(
-              modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+              modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
@@ -361,10 +361,10 @@ fun ProjectFilesSidebar(
               ) {
                 Surface(
                   color = palette.glassElevated,
-                  shape = RoundedCornerShape(20.dp),
-                  shadowElevation = 10.dp,
-                  border = rememberGlassBorderStroke(1.dp),
-                  modifier = Modifier.widthIn(min = 210.dp, max = 250.dp),
+                  shape = RoundedCornerShape(12.dp),
+                  shadowElevation = 2.dp,
+                  border = rememberGlassBorderStroke(0.75.dp),
+                  modifier = Modifier.widthIn(min = 200.dp, max = 240.dp),
                 ) {
                   Column(modifier = Modifier.padding(vertical = 8.dp)) {
                     ProjectPopupMenuRow(Icons.Outlined.Add, "New file") {
@@ -571,7 +571,7 @@ private fun SidebarSegmentChip(
     modifier =
       modifier
         .fillMaxHeight()
-        .clip(RoundedCornerShape(14.dp))
+        .clip(RoundedCornerShape(8.dp))
         .background(chipBg)
         .clickable(onClick = onClick)
         .testTag(tag),
@@ -738,10 +738,10 @@ private fun ProjectTreeRowItem(
       ) {
         Surface(
           color = palette.glassElevated,
-          shape = RoundedCornerShape(16.dp),
-          shadowElevation = 8.dp,
-          border = rememberGlassBorderStroke(1.dp),
-          modifier = Modifier.widthIn(min = 200.dp, max = 250.dp),
+          shape = RoundedCornerShape(12.dp),
+          shadowElevation = 2.dp,
+          border = rememberGlassBorderStroke(0.75.dp),
+          modifier = Modifier.widthIn(min = 196.dp, max = 244.dp),
         ) {
           Column(modifier = Modifier.padding(vertical = 8.dp)) {
             Text(

@@ -3,6 +3,7 @@ package com.example.data.remote
 import android.util.Base64
 import java.net.URLEncoder
 import java.util.UUID
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 enum class ApiAuthType(val label: String) {
   NONE("None"),
@@ -163,10 +164,15 @@ object ApiRequestUtils {
     if (!input.contains("{{")) return input
     val activeMap = linkedMapOf<String, String>()
     if (!workerBaseUrl.isNullOrBlank()) {
-      activeMap["baseUrl"] = workerBaseUrl.trimEnd('/')
+      activeMap["baseUrl"] = workerBaseUrl.trim().trimEnd('/')
     }
     envVars.filter { it.enabled && it.key.isNotBlank() }.forEach {
-      activeMap[it.key.trim()] = it.value
+      val k = it.key.trim()
+      val v = it.value.trim()
+      // Never let an empty profile placeholder overwrite an active deployed workerBaseUrl
+      if (v.isNotEmpty() || !activeMap.containsKey(k)) {
+        activeMap[k] = v
+      }
     }
     return varPattern.replace(input) { match ->
       val key = match.groupValues[1]
@@ -174,29 +180,77 @@ object ApiRequestUtils {
     }
   }
 
+  private fun looksLikeBareHost(candidate: String): Boolean {
+    if (candidate.startsWith("/") || candidate.startsWith("?")) return false
+    val firstSegment = candidate.substringBefore('/').substringBefore('?').substringBefore('#')
+    if (firstSegment.isBlank()) return false
+    val hostOnly = firstSegment.substringBefore(':')
+    return hostOnly.equals("localhost", ignoreCase = true) ||
+      firstSegment.contains('.') ||
+      firstSegment.contains(':')
+  }
+
+  fun normalizeBareOrRelativeUrl(rawInput: String, fallbackBase: String?): Result<String> {
+    var expanded = rawInput.trim().replace("\r", "").replace("\n", "")
+    if (expanded.isEmpty()) expanded = "/"
+
+    val unresolved = varPattern.find(expanded)
+    if (unresolved != null) {
+      val varName = unresolved.groupValues[1]
+      val hint =
+        if (varName.equals("baseUrl", ignoreCase = true)) {
+          "Deploy your Worker first, enter a full https:// URL, or set '$varName' in the Env tab."
+        } else {
+          "Set '$varName' in the Env tab or replace {{$varName}} with a value."
+        }
+      return Result.failure(IllegalArgumentException("Unresolved variable '{{$varName}}'. $hint"))
+    }
+
+    if (!expanded.startsWith("http://", ignoreCase = true) && !expanded.startsWith("https://", ignoreCase = true)) {
+      if (looksLikeBareHost(expanded)) {
+        val lower = expanded.lowercase()
+        val scheme =
+          if (lower.startsWith("localhost") || lower.startsWith("127.0.0.1") || lower.startsWith("10.") || lower.startsWith("192.168.")) {
+            "http://"
+          } else {
+            "https://"
+          }
+        expanded = "$scheme$expanded"
+      } else {
+        if (fallbackBase.isNullOrBlank()) {
+          return Result.failure(
+            IllegalArgumentException(
+              "Relative path '$expanded' needs an active Worker URL, a full https:// URL, or a {{baseUrl}} Env variable.",
+            ),
+          )
+        }
+        val cleanBase = fallbackBase.trim().trimEnd('/')
+        val cleanPath = if (expanded.startsWith("/")) expanded else "/$expanded"
+        expanded = "$cleanBase$cleanPath"
+      }
+    }
+
+    if (expanded.toHttpUrlOrNull() == null) {
+      return Result.failure(
+        IllegalArgumentException("Invalid HTTP URL: '$expanded'. Check for spaces or malformed host syntax."),
+      )
+    }
+    return Result.success(expanded)
+  }
+
   fun resolveUrl(
     request: ApiTesterRequest,
     envVars: List<ApiEnvVar>,
     workerBaseUrl: String?,
   ): Result<String> {
-    var expanded = substituteVariables(request.url.trim(), envVars, workerBaseUrl)
-    if (expanded.isEmpty()) expanded = "/"
-    if (!expanded.startsWith("http://", ignoreCase = true) && !expanded.startsWith("https://", ignoreCase = true)) {
-      val base =
-        envVars.firstOrNull { it.enabled && it.key.equals("baseUrl", ignoreCase = true) && it.value.isNotBlank() }?.value
-          ?: workerBaseUrl
-      if (base.isNullOrBlank()) {
-        return Result.failure(
-          IllegalArgumentException("Relative URL '$expanded' requires an active Worker URL or {{baseUrl}} variable."),
-        )
-      }
-      val cleanBase = base.trimEnd('/')
-      val cleanPath = if (expanded.startsWith("/")) expanded else "/$expanded"
-      expanded = "$cleanBase$cleanPath"
-    }
+    val substituted = substituteVariables(request.url.trim(), envVars, workerBaseUrl)
+    val base =
+      envVars.firstOrNull { it.enabled && it.key.equals("baseUrl", ignoreCase = true) && it.value.isNotBlank() }?.value
+        ?: workerBaseUrl
+    val normalized = normalizeBareOrRelativeUrl(substituted, base).getOrElse { return Result.failure(it) }
 
     val enabledParams = request.params.filter { it.enabled && it.key.isNotBlank() }
-    if (enabledParams.isEmpty()) return Result.success(expanded)
+    if (enabledParams.isEmpty()) return Result.success(normalized)
 
     val queryString =
       enabledParams.joinToString("&") { p ->
@@ -204,9 +258,22 @@ object ApiRequestUtils {
         val v = URLEncoder.encode(substituteVariables(p.value, envVars, workerBaseUrl), "UTF-8")
         "$k=$v"
       }
-    val sep = if (expanded.contains("?")) "&" else "?"
-    return Result.success("$expanded$sep$queryString")
+    val hashIdx = normalized.indexOf('#')
+    val beforeHash = if (hashIdx >= 0) normalized.substring(0, hashIdx) else normalized
+    val hashSuffix = if (hashIdx >= 0) normalized.substring(hashIdx) else ""
+    val sep = if (beforeHash.contains("?")) "&" else "?"
+    val finalUrl = "$beforeHash$sep$queryString$hashSuffix"
+    if (finalUrl.toHttpUrlOrNull() == null) {
+      return Result.failure(IllegalArgumentException("Malformed URL after query parameters: '$finalUrl'"))
+    }
+    return Result.success(finalUrl)
   }
+
+  fun methodSupportsBody(method: String): Boolean =
+    method.uppercase() in setOf("POST", "PUT", "PATCH", "DELETE")
+
+  private fun sanitizeHeaderPart(raw: String): String =
+    raw.replace("\r", "").replace("\n", "").trim()
 
   fun buildHeadersAndBody(
     request: ApiTesterRequest,
@@ -215,13 +282,17 @@ object ApiRequestUtils {
   ): Pair<Map<String, String>, String> {
     val headers = linkedMapOf<String, String>()
     request.headers.filter { it.enabled && it.key.isNotBlank() }.forEach { h ->
-      headers[h.key.trim()] = substituteVariables(h.value, envVars, workerBaseUrl)
+      val key = sanitizeHeaderPart(h.key)
+      val value = sanitizeHeaderPart(substituteVariables(h.value, envVars, workerBaseUrl))
+      if (key.isNotEmpty()) {
+        headers[key] = value
+      }
     }
 
     when (request.authType) {
       ApiAuthType.NONE -> Unit
       ApiAuthType.BEARER -> {
-        val tok = substituteVariables(request.bearerToken.trim(), envVars, workerBaseUrl)
+        val tok = sanitizeHeaderPart(substituteVariables(request.bearerToken, envVars, workerBaseUrl))
         if (tok.isNotEmpty()) headers["Authorization"] = "Bearer $tok"
       }
       ApiAuthType.BASIC -> {
@@ -231,38 +302,43 @@ object ApiRequestUtils {
         headers["Authorization"] = "Basic $encoded"
       }
       ApiAuthType.API_KEY -> {
-        val k = request.apiKeyName.trim()
-        val v = substituteVariables(request.apiKeyValue, envVars, workerBaseUrl)
+        val k = sanitizeHeaderPart(request.apiKeyName)
+        val v = sanitizeHeaderPart(substituteVariables(request.apiKeyValue, envVars, workerBaseUrl))
         if (k.isNotEmpty() && v.isNotEmpty()) headers[k] = v
       }
     }
 
+    val allowBody = methodSupportsBody(request.method)
     val bodyText =
-      when (request.bodyType) {
-        ApiBodyType.NONE -> ""
-        ApiBodyType.JSON -> {
-          if (headers.keys.none { it.equals("Content-Type", ignoreCase = true) }) {
-            headers["Content-Type"] = "application/json"
-          }
-          substituteVariables(request.rawBody, envVars, workerBaseUrl)
-        }
-        ApiBodyType.FORM_URLENCODED -> {
-          if (headers.keys.none { it.equals("Content-Type", ignoreCase = true) }) {
-            headers["Content-Type"] = "application/x-www-form-urlencoded"
-          }
-          request.formRows
-            .filter { it.enabled && it.key.isNotBlank() }
-            .joinToString("&") { row ->
-              val k = URLEncoder.encode(substituteVariables(row.key.trim(), envVars, workerBaseUrl), "UTF-8")
-              val v = URLEncoder.encode(substituteVariables(row.value, envVars, workerBaseUrl), "UTF-8")
-              "$k=$v"
+      if (!allowBody) {
+        ""
+      } else {
+        when (request.bodyType) {
+          ApiBodyType.NONE -> ""
+          ApiBodyType.JSON -> {
+            if (headers.keys.none { it.equals("Content-Type", ignoreCase = true) }) {
+              headers["Content-Type"] = "application/json"
             }
-        }
-        ApiBodyType.RAW -> {
-          if (headers.keys.none { it.equals("Content-Type", ignoreCase = true) }) {
-            headers["Content-Type"] = "text/plain; charset=utf-8"
+            substituteVariables(request.rawBody, envVars, workerBaseUrl)
           }
-          substituteVariables(request.rawBody, envVars, workerBaseUrl)
+          ApiBodyType.FORM_URLENCODED -> {
+            if (headers.keys.none { it.equals("Content-Type", ignoreCase = true) }) {
+              headers["Content-Type"] = "application/x-www-form-urlencoded"
+            }
+            request.formRows
+              .filter { it.enabled && it.key.isNotBlank() }
+              .joinToString("&") { row ->
+                val k = URLEncoder.encode(substituteVariables(row.key.trim(), envVars, workerBaseUrl), "UTF-8")
+                val v = URLEncoder.encode(substituteVariables(row.value, envVars, workerBaseUrl), "UTF-8")
+                "$k=$v"
+              }
+          }
+          ApiBodyType.RAW -> {
+            if (headers.keys.none { it.equals("Content-Type", ignoreCase = true) }) {
+              headers["Content-Type"] = "text/plain; charset=utf-8"
+            }
+            substituteVariables(request.rawBody, envVars, workerBaseUrl)
+          }
         }
       }
 

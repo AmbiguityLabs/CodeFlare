@@ -1,11 +1,15 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import java.io.File
+import java.io.FileOutputStream
 import com.example.data.auth.CloudflareOAuthManager
 import com.example.data.auth.GitHubDeviceCodeResponse
 import com.example.data.auth.GitHubOAuthManager
@@ -212,6 +216,8 @@ data class IdeUiState(
   val showFindBar: Boolean = false,
   val findQuery: String = "",
   val replaceQuery: String = "",
+  val findMatchCase: Boolean = false,
+  val findScope: Int = 0, // 0 = Current Tab, 1 = Open Tabs, 2 = All Files
   val searchQuery: String = "",
   val editorSettings: EditorSettings = EditorSettings(),
   // Deployed Worker Live Preview & Testing Window
@@ -2626,29 +2632,86 @@ export default {
 
   fun sendPreviewHttpTest() {
     val state = _uiState.value
-    var rawUrl = state.previewUrl.trim()
     val baseFallback = resolveDefaultPreviewUrl(state.workspace)
-    if (rawUrl.isEmpty()) rawUrl = baseFallback
-    if (rawUrl.isEmpty()) {
-      _uiState.update { it.copy(statusMessage = "Deploy your Worker or enter a https://...workers.dev URL to test") }
-      return
-    }
-    if (!rawUrl.startsWith("http://", ignoreCase = true) && !rawUrl.startsWith("https://", ignoreCase = true)) {
-      if (baseFallback.isNotBlank()) {
-        rawUrl = baseFallback.trimEnd('/') + if (rawUrl.startsWith("/")) rawUrl else "/$rawUrl"
-      } else {
-        rawUrl = "https://$rawUrl"
-      }
-    }
-
-    val headersMap = linkedMapOf<String, String>()
-    runCatching {
-      val obj = JSONObject(state.previewHttpHeadersJson.ifBlank { "{}" })
-      obj.keys().forEach { k -> headersMap[k] = obj.optString(k) }
-    }
-
+    val rawCandidate = state.previewUrl.trim().ifEmpty { baseFallback }
     val method = state.previewHttpMethod.uppercase()
     val bodyText = state.previewHttpBody
+
+    if (rawCandidate.isEmpty()) {
+      val msg = "Deploy your Worker or enter a https://...workers.dev URL to test."
+      _uiState.update {
+        it.copy(
+          statusMessage = msg,
+          previewHttpResult =
+            HttpTestResult(
+              url = "",
+              method = method,
+              statusCode = 0,
+              statusText = "Missing URL",
+              durationMs = 0L,
+              headers = emptyMap(),
+              body = "",
+              errorMessage = msg,
+            ),
+        )
+      }
+      return
+    }
+
+    val rawUrl =
+      ApiRequestUtils.normalizeBareOrRelativeUrl(rawCandidate, baseFallback).getOrElse { err ->
+        val msg = err.localizedMessage ?: "Invalid Worker URL"
+        _uiState.update {
+          it.copy(
+            statusMessage = msg,
+            previewHttpResult =
+              HttpTestResult(
+                url = rawCandidate,
+                method = method,
+                statusCode = 0,
+                statusText = "Invalid URL",
+                durationMs = 0L,
+                headers = emptyMap(),
+                body = "",
+                errorMessage = msg,
+              ),
+          )
+        }
+        return
+      }
+
+    val headersMap = linkedMapOf<String, String>()
+    val headersRaw = state.previewHttpHeadersJson.trim()
+    if (headersRaw.isNotEmpty() && headersRaw != "{}") {
+      val parsedHeaders =
+        runCatching {
+          val obj = JSONObject(headersRaw)
+          obj.keys().forEach { k ->
+            val cleanKey = k.trim()
+            if (cleanKey.isNotEmpty()) headersMap[cleanKey] = obj.optString(k)
+          }
+        }
+      if (parsedHeaders.isFailure) {
+        val msg = "Headers JSON is malformed: ${parsedHeaders.exceptionOrNull()?.localizedMessage ?: "expected valid JSON object"}"
+        _uiState.update {
+          it.copy(
+            statusMessage = msg,
+            previewHttpResult =
+              HttpTestResult(
+                url = rawUrl,
+                method = method,
+                statusCode = 0,
+                statusText = "Invalid Headers",
+                durationMs = 0L,
+                headers = emptyMap(),
+                body = "",
+                errorMessage = msg,
+              ),
+          )
+        }
+        return
+      }
+    }
 
     _uiState.update {
       it.copy(
@@ -3135,7 +3198,7 @@ export default {
     _uiState.update { it.copy(statusMessage = null) }
   }
 
-  // Find & Replace
+  // Find & Replace (Multi-file tab aware)
   fun toggleFindBar(show: Boolean? = null) {
     _uiState.update { it.copy(showFindBar = show ?: !it.showFindBar) }
   }
@@ -3148,33 +3211,237 @@ export default {
     _uiState.update { it.copy(replaceQuery = q) }
   }
 
+  fun toggleFindMatchCase() {
+    _uiState.update { it.copy(findMatchCase = !it.findMatchCase) }
+  }
+
+  fun setFindScope(scope: Int) {
+    _uiState.update { it.copy(findScope = scope.coerceIn(0, 2)) }
+  }
+
+  private fun findSearchablePaths(state: IdeUiState): List<String> {
+    val ws = state.workspace ?: return emptyList()
+    return when (state.findScope) {
+      0 -> listOfNotNull(state.activeFilePath)
+      1 -> state.openTabPaths.ifEmpty { listOfNotNull(state.activeFilePath) }
+      else -> ws.files.map { it.path }
+    }
+  }
+
+  private fun fileContentForPath(state: IdeUiState, path: String): String {
+    return state.editorFieldValues[path]?.text
+      ?: state.workspace?.files?.firstOrNull { it.path == path }?.content
+      ?: ""
+  }
+
   fun findNextMatch() {
-    val q = _uiState.value.findQuery
+    val state = _uiState.value
+    val q = state.findQuery
     if (q.isEmpty()) return
-    val tfv = _uiState.value.activeTextFieldValue
+    val ignoreCase = !state.findMatchCase
+    val activePath = state.activeFilePath ?: return
+    val tfv = state.activeTextFieldValue
     val from = tfv.selection.end.coerceIn(0, tfv.text.length)
-    var idx = tfv.text.indexOf(q, from, ignoreCase = true)
-    if (idx < 0 && from > 0) idx = tfv.text.indexOf(q, 0, ignoreCase = true)
+    var idx = tfv.text.indexOf(q, from, ignoreCase = ignoreCase)
+    if (idx < 0 && state.findScope == 0 && from > 0) {
+      idx = tfv.text.indexOf(q, 0, ignoreCase = ignoreCase)
+    }
     if (idx >= 0) {
-      val path = _uiState.value.activeFilePath ?: return
-      _uiState.update { state ->
-        state.copy(
-          editorRevision = state.editorRevision + 1L,
-          editorFieldValues =
-            state.editorFieldValues +
-              (path to tfv.copy(selection = TextRange(idx, idx + q.length)))
+      _uiState.update { s ->
+        s.copy(
+          editorRevision = s.editorRevision + 1L,
+          editorFieldValues = s.editorFieldValues + (activePath to tfv.copy(selection = TextRange(idx, idx + q.length))),
         )
       }
+      return
+    }
+
+    // Multi-tab / project wrap-around search
+    if (state.findScope > 0) {
+      val paths = findSearchablePaths(state)
+      val curPos = paths.indexOf(activePath).coerceAtLeast(0)
+      for (offset in 1..paths.size) {
+        val candidatePath = paths[(curPos + offset) % paths.size]
+        val content = fileContentForPath(state, candidatePath)
+        val hit = content.indexOf(q, 0, ignoreCase = ignoreCase)
+        if (hit >= 0) {
+          openFileTab(candidatePath, recordHistory = true)
+          _uiState.update { s ->
+            val nextTfv = s.editorFieldValues[candidatePath] ?: TextFieldValue(content)
+            s.copy(
+              editorRevision = s.editorRevision + 1L,
+              editorFieldValues = s.editorFieldValues + (candidatePath to nextTfv.copy(selection = TextRange(hit, hit + q.length))),
+            )
+          }
+          return
+        }
+      }
+    }
+    _uiState.update { it.copy(statusMessage = "No matches for '$q'") }
+  }
+
+  fun findPreviousMatch() {
+    val state = _uiState.value
+    val q = state.findQuery
+    if (q.isEmpty()) return
+    val ignoreCase = !state.findMatchCase
+    val activePath = state.activeFilePath ?: return
+    val tfv = state.activeTextFieldValue
+    val before = (tfv.selection.start - 1).coerceAtLeast(-1)
+    var idx = if (before >= 0) tfv.text.lastIndexOf(q, before, ignoreCase = ignoreCase) else -1
+    if (idx < 0 && state.findScope == 0) {
+      idx = tfv.text.lastIndexOf(q, tfv.text.length, ignoreCase = ignoreCase)
+    }
+    if (idx >= 0) {
+      _uiState.update { s ->
+        s.copy(
+          editorRevision = s.editorRevision + 1L,
+          editorFieldValues = s.editorFieldValues + (activePath to tfv.copy(selection = TextRange(idx, idx + q.length))),
+        )
+      }
+      return
+    }
+
+    if (state.findScope > 0) {
+      val paths = findSearchablePaths(state)
+      val curPos = paths.indexOf(activePath).coerceAtLeast(0)
+      for (offset in 1..paths.size) {
+        val candidatePath = paths[(curPos - offset + paths.size) % paths.size]
+        val content = fileContentForPath(state, candidatePath)
+        val hit = content.lastIndexOf(q, content.length, ignoreCase = ignoreCase)
+        if (hit >= 0) {
+          openFileTab(candidatePath, recordHistory = true)
+          _uiState.update { s ->
+            val nextTfv = s.editorFieldValues[candidatePath] ?: TextFieldValue(content)
+            s.copy(
+              editorRevision = s.editorRevision + 1L,
+              editorFieldValues = s.editorFieldValues + (candidatePath to nextTfv.copy(selection = TextRange(hit, hit + q.length))),
+            )
+          }
+          return
+        }
+      }
+    }
+    _uiState.update { it.copy(statusMessage = "No matches for '$q'") }
+  }
+
+  fun replaceCurrentMatch() {
+    val state = _uiState.value
+    val q = state.findQuery
+    if (q.isEmpty()) return
+    val ignoreCase = !state.findMatchCase
+    val activeFile = state.activeFile
+    if (activeFile?.isVirtualReadOnly == true) {
+      _uiState.update { it.copy(statusMessage = "Active file is read-only") }
+      return
+    }
+    val tfv = state.activeTextFieldValue
+    val selStart = tfv.selection.min.coerceIn(0, tfv.text.length)
+    val selEnd = tfv.selection.max.coerceIn(0, tfv.text.length)
+    val selectedText = if (selEnd > selStart) tfv.text.substring(selStart, selEnd) else ""
+    if (selectedText.equals(q, ignoreCase = ignoreCase)) {
+      val replacement = state.replaceQuery
+      val updated = tfv.text.substring(0, selStart) + replacement + tfv.text.substring(selEnd)
+      val newCursor = selStart + replacement.length
+      updateEditorValue(TextFieldValue(updated, TextRange(newCursor, newCursor)))
+      findNextMatch()
+    } else {
+      findNextMatch()
     }
   }
 
   fun replaceAllMatches() {
-    val q = _uiState.value.findQuery
+    val state = _uiState.value
+    val q = state.findQuery
     if (q.isEmpty()) return
-    val tfv = _uiState.value.activeTextFieldValue
-    val updated = tfv.text.replace(q, _uiState.value.replaceQuery, ignoreCase = true)
-    if (updated != tfv.text) {
-      updateEditorValue(TextFieldValue(updated, TextRange(0)))
+    val ignoreCase = !state.findMatchCase
+    val replacement = state.replaceQuery
+    when (state.findScope) {
+      0 -> {
+        val activeFile = state.activeFile
+        if (activeFile?.isVirtualReadOnly == true) {
+          _uiState.update { it.copy(statusMessage = "Active file is read-only") }
+          return
+        }
+        val tfv = state.activeTextFieldValue
+        val count = countOccurrences(tfv.text, q, ignoreCase)
+        if (count == 0) {
+          _uiState.update { it.copy(statusMessage = "No matches for '$q' in this tab") }
+          return
+        }
+        val updated = tfv.text.replace(q, replacement, ignoreCase = ignoreCase)
+        updateEditorValue(TextFieldValue(updated, TextRange(0)))
+        _uiState.update { it.copy(statusMessage = "Replaced $count match(es) in ${activeFile?.path ?: "tab"}") }
+      }
+      1 -> {
+        val openSet = state.openTabPaths.toSet()
+        replaceInScopedFiles(q, replacement, ignoreCase = ignoreCase, allowedPaths = openSet, scopeLabel = "open tab(s)")
+      }
+      else -> {
+        replaceInScopedFiles(q, replacement, ignoreCase = ignoreCase, allowedPaths = null, scopeLabel = "file(s)")
+      }
+    }
+  }
+
+  private fun countOccurrences(text: String, query: String, ignoreCase: Boolean): Int {
+    if (query.isEmpty()) return 0
+    var count = 0
+    var idx = 0
+    while (idx <= text.length - query.length) {
+      val found = text.indexOf(query, idx, ignoreCase = ignoreCase)
+      if (found < 0) break
+      count++
+      idx = found + query.length
+    }
+    return count
+  }
+
+  private fun replaceInScopedFiles(
+    findQuery: String,
+    replaceQuery: String,
+    ignoreCase: Boolean,
+    allowedPaths: Set<String>?,
+    scopeLabel: String,
+  ) {
+    val ws = _uiState.value.workspace ?: return
+    if (findQuery.isEmpty()) return
+    var fileHits = 0
+    var totalMatches = 0
+    val nextFields = _uiState.value.editorFieldValues.toMutableMap()
+    val updatedFiles =
+      ws.files.map { f ->
+        val inScope = allowedPaths == null || f.path in allowedPaths
+        val currentText = nextFields[f.path]?.text ?: f.content
+        if (inScope && !f.isVirtualReadOnly && currentText.contains(findQuery, ignoreCase = ignoreCase)) {
+          val count = countOccurrences(currentText, findQuery, ignoreCase)
+          fileHits++
+          totalMatches += count
+          val nextText = currentText.replace(findQuery, replaceQuery, ignoreCase = ignoreCase)
+          nextFields[f.path] = TextFieldValue(nextText)
+          f.copy(content = nextText)
+        } else {
+          f
+        }
+      }
+    if (fileHits == 0) {
+      _uiState.update { it.copy(statusMessage = "No matches found for '$findQuery'") }
+      return
+    }
+    val nextWs = ws.copy(files = updatedFiles)
+    val ramKey = activeWorkspaceKey()
+    if (ramKey != null) {
+      ramDb.updateWorkspace(ramKey) { rec -> rec.copy(workingWorkspace = nextWs, fieldValues = nextFields) }
+      persistWorkspaceToProjectDirAsync(ramKey)
+    }
+    _uiState.update { state ->
+      state.copy(
+        workspace = nextWs,
+        editorFieldValues = nextFields,
+        editorRevision = state.editorRevision + 1L,
+        diagnostics = updatedFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+        ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else state.ramDbStats,
+        statusMessage = "Replaced $totalMatches match(es) across $fileHits $scopeLabel",
+      )
     }
   }
 
@@ -7076,7 +7343,25 @@ jobs:
     val workerBaseUrl = state.workspace?.workersDevUrl
     val resolvedUrlResult = ApiRequestUtils.resolveUrl(req, state.apiEnvVars, workerBaseUrl)
     val url = resolvedUrlResult.getOrElse { err ->
-      _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Invalid request URL") }
+      val msg = err.localizedMessage ?: "Invalid request URL"
+      _uiState.update {
+        it.copy(
+          isRunningHttpTest = false,
+          statusMessage = msg,
+          httpTestResult =
+            HttpTestResult(
+              url = req.url,
+              method = req.method,
+              statusCode = 0,
+              statusText = "Invalid URL",
+              durationMs = 0L,
+              headers = emptyMap(),
+              body = "",
+              errorMessage = msg,
+            ),
+          apiAssertionResults = emptyList(),
+        )
+      }
       return
     }
     val (headersMap, bodyText) = ApiRequestUtils.buildHeadersAndBody(req, state.apiEnvVars, workerBaseUrl)
@@ -7498,6 +7783,72 @@ jobs:
 
   fun resetEditorZoom() {
     setEditorZoomPercent(100)
+  }
+
+  fun setCustomEditorBackground(uri: Uri) {
+    viewModelScope.launch {
+      val savedResult =
+        withContext(Dispatchers.IO) {
+          runCatching {
+            val resolver = getApplication<Application>().contentResolver
+            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, boundsOpts) }
+            val rawW = boundsOpts.outWidth.coerceAtLeast(1)
+            val rawH = boundsOpts.outHeight.coerceAtLeast(1)
+            val maxDim = 2048
+            var sampleSize = 1
+            while ((rawW / sampleSize) > maxDim || (rawH / sampleSize) > maxDim) {
+              sampleSize *= 2
+            }
+            val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+            val decoded =
+              resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, decodeOpts) }
+                ?: error("Unable to read selected image")
+
+            val bgDir = File(getApplication<Application>().filesDir, "editor_backgrounds").apply { mkdirs() }
+            bgDir.listFiles()?.forEach { runCatching { it.delete() } }
+            val outFile = File(bgDir, "editor_bg_${System.currentTimeMillis()}.jpg")
+            FileOutputStream(outFile).use { fos ->
+              decoded.compress(Bitmap.CompressFormat.JPEG, 90, fos)
+            }
+            decoded.recycle()
+            outFile.absolutePath
+          }
+        }
+      savedResult
+        .onSuccess { path ->
+          prefsStore.updateEditorSettings {
+            it.copy(
+              editorBgPreset = "CUSTOM",
+              editorBgImagePath = path,
+              editorBgOffsetX = 0f,
+              editorBgOffsetY = 0f,
+            )
+          }
+          _uiState.update { it.copy(statusMessage = "Custom editor background updated") }
+        }
+        .onFailure { err ->
+          _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Failed to load background image") }
+        }
+    }
+  }
+
+  fun clearCustomEditorBackground() {
+    viewModelScope.launch {
+      withContext(Dispatchers.IO) {
+        val bgDir = File(getApplication<Application>().filesDir, "editor_backgrounds")
+        bgDir.listFiles()?.forEach { runCatching { it.delete() } }
+      }
+      prefsStore.updateEditorSettings {
+        it.copy(
+          editorBgPreset = "NONE",
+          editorBgImagePath = "",
+          editorBgOffsetX = 0f,
+          editorBgOffsetY = 0f,
+        )
+      }
+      _uiState.update { it.copy(statusMessage = "Editor background reset to solid") }
+    }
   }
 
   fun clearCloudflareCredentialTestMessage() {
