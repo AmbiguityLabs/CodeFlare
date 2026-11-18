@@ -119,6 +119,8 @@ import com.example.ui.components.EdgeMenuQuickAction
 import com.example.ui.components.EdgeMenuQuickActionRow
 import com.example.ui.components.EdgeMenuSection
 import com.example.ui.components.EdgeMenuTone
+import com.example.ui.components.EdgeMenuUiLayer
+import com.example.ui.components.EdgeMenuUiLayersPanel
 import com.example.ui.components.EdgeBottomDock
 import com.example.ui.components.EdgeBottomDockItem
 import com.example.ui.components.GitHubAndDiffPanel
@@ -570,12 +572,21 @@ fun IdeWorkspaceScreen(
         },
         PaletteCommand(
           title =
-            if (uiState.isBottomDockHidden && uiState.isEditorBottomBarsHidden) "Show All Bottom Menus"
-            else "Hide All Bottom Menus",
-          subtitle = "Collapse or restore bottom dock and editor toolbars",
+            if (
+              uiState.isTopBarHidden &&
+              uiState.isEditorTopChromeHidden &&
+              uiState.isEditorBottomBarsHidden &&
+              uiState.isBottomDockHidden
+            ) "Show All UI Layers (4/4)"
+            else "Hide All UI Layers (Zen Mode)",
+          subtitle = "Collapse or restore Top Bar, Tabs & Path, Editor Bar, and Bottom Dock",
         ) {
-          val shouldHide = !(uiState.isBottomDockHidden && uiState.isEditorBottomBarsHidden)
-          viewModel.toggleAllBottomMenus(shouldHide)
+          val allHidden =
+            uiState.isTopBarHidden &&
+              uiState.isEditorTopChromeHidden &&
+              uiState.isEditorBottomBarsHidden &&
+              uiState.isBottomDockHidden
+          viewModel.toggleAllUiChrome(!allHidden)
         },
         PaletteCommand("Export / Deploy Worker to Cloudflare", "Publish all local edits, bindings & deletions live") {
           viewModel.deployActiveWorker()
@@ -684,8 +695,13 @@ fun IdeWorkspaceScreen(
             .imePadding(),
       ) {
         Column(modifier = Modifier.fillMaxSize()) {
-          // Clean Single-Project Top Header Bar (hidden in Fullscreen Preview)
-          if (!isFullScreenPreview) {
+          // Layer 1: Single-Project Top Header Bar (hideable via Hide UI or UI Layers L1)
+          AnimatedVisibility(
+            visible = !isFullScreenPreview && !uiState.isTopBarHidden,
+            enter = slideInVertically(tween(180)) { -it } + fadeIn(tween(160)),
+            exit = slideOutVertically(tween(150)) { -it } + fadeOut(tween(130)),
+          ) {
+          Column(modifier = Modifier.fillMaxWidth()) {
           Row(
             modifier =
               Modifier
@@ -825,226 +841,16 @@ fun IdeWorkspaceScreen(
               }
             }
 
-            Box {
-              IconButton(
-                onClick = { overflowMenuOpen = true },
-                modifier = Modifier.size(38.dp).testTag("project_overflow_menu_button"),
-              ) {
-                Icon(
-                  imageVector = Icons.Outlined.MoreVert,
-                  contentDescription = "Project actions",
-                  tint = palette.textSecondary,
-                  modifier = Modifier.size(20.dp),
-                )
-              }
-
-              EdgeMenu(
-                expanded = overflowMenuOpen,
-                onDismissRequest = { overflowMenuOpen = false },
-                minWidth = 258.dp,
-                maxWidth = 296.dp,
-              ) {
-                val activeWs = uiState.workspace
-                val menuFileCount = activeWs?.files?.count { !it.isVirtualReadOnly } ?: 0
-                val menuDirtyCount = activeWs?.files?.count { it.isDirty } ?: 0
-                val allHidden = uiState.isBottomDockHidden && uiState.isEditorBottomBarsHidden
-                val effectiveSub = activeWs?.accountSubdomain?.takeIf { it.isNotBlank() } ?: uiState.accountSubdomain
-
-                EdgeMenuHeader(
-                  title = activeWs?.scriptName ?: "Project",
-                  subtitle =
-                    when {
-                      menuDirtyCount > 0 -> "$menuDirtyCount edited · unsaved"
-                      uiState.isLocalScratchpad -> "Local workspace"
-                      else -> "Synced with Cloudflare"
-                    },
-                  badgeText = if (activeWs != null) "$menuFileCount files" else null,
-                  leadingIcon = Icons.Outlined.Code,
-                )
-
-                val quickActions =
-                  buildList {
-                    if (!isExpanded) {
-                      add(
-                        EdgeMenuQuickAction(
-                          label = "Files",
-                          icon = Icons.Outlined.FolderOpen,
-                          onClick = {
-                            overflowMenuOpen = false
-                            scope.launch { drawerState.open() }
-                          },
-                        ),
-                      )
-                    } else {
-                      add(
-                        EdgeMenuQuickAction(
-                          label = "Palette",
-                          icon = Icons.Outlined.Terminal,
-                          onClick = {
-                            overflowMenuOpen = false
-                            showCommandPalette = true
-                          },
-                        ),
-                      )
-                    }
-                    add(
-                      EdgeMenuQuickAction(
-                        label = if (allHidden) "Show UI" else "Hide UI",
-                        icon = if (allHidden) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
-                        active = allHidden,
-                        onClick = {
-                          overflowMenuOpen = false
-                          viewModel.toggleAllBottomMenus(!allHidden)
-                        },
-                      ),
-                    )
-                    add(
-                      EdgeMenuQuickAction(
-                        label = "Settings",
-                        icon = Icons.Outlined.Settings,
-                        onClick = {
-                          overflowMenuOpen = false
-                          showProjectSettingsModal = true
-                        },
-                      ),
-                    )
-                  }
-                EdgeMenuQuickActionRow(actions = quickActions)
-
-                EdgeMenuSection("Workspace")
-                if (!isExpanded) {
-                  EdgeMenuItem(
-                    label = "Command Palette",
-                    icon = Icons.Outlined.Terminal,
-                    badgeText = "⌘K",
-                    onClick = {
-                      overflowMenuOpen = false
-                      showCommandPalette = true
-                    },
-                  )
-                }
-                EdgeMenuItem(
-                  label = "Sync wrangler.jsonc",
-                  icon = Icons.Outlined.Sync,
-                  badgeText = "CONFIG",
-                  onClick = {
-                    overflowMenuOpen = false
-                    viewModel.syncWranglerFileToWorkspace()
-                  },
-                )
-                if (uiState.hasUnsavedChanges) {
-                  EdgeMenuItem(
-                    label = if (uiState.isLocalScratchpad) "Review Workspace Diff" else "Review Diff & Deploy",
-                    icon = Icons.Outlined.Difference,
-                    tone = EdgeMenuTone.ACCENT,
-                    badgeText = "DIFF",
-                    onClick = {
-                      overflowMenuOpen = false
-                      viewModel.openDiffReview(
-                        if (uiState.isLocalScratchpad) DiffReviewIntent.WORKSPACE else DiffReviewIntent.PRE_DEPLOY,
-                      )
-                    },
-                  )
-                  EdgeMenuItem(
-                    label = "Revert Workspace",
-                    icon = Icons.Outlined.Restore,
-                    tone = EdgeMenuTone.DANGER,
-                    onClick = {
-                      overflowMenuOpen = false
-                      viewModel.revertWorkspaceToImportedBaseline()
-                    },
-                  )
-                } else if (activeWs != null) {
-                  EdgeMenuItem(
-                    label = "Diff Viewer",
-                    icon = Icons.Outlined.Difference,
-                    badgeText = "DIFF",
-                    onClick = {
-                      overflowMenuOpen = false
-                      viewModel.openDiffReview(DiffReviewIntent.WORKSPACE)
-                    },
-                  )
-                }
-                if (uiState.pendingMergeConflicts.isNotEmpty()) {
-                  EdgeMenuItem(
-                    label = "Merge Conflicts",
-                    icon = Icons.Outlined.MergeType,
-                    tone = EdgeMenuTone.WARNING,
-                    badgeText = "${uiState.pendingMergeConflicts.size}",
-                    onClick = {
-                      overflowMenuOpen = false
-                      viewModel.openConflictResolver()
-                    },
-                  )
-                }
-
-                if (activeWs != null) {
-                  EdgeMenuDivider()
-                  EdgeMenuSection("Worker & Cloud")
-                  EdgeMenuItem(
-                    label = "Rename Worker",
-                    icon = Icons.Outlined.DriveFileRenameOutline,
-                    onClick = {
-                      overflowMenuOpen = false
-                      showRenameWorkerDialog = true
-                    },
-                  )
-                  EdgeMenuItem(
-                    label = "Workers Subdomain",
-                    subtitle =
-                      if (effectiveSub.isNotBlank()) "$effectiveSub.workers.dev"
-                      else "Configure *.workers.dev",
-                    icon = Icons.Outlined.Language,
-                    badgeText = "*.dev",
-                    onClick = {
-                      overflowMenuOpen = false
-                      showChangeSubdomainDialog = true
-                    },
-                  )
-                  if (!uiState.isLocalScratchpad) {
-                    EdgeMenuItem(
-                      label = "Re-Import from Cloudflare",
-                      icon = Icons.Outlined.Refresh,
-                      onClick = {
-                        overflowMenuOpen = false
-                        viewModel.reimportActiveWorkerFromCloudflare()
-                      },
-                    )
-                  }
-                }
-
-                EdgeMenuDivider()
-                EdgeMenuSection("Transfer & Git")
-                EdgeMenuItem(
-                  label = "Export Workspace",
-                  icon = Icons.Outlined.UploadFile,
-                  badgeText = ".json",
-                  enabled = activeWs != null,
-                  onClick = {
-                    overflowMenuOpen = false
-                    if (activeWs != null) triggerExportWorkspaceBundle()
-                  },
-                )
-                EdgeMenuItem(
-                  label = "Import Workspace",
-                  icon = Icons.Outlined.FolderOpen,
-                  badgeText = ".json",
-                  onClick = {
-                    overflowMenuOpen = false
-                    triggerImportWorkspaceBundle()
-                  },
-                )
-                EdgeMenuItem(
-                  label = "Git Sync",
-                  subtitle = "Optional repository sync",
-                  icon = Icons.Outlined.AccountTree,
-                  badgeText = "GIT",
-                  onClick = {
-                    overflowMenuOpen = false
-                    showProjectGitModal = true
-                  },
-                )
-              }
+            IconButton(
+              onClick = { overflowMenuOpen = true },
+              modifier = Modifier.size(38.dp).testTag("project_overflow_menu_button"),
+            ) {
+              Icon(
+                imageVector = Icons.Outlined.MoreVert,
+                contentDescription = "Project actions",
+                tint = palette.textSecondary,
+                modifier = Modifier.size(20.dp),
+              )
             }
           }
 
@@ -1052,6 +858,7 @@ fun IdeWorkspaceScreen(
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp))
           }
           HorizontalDivider(color = palette.border.copy(alpha = 0.4f))
+          }
           }
 
           // Main Content Area: Strictly 1 Clean Mode at a Time
@@ -1233,11 +1040,281 @@ fun IdeWorkspaceScreen(
           }
         }
 
+        // Persistent Top-End Anchor for the Overflow & 4-Layer UI Customization Menu
+        // Kept outside AnimatedVisibility so toggling Layer 1 (Top Bar) live never closes the menu.
+        Box(
+          modifier =
+            Modifier
+              .align(Alignment.TopEnd)
+              .padding(top = if (uiState.isTopBarHidden) 8.dp else 44.dp, end = 8.dp),
+        ) {
+          EdgeMenu(
+            expanded = overflowMenuOpen,
+            onDismissRequest = { overflowMenuOpen = false },
+            minWidth = 264.dp,
+            maxWidth = 304.dp,
+          ) {
+            val activeWs = uiState.workspace
+            val menuFileCount = activeWs?.files?.count { !it.isVirtualReadOnly } ?: 0
+            val menuDirtyCount = activeWs?.files?.count { it.isDirty } ?: 0
+            val allHidden =
+              uiState.isTopBarHidden &&
+                uiState.isEditorTopChromeHidden &&
+                uiState.isEditorBottomBarsHidden &&
+                uiState.isBottomDockHidden
+            val effectiveSub = activeWs?.accountSubdomain?.takeIf { it.isNotBlank() } ?: uiState.accountSubdomain
+
+            EdgeMenuHeader(
+              title = activeWs?.scriptName ?: "Project",
+              subtitle =
+                when {
+                  menuDirtyCount > 0 -> "$menuDirtyCount edited · unsaved"
+                  uiState.isLocalScratchpad -> "Local workspace"
+                  else -> "Synced with Cloudflare"
+                },
+              badgeText = if (activeWs != null) "$menuFileCount files" else null,
+              leadingIcon = Icons.Outlined.Code,
+            )
+
+            val quickActions =
+              buildList {
+                if (!isExpanded) {
+                  add(
+                    EdgeMenuQuickAction(
+                      label = "Files",
+                      icon = Icons.Outlined.FolderOpen,
+                      onClick = {
+                        overflowMenuOpen = false
+                        scope.launch { drawerState.open() }
+                      },
+                    ),
+                  )
+                } else {
+                  add(
+                    EdgeMenuQuickAction(
+                      label = "Palette",
+                      icon = Icons.Outlined.Terminal,
+                      onClick = {
+                        overflowMenuOpen = false
+                        showCommandPalette = true
+                      },
+                    ),
+                  )
+                }
+                add(
+                  EdgeMenuQuickAction(
+                    label = if (allHidden) "Show UI" else "Hide UI",
+                    icon = if (allHidden) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
+                    active = allHidden,
+                    onClick = {
+                      overflowMenuOpen = false
+                      viewModel.toggleAllUiChrome(!allHidden)
+                    },
+                  ),
+                )
+                add(
+                  EdgeMenuQuickAction(
+                    label = "Settings",
+                    icon = Icons.Outlined.Settings,
+                    onClick = {
+                      overflowMenuOpen = false
+                      showProjectSettingsModal = true
+                    },
+                  ),
+                )
+              }
+            EdgeMenuQuickActionRow(actions = quickActions)
+
+            EdgeMenuUiLayersPanel(
+              layers =
+                listOf(
+                  EdgeMenuUiLayer(
+                    code = "L1",
+                    label = "Top Bar",
+                    subtitle = "Project header & deploy",
+                    visible = !uiState.isTopBarHidden,
+                    testTag = "ui_layer_toggle_top_bar",
+                    onToggle = viewModel::toggleTopBarHidden,
+                  ),
+                  EdgeMenuUiLayer(
+                    code = "L2",
+                    label = "Tabs & Path",
+                    subtitle = "File tabs, path & lint",
+                    visible = !uiState.isEditorTopChromeHidden,
+                    testTag = "ui_layer_toggle_editor_top",
+                    onToggle = viewModel::toggleEditorTopChromeHidden,
+                  ),
+                  EdgeMenuUiLayer(
+                    code = "L3",
+                    label = "Editor Bar",
+                    subtitle = "Status, zoom & key rail",
+                    visible = !uiState.isEditorBottomBarsHidden,
+                    testTag = "ui_layer_toggle_editor_bottom",
+                    onToggle = viewModel::toggleEditorBottomBarsHidden,
+                  ),
+                  EdgeMenuUiLayer(
+                    code = "L4",
+                    label = "Bottom Dock",
+                    subtitle = "Code · Test · Config · Console",
+                    visible = !uiState.isBottomDockHidden,
+                    testTag = "ui_layer_toggle_bottom_dock",
+                    onToggle = viewModel::toggleBottomDockHidden,
+                  ),
+                ),
+              onToggleAll = { hideAll -> viewModel.toggleAllUiChrome(hideAll) },
+            )
+
+            EdgeMenuSection("Workspace")
+            if (!isExpanded) {
+              EdgeMenuItem(
+                label = "Command Palette",
+                icon = Icons.Outlined.Terminal,
+                badgeText = "⌘K",
+                onClick = {
+                  overflowMenuOpen = false
+                  showCommandPalette = true
+                },
+              )
+            }
+            EdgeMenuItem(
+              label = "Sync wrangler.jsonc",
+              icon = Icons.Outlined.Sync,
+              badgeText = "CONFIG",
+              onClick = {
+                overflowMenuOpen = false
+                viewModel.syncWranglerFileToWorkspace()
+              },
+            )
+            if (uiState.hasUnsavedChanges) {
+              EdgeMenuItem(
+                label = if (uiState.isLocalScratchpad) "Review Workspace Diff" else "Review Diff & Deploy",
+                icon = Icons.Outlined.Difference,
+                tone = EdgeMenuTone.ACCENT,
+                badgeText = "DIFF",
+                onClick = {
+                  overflowMenuOpen = false
+                  viewModel.openDiffReview(
+                    if (uiState.isLocalScratchpad) DiffReviewIntent.WORKSPACE else DiffReviewIntent.PRE_DEPLOY,
+                  )
+                },
+              )
+              EdgeMenuItem(
+                label = "Revert Workspace",
+                icon = Icons.Outlined.Restore,
+                tone = EdgeMenuTone.DANGER,
+                onClick = {
+                  overflowMenuOpen = false
+                  viewModel.revertWorkspaceToImportedBaseline()
+                },
+              )
+            } else if (activeWs != null) {
+              EdgeMenuItem(
+                label = "Diff Viewer",
+                icon = Icons.Outlined.Difference,
+                badgeText = "DIFF",
+                onClick = {
+                  overflowMenuOpen = false
+                  viewModel.openDiffReview(DiffReviewIntent.WORKSPACE)
+                },
+              )
+            }
+            if (uiState.pendingMergeConflicts.isNotEmpty()) {
+              EdgeMenuItem(
+                label = "Merge Conflicts",
+                icon = Icons.Outlined.MergeType,
+                tone = EdgeMenuTone.WARNING,
+                badgeText = "${uiState.pendingMergeConflicts.size}",
+                onClick = {
+                  overflowMenuOpen = false
+                  viewModel.openConflictResolver()
+                },
+              )
+            }
+
+            if (activeWs != null) {
+              EdgeMenuDivider()
+              EdgeMenuSection("Worker & Cloud")
+              EdgeMenuItem(
+                label = "Rename Worker",
+                icon = Icons.Outlined.DriveFileRenameOutline,
+                onClick = {
+                  overflowMenuOpen = false
+                  showRenameWorkerDialog = true
+                },
+              )
+              EdgeMenuItem(
+                label = "Workers Subdomain",
+                subtitle =
+                  if (effectiveSub.isNotBlank()) "$effectiveSub.workers.dev"
+                  else "Configure *.workers.dev",
+                icon = Icons.Outlined.Language,
+                badgeText = "*.dev",
+                onClick = {
+                  overflowMenuOpen = false
+                  showChangeSubdomainDialog = true
+                },
+              )
+              if (!uiState.isLocalScratchpad) {
+                EdgeMenuItem(
+                  label = "Re-Import from Cloudflare",
+                  icon = Icons.Outlined.Refresh,
+                  onClick = {
+                    overflowMenuOpen = false
+                    viewModel.reimportActiveWorkerFromCloudflare()
+                  },
+                )
+              }
+            }
+
+            EdgeMenuDivider()
+            EdgeMenuSection("Transfer & Git")
+            EdgeMenuItem(
+              label = "Export Workspace",
+              icon = Icons.Outlined.UploadFile,
+              badgeText = ".json",
+              enabled = activeWs != null,
+              onClick = {
+                overflowMenuOpen = false
+                if (activeWs != null) triggerExportWorkspaceBundle()
+              },
+            )
+            EdgeMenuItem(
+              label = "Import Workspace",
+              icon = Icons.Outlined.FolderOpen,
+              badgeText = ".json",
+              onClick = {
+                overflowMenuOpen = false
+                triggerImportWorkspaceBundle()
+              },
+            )
+            EdgeMenuItem(
+              label = "Git Sync",
+              subtitle = "Optional repository sync",
+              icon = Icons.Outlined.AccountTree,
+              badgeText = "GIT",
+              onClick = {
+                overflowMenuOpen = false
+                showProjectGitModal = true
+              },
+            )
+          }
+        }
+
+        val anyUiHidden =
+          uiState.isTopBarHidden ||
+            uiState.isBottomDockHidden ||
+            (uiState.projectMode == ProjectMode.CODE &&
+              (uiState.isEditorTopChromeHidden || uiState.isEditorBottomBarsHidden))
+        val visibleLayersCount =
+          listOf(
+            !uiState.isTopBarHidden,
+            !uiState.isEditorTopChromeHidden,
+            !uiState.isEditorBottomBarsHidden,
+            !uiState.isBottomDockHidden,
+          ).count { it }
+
         AnimatedVisibility(
-          visible =
-            !isFullScreenPreview &&
-              (uiState.isBottomDockHidden ||
-                (uiState.projectMode == ProjectMode.CODE && uiState.isEditorBottomBarsHidden)),
+          visible = !isFullScreenPreview && anyUiHidden,
           enter = fadeIn(tween(180)) + slideInVertically(tween(180)) { it / 2 },
           exit = fadeOut(tween(140)) + slideOutVertically(tween(140)) { it / 2 },
           modifier =
@@ -1249,27 +1326,56 @@ fun IdeWorkspaceScreen(
               ),
         ) {
           Row(
-            modifier =
-              Modifier
-                .edgeGlassSurface(RoundedCornerShape(999.dp), elevated = true)
-                .clickable { viewModel.toggleAllBottomMenus(false) }
-                .padding(horizontal = 12.dp, vertical = 7.dp)
-                .testTag("show_workspace_bottom_menus_button"),
+            modifier = Modifier.edgeGlassSurface(RoundedCornerShape(999.dp), elevated = true),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
           ) {
-            Icon(
-              imageVector = Icons.Outlined.KeyboardArrowUp,
-              contentDescription = "Show bottom menus",
-              tint = palette.activePillFg,
-              modifier = Modifier.size(16.dp),
+            Row(
+              modifier =
+                Modifier
+                  .clip(RoundedCornerShape(topStart = 999.dp, bottomStart = 999.dp))
+                  .clickable { viewModel.toggleAllUiChrome(false) }
+                  .padding(start = 11.dp, end = 9.dp, top = 8.dp, bottom = 8.dp)
+                  .testTag("show_workspace_bottom_menus_button"),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+              Icon(
+                imageVector = Icons.Outlined.KeyboardArrowUp,
+                contentDescription = "Restore all UI layers",
+                tint = palette.activePillFg,
+                modifier = Modifier.size(16.dp),
+              )
+              Text(
+                text = if (visibleLayersCount == 0) "Show UI" else "$visibleLayersCount/4",
+                fontFamily = JetBrainsMono,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = palette.textPrimary,
+              )
+            }
+            Box(
+              modifier =
+                Modifier
+                  .width(0.75.dp)
+                  .height(16.dp)
+                  .background(palette.border.copy(alpha = 0.65f)),
             )
-            Text(
-              text = if (uiState.isBottomDockHidden) "Menu" else "Toolbar",
-              style = MaterialTheme.typography.labelMedium,
-              fontWeight = FontWeight.SemiBold,
-              color = palette.textPrimary,
-            )
+            Box(
+              modifier =
+                Modifier
+                  .clip(RoundedCornerShape(topEnd = 999.dp, bottomEnd = 999.dp))
+                  .clickable { overflowMenuOpen = true }
+                  .padding(start = 8.dp, end = 10.dp, top = 8.dp, bottom = 8.dp)
+                  .testTag("zen_overflow_menu_button"),
+              contentAlignment = Alignment.Center,
+            ) {
+              Icon(
+                imageVector = Icons.Outlined.MoreVert,
+                contentDescription = "Open UI layers & project menu",
+                tint = palette.textSecondary,
+                modifier = Modifier.size(16.dp),
+              )
+            }
           }
         }
 

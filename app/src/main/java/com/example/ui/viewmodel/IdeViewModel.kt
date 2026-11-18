@@ -238,6 +238,8 @@ data class IdeUiState(
   val projectStorageSummary: ProjectStorageSummary = ProjectStorageSummary(),
   val homeTab: HomeTab = HomeTab.PROJECTS,
   val projectMode: ProjectMode = ProjectMode.CODE,
+  val isTopBarHidden: Boolean = false,
+  val isEditorTopChromeHidden: Boolean = false,
   val isBottomDockHidden: Boolean = false,
   val isEditorBottomBarsHidden: Boolean = false,
   val showHomeGitHubHub: Boolean = false,
@@ -7982,6 +7984,22 @@ jobs:
     }
   }
 
+  fun setTopBarHidden(hidden: Boolean) {
+    _uiState.update { it.copy(isTopBarHidden = hidden) }
+  }
+
+  fun toggleTopBarHidden() {
+    _uiState.update { it.copy(isTopBarHidden = !it.isTopBarHidden) }
+  }
+
+  fun setEditorTopChromeHidden(hidden: Boolean) {
+    _uiState.update { it.copy(isEditorTopChromeHidden = hidden) }
+  }
+
+  fun toggleEditorTopChromeHidden() {
+    _uiState.update { it.copy(isEditorTopChromeHidden = !it.isEditorTopChromeHidden) }
+  }
+
   fun setBottomDockHidden(hidden: Boolean) {
     _uiState.update { it.copy(isBottomDockHidden = hidden) }
   }
@@ -7998,13 +8016,19 @@ jobs:
     _uiState.update { it.copy(isEditorBottomBarsHidden = !it.isEditorBottomBarsHidden) }
   }
 
-  fun toggleAllBottomMenus(hide: Boolean) {
+  fun toggleAllUiChrome(hide: Boolean) {
     _uiState.update {
       it.copy(
-        isBottomDockHidden = hide,
+        isTopBarHidden = hide,
+        isEditorTopChromeHidden = hide,
         isEditorBottomBarsHidden = hide,
+        isBottomDockHidden = hide,
       )
     }
+  }
+
+  fun toggleAllBottomMenus(hide: Boolean) {
+    toggleAllUiChrome(hide)
   }
 
   private fun rebuildDiagnosticsFull(files: List<WorkerFile>): List<DiagnosticItem> {

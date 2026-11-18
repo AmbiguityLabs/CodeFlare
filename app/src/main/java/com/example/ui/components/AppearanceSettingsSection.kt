@@ -37,9 +37,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import com.example.ui.screens.settings.SettingsToggleRow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -212,23 +212,15 @@ fun AppearanceStudioContent(
                         .background(previewPalette.activePillFg),
                   )
                 }
-                Column(modifier = Modifier.weight(1f)) {
-                  Text(
-                    text = preset.label,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                    color = palette.textPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                  )
-                  Text(
-                    text = preset.subtitle,
-                    fontSize = 9.5.sp,
-                    color = palette.textMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                  )
-                }
+                Text(
+                  text = preset.label,
+                  style = MaterialTheme.typography.labelMedium,
+                  fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                  color = palette.textPrimary,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                  modifier = Modifier.weight(1f),
+                )
                 if (selected) {
                   Icon(
                     imageVector = Icons.Outlined.Check,
@@ -244,29 +236,12 @@ fun AppearanceStudioContent(
       }
     }
 
-    // Material You dynamic accents toggle
-    Row(
-      modifier = Modifier.fillMaxWidth(),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-      Column(modifier = Modifier.weight(1f)) {
-        Text(
-          text = "Material You Accents",
-          style = MaterialTheme.typography.bodyMedium,
-          color = palette.textPrimary,
-        )
-        Text(
-          text = "Tint M3 controls from system wallpaper (Android 12+)",
-          style = MaterialTheme.typography.bodySmall,
-          color = palette.textMuted,
-        )
-      }
-      Switch(
-        checked = settings.dynamicColor,
-        onCheckedChange = { dyn -> onUpdateSettings { it.copy(dynamicColor = dyn) } },
-      )
-    }
+    SettingsToggleRow(
+      title = "Material You",
+      checked = settings.dynamicColor,
+      onCheckedChange = { dyn -> onUpdateSettings { it.copy(dynamicColor = dyn) } },
+      horizontalPadding = 2.dp,
+    )
 
     HorizontalDivider(color = palette.border.copy(alpha = 0.4f), thickness = 0.75.dp)
 
@@ -697,23 +672,22 @@ ${indent}},
       }
     }
 
-    // Subtle top-right pill badge
-    Surface(
-      color = palette.chromeSurface.copy(alpha = 0.85f),
-      shape = RoundedCornerShape(999.dp),
-      border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.65f)),
-      modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
-    ) {
-      Text(
-        text =
-          if (canPan) String.format(Locale.US, "Drag to frame · %.2f×", settings.editorBgZoom)
-          else "Live Preview",
-        fontFamily = JetBrainsMono,
-        fontSize = 9.sp,
-        fontWeight = FontWeight.SemiBold,
-        color = palette.activePillFg,
-        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-      )
+    if (canPan) {
+      Surface(
+        color = palette.chromeSurface.copy(alpha = 0.85f),
+        shape = RoundedCornerShape(999.dp),
+        border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.65f)),
+        modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+      ) {
+        Text(
+          text = String.format(Locale.US, "%.2f×", settings.editorBgZoom),
+          fontFamily = JetBrainsMono,
+          fontSize = 9.sp,
+          fontWeight = FontWeight.SemiBold,
+          color = palette.activePillFg,
+          modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+        )
+      }
     }
   }
 }

@@ -209,7 +209,11 @@ fun CodeEditorPane(
   }
 
   Column(modifier = modifier.fillMaxSize().background(palette.editorBg)) {
-    if (uiState.workspace != null) {
+    AnimatedVisibility(
+      visible = uiState.workspace != null && !uiState.isEditorTopChromeHidden,
+      enter = slideInVertically(tween(170)) { -it } + fadeIn(tween(150)),
+      exit = slideOutVertically(tween(140)) { -it } + fadeOut(tween(120)),
+    ) {
       EditorFileTabBar(
         uiState = uiState,
         onSelectTab = { p -> flushThen { onSelectTab(p) } },
@@ -366,7 +370,12 @@ fun CodeEditorPane(
         }
     }
 
-    // Tab-history navigation chevrons (< >) + Breadcrumb Strip
+    // Tab-history navigation chevrons (< >) + Breadcrumb Strip (Layer 2: Tabs & Path)
+    AnimatedVisibility(
+      visible = !uiState.isEditorTopChromeHidden,
+      enter = slideInVertically(tween(170)) { -it } + fadeIn(tween(150)),
+      exit = slideOutVertically(tween(140)) { -it } + fadeOut(tween(120)),
+    ) {
     Row(
       modifier =
         Modifier
@@ -562,6 +571,7 @@ fun CodeEditorPane(
           )
         }
       }
+    }
     }
 
     // Compute active tab find match ranges for counter & live editor canvas highlights
@@ -918,8 +928,8 @@ fun CodeEditorPane(
         actionableDiagnostics[selectedDiagIndex.coerceIn(0, actionableDiagnostics.lastIndex)]
       } else null
 
-    // Inline Syntax Catching Bar (live error & warning navigator)
-    if (currentDiag != null) {
+    // Inline Syntax Catching Bar (live error & warning navigator — hidden with Layer 2)
+    if (currentDiag != null && !uiState.isEditorTopChromeHidden) {
       val isErr = currentDiag.severity == DiagnosticSeverity.ERROR
       val isWarn = currentDiag.severity == DiagnosticSeverity.WARNING
       val stripBg =

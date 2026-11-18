@@ -20,8 +20,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Layers
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -30,6 +36,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -66,6 +73,16 @@ data class EdgeMenuQuickAction(
   val tone: EdgeMenuTone = EdgeMenuTone.DEFAULT,
   val testTag: String? = null,
   val onClick: () -> Unit,
+)
+
+@Immutable
+data class EdgeMenuUiLayer(
+  val code: String,
+  val label: String,
+  val subtitle: String,
+  val visible: Boolean,
+  val testTag: String? = null,
+  val onToggle: () -> Unit,
 )
 
 /**
@@ -315,6 +332,195 @@ fun EdgeMenuQuickActionRow(
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )
+      }
+    }
+  }
+}
+
+/**
+ * Interactive 4-layer UI chrome customization card rendered inside the workspace overflow menu.
+ * Lets users toggle each UI layer (Top Bar, Tabs & Path, Editor Bar, Bottom Dock) live one-by-one
+ * without dismissing the menu, or toggle all layers at once.
+ */
+@Composable
+fun EdgeMenuUiLayersPanel(
+  layers: List<EdgeMenuUiLayer>,
+  onToggleAll: (hideAll: Boolean) -> Unit,
+) {
+  if (layers.isEmpty()) return
+  val palette = LocalIdePalette.current
+  val visibleCount = layers.count { it.visible }
+  val allHidden = visibleCount == 0
+  val containerShape = RoundedCornerShape(10.dp)
+
+  Column(
+    modifier =
+      Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 4.dp, vertical = 4.dp)
+        .clip(containerShape)
+        .background(palette.editorBg.copy(alpha = 0.72f))
+        .border(0.75.dp, palette.border.copy(alpha = 0.65f), containerShape)
+        .padding(horizontal = 8.dp, vertical = 7.dp)
+        .testTag("ui_layers_panel"),
+    verticalArrangement = Arrangement.spacedBy(4.dp),
+  ) {
+    Row(
+      modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp, vertical = 1.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+      Icon(
+        imageVector = Icons.Outlined.Layers,
+        contentDescription = null,
+        tint = palette.activePillFg,
+        modifier = Modifier.size(13.dp),
+      )
+      Text(
+        text = "UI LAYERS",
+        fontFamily = JetBrainsMono,
+        fontSize = 9.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 0.8.sp,
+        color = palette.textMuted,
+      )
+      Box(
+        modifier =
+          Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(if (allHidden) AmberWarn.copy(alpha = 0.14f) else palette.activePillBg.copy(alpha = 0.75f))
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+      ) {
+        Text(
+          text = "$visibleCount/${layers.size}",
+          fontFamily = JetBrainsMono,
+          fontSize = 8.5.sp,
+          fontWeight = FontWeight.SemiBold,
+          color = if (allHidden) AmberWarn else palette.activePillFg,
+        )
+      }
+      Spacer(Modifier.weight(1f))
+      Box(
+        modifier =
+          Modifier
+            .clip(RoundedCornerShape(5.dp))
+            .background(palette.chromePill)
+            .border(0.5.dp, palette.border.copy(alpha = 0.65f), RoundedCornerShape(5.dp))
+            .clickable { onToggleAll(!allHidden) }
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+            .testTag("ui_layers_toggle_all"),
+      ) {
+        Text(
+          text = if (allHidden) "Show All" else "Hide All",
+          fontFamily = JetBrainsMono,
+          fontSize = 8.5.sp,
+          fontWeight = FontWeight.SemiBold,
+          color = palette.textSecondary,
+        )
+      }
+    }
+
+    layers.forEach { layer ->
+      val rowBg by animateColorAsState(
+        targetValue = if (layer.visible) palette.chromeSurface else Color.Transparent,
+        animationSpec = tween(140),
+        label = "layer_row_bg",
+      )
+      val pillBg by animateColorAsState(
+        targetValue = if (layer.visible) palette.activePillBg else palette.chromePill.copy(alpha = 0.7f),
+        animationSpec = tween(140),
+        label = "layer_pill_bg",
+      )
+      val pillFg by animateColorAsState(
+        targetValue = if (layer.visible) palette.activePillFg else palette.textMuted,
+        animationSpec = tween(140),
+        label = "layer_pill_fg",
+      )
+
+      Row(
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .heightIn(min = 34.dp)
+            .clip(RoundedCornerShape(7.dp))
+            .background(rowBg)
+            .border(
+              width = 0.5.dp,
+              color = if (layer.visible) palette.border.copy(alpha = 0.55f) else palette.border.copy(alpha = 0.25f),
+              shape = RoundedCornerShape(7.dp),
+            )
+            .clickable(onClick = layer.onToggle)
+            .then(if (layer.testTag != null) Modifier.testTag(layer.testTag) else Modifier)
+            .padding(horizontal = 7.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+      ) {
+        Box(
+          modifier =
+            Modifier
+              .clip(RoundedCornerShape(4.dp))
+              .background(pillBg)
+              .padding(horizontal = 4.dp, vertical = 1.5.dp),
+          contentAlignment = Alignment.Center,
+        ) {
+          Text(
+            text = layer.code,
+            fontFamily = JetBrainsMono,
+            fontSize = 8.5.sp,
+            fontWeight = FontWeight.Bold,
+            color = pillFg,
+          )
+        }
+
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+          Text(
+            text = layer.label,
+            style = MaterialTheme.typography.labelMedium,
+            fontSize = 11.5.sp,
+            fontWeight = if (layer.visible) FontWeight.SemiBold else FontWeight.Medium,
+            color = if (layer.visible) palette.textPrimary else palette.textMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          Text(
+            text = layer.subtitle,
+            fontFamily = JetBrainsMono,
+            fontSize = 8.5.sp,
+            color = palette.textMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+
+        Row(
+          modifier =
+            Modifier
+              .height(20.dp)
+              .clip(RoundedCornerShape(999.dp))
+              .background(pillBg)
+              .border(
+                0.5.dp,
+                if (layer.visible) palette.activePillFg.copy(alpha = 0.35f) else palette.border.copy(alpha = 0.5f),
+                RoundedCornerShape(999.dp),
+              )
+              .padding(horizontal = 6.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+          Icon(
+            imageVector = if (layer.visible) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
+            contentDescription = if (layer.visible) "Hide ${layer.label}" else "Show ${layer.label}",
+            tint = pillFg,
+            modifier = Modifier.size(10.5.dp),
+          )
+          Text(
+            text = if (layer.visible) "ON" else "OFF",
+            fontFamily = JetBrainsMono,
+            fontSize = 8.sp,
+            fontWeight = FontWeight.Bold,
+            color = pillFg,
+          )
+        }
       }
     }
   }
