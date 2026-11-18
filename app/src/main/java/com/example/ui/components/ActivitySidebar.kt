@@ -32,6 +32,7 @@ import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CloudDownload
+import androidx.compose.material.icons.outlined.CloudQueue
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.CreateNewFolder
@@ -51,6 +52,8 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.SnippetFolder
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.UploadFile
@@ -58,8 +61,6 @@ import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -88,8 +89,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import com.example.data.remote.CfAccount
 import com.example.data.remote.CfD1Database
 import com.example.data.remote.CfKvNamespace
@@ -718,34 +717,48 @@ private fun ExplorerPanel(
             Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Switch Project", tint = palette.textSecondary, modifier = Modifier.size(18.dp))
           }
         }
-        DropdownMenu(expanded = projectMenuOpen, onDismissRequest = { projectMenuOpen = false }) {
+        EdgeMenu(
+          expanded = projectMenuOpen,
+          onDismissRequest = { projectMenuOpen = false },
+          minWidth = 232.dp,
+          maxWidth = 280.dp,
+        ) {
           if (uiState.accounts.isNotEmpty()) {
+            EdgeMenuSection("Cloudflare Accounts")
             uiState.accounts.forEach { acc ->
-              DropdownMenuItem(
-                text = { Text("Account: ${acc.name}") },
+              EdgeMenuCompactItem(
+                label = acc.name,
+                icon = Icons.Outlined.CloudQueue,
+                selected = acc.id == uiState.selectedAccount?.id,
                 onClick = {
                   projectMenuOpen = false
                   onSelectAccount(acc)
                 },
               )
             }
+            EdgeMenuDivider()
           }
-          DropdownMenuItem(
-            text = { Text("Open Deployed Worker Preview") },
+          EdgeMenuSection("Quick Actions")
+          EdgeMenuItem(
+            label = "Deployed Worker Preview",
+            icon = Icons.Outlined.Visibility,
+            tone = EdgeMenuTone.ACCENT,
             onClick = {
               projectMenuOpen = false
               onOpenWorkerPreview()
             },
           )
-          DropdownMenuItem(
-            text = { Text("+ New File in Workspace") },
+          EdgeMenuItem(
+            label = "New File in Workspace",
+            icon = Icons.Outlined.Add,
             onClick = {
               projectMenuOpen = false
               onShowNewFileDialog("")
             },
           )
-          DropdownMenuItem(
-            text = { Text("+ New Cloudflare Worker") },
+          EdgeMenuItem(
+            label = "New Cloudflare Worker",
+            icon = Icons.Outlined.CloudUpload,
             onClick = {
               projectMenuOpen = false
               onShowNewWorkerDialog()
@@ -763,25 +776,39 @@ private fun ExplorerPanel(
         ) {
           Icon(Icons.Outlined.UploadFile, contentDescription = "Upload or Export Files", tint = palette.activePillFg, modifier = Modifier.size(19.dp))
         }
-        DropdownMenu(expanded = uploadMenuOpen, onDismissRequest = { uploadMenuOpen = false }) {
+        EdgeMenu(
+          expanded = uploadMenuOpen,
+          onDismissRequest = { uploadMenuOpen = false },
+          minWidth = 224.dp,
+          maxWidth = 272.dp,
+        ) {
+          EdgeMenuHeader(
+            title = "Transfer Files",
+            leadingIcon = Icons.Outlined.UploadFile,
+          )
           if (uiState.workspace != null) {
-            DropdownMenuItem(
-              text = { Text("Upload Single File to Worker") },
+            EdgeMenuItem(
+              label = "Upload Single File",
+              icon = Icons.Outlined.UploadFile,
               onClick = {
                 uploadMenuOpen = false
                 onUploadSingleFile()
               },
             )
-            DropdownMenuItem(
-              text = { Text("Batch Upload Multiple Files") },
+            EdgeMenuItem(
+              label = "Batch Upload Files",
+              icon = Icons.Outlined.SnippetFolder,
+              badgeText = "MULTI",
               onClick = {
                 uploadMenuOpen = false
                 onUploadBatchFiles()
               },
             )
             uiState.activeFile?.let { active ->
-              DropdownMenuItem(
-                text = { Text("Export ${active.fileName}") },
+              EdgeMenuDivider()
+              EdgeMenuItem(
+                label = "Export ${active.fileName}",
+                icon = Icons.Outlined.Download,
                 onClick = {
                   uploadMenuOpen = false
                   onExportActiveFile()
@@ -789,8 +816,10 @@ private fun ExplorerPanel(
               )
             }
           } else {
-            DropdownMenuItem(
-              text = { Text("Create New Worker from Files") },
+            EdgeMenuItem(
+              label = "Create Worker from Files",
+              icon = Icons.Outlined.CloudUpload,
+              tone = EdgeMenuTone.ACCENT,
               onClick = {
                 uploadMenuOpen = false
                 onShowNewWorkerDialog()
@@ -821,46 +850,60 @@ private fun ExplorerPanel(
         ) {
           Icon(Icons.Outlined.MoreHoriz, contentDescription = "More Explorer Actions", tint = palette.textSecondary, modifier = Modifier.size(19.dp))
         }
-        DropdownMenu(expanded = moreMenuOpen, onDismissRequest = { moreMenuOpen = false }) {
-          DropdownMenuItem(
-            text = { Text("New Worker (Template or Upload)") },
+        EdgeMenu(
+          expanded = moreMenuOpen,
+          onDismissRequest = { moreMenuOpen = false },
+          minWidth = 224.dp,
+          maxWidth = 272.dp,
+        ) {
+          EdgeMenuSection("Explorer")
+          EdgeMenuItem(
+            label = "New Worker",
+            subtitle = "Template or upload",
+            icon = Icons.Outlined.CloudUpload,
             onClick = {
               moreMenuOpen = false
               onShowNewWorkerDialog()
             },
           )
           if (uiState.workspace != null) {
-            DropdownMenuItem(
-              text = { Text("New Directory") },
+            EdgeMenuItem(
+              label = "New Directory",
+              icon = Icons.Outlined.CreateNewFolder,
               onClick = {
                 moreMenuOpen = false
                 onShowNewDirectoryDialog("")
               },
             )
           }
-          DropdownMenuItem(
-            text = { Text("Worker Code Snippets") },
+          EdgeMenuItem(
+            label = "Worker Code Snippets",
+            icon = Icons.Outlined.Code,
             onClick = {
               moreMenuOpen = false
               onOpenSnippets()
             },
           )
+          EdgeMenuItem(
+            label = "IDE Preferences",
+            icon = Icons.Outlined.Settings,
+            onClick = {
+              moreMenuOpen = false
+              onOpenSettings()
+            },
+          )
           if (uiState.workspace != null && !uiState.isLocalScratchpad) {
-            DropdownMenuItem(
-              text = { Text("Delete '${uiState.workspace.scriptName}'") },
+            EdgeMenuDivider()
+            EdgeMenuItem(
+              label = "Delete '${uiState.workspace.scriptName}'",
+              icon = Icons.Outlined.DeleteOutline,
+              tone = EdgeMenuTone.DANGER,
               onClick = {
                 moreMenuOpen = false
                 pendingDeleteWorker = uiState.workspace.scriptName
               },
             )
           }
-          DropdownMenuItem(
-            text = { Text("IDE Preferences") },
-            onClick = {
-              moreMenuOpen = false
-              onOpenSettings()
-            },
-          )
         }
       }
     }
@@ -1159,139 +1202,104 @@ private fun TreeRowItem(
       }
     }
 
-    // Screenshot-matched Floating Olive-Charcoal Context Popup Menu ("New in <path>" -> "+ File", "Directory", ...)
-    if (showContextPopup) {
-      Popup(
-        alignment = Alignment.TopCenter,
-        onDismissRequest = { showContextPopup = false },
-        properties = PopupProperties(focusable = true),
-      ) {
-        Surface(
-          color = palette.chromePill,
-          shape = RoundedCornerShape(18.dp),
-          shadowElevation = 10.dp,
-          border = BorderStroke(1.dp, palette.border.copy(alpha = 0.55f)),
-          modifier = Modifier.widthIn(min = 210.dp, max = 260.dp),
-        ) {
-          Column(modifier = Modifier.padding(vertical = 10.dp)) {
-            Text(
-              text = contextTitle,
-              style = MaterialTheme.typography.labelMedium,
-              color = palette.textMuted,
-              maxLines = 1,
-              overflow = TextOverflow.Ellipsis,
-              modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-            )
-            if (isFolder) {
-              FloatingMenuRow(
-                icon = Icons.Outlined.Add,
-                label = "File",
-                onClick = {
-                  showContextPopup = false
-                  onNewFileInFolder()
-                },
-              )
-              FloatingMenuRow(
-                icon = Icons.Outlined.Folder,
-                label = "Directory",
-                onClick = {
-                  showContextPopup = false
-                  onNewDirInFolder()
-                },
-              )
-            } else if (file != null) {
-              FloatingMenuRow(
-                icon = Icons.Outlined.Visibility,
-                label = "Preview Deployed Worker",
-                tint = palette.activePillFg,
-                onClick = {
-                  showContextPopup = false
-                  onOpenPreviewClick()
-                },
-              )
-              FloatingMenuRow(
-                icon = Icons.Outlined.Description,
-                label = "Open in Tab",
-                onClick = {
-                  showContextPopup = false
-                  onClick()
-                },
-              )
-              FloatingMenuRow(
-                icon = Icons.Outlined.Add,
-                label = "New Sibling File",
-                onClick = {
-                  showContextPopup = false
-                  onNewFileInFolder()
-                },
-              )
-              if (!file.isVirtualReadOnly && !file.isEntryPoint) {
-                FloatingMenuRow(
-                  icon = Icons.Outlined.StarOutline,
-                  label = "Set Entry Point (main)",
-                  onClick = {
-                    showContextPopup = false
-                    onSetEntryClick()
-                  },
-                )
-              }
-              if (!file.isVirtualReadOnly) {
-                FloatingMenuRow(
-                  icon = Icons.Outlined.DriveFileRenameOutline,
-                  label = "Rename / Move",
-                  onClick = {
-                    showContextPopup = false
-                    onRenameClick()
-                  },
-                )
-                FloatingMenuRow(
-                  icon = Icons.Outlined.Download,
-                  label = "Export File",
-                  onClick = {
-                    showContextPopup = false
-                    onExportClick()
-                  },
-                )
-              }
-              if (canDeleteFile) {
-                FloatingMenuRow(
-                  icon = Icons.Outlined.DeleteOutline,
-                  label = "Delete Script",
-                  tint = MaterialTheme.colorScheme.error,
-                  onClick = {
-                    showContextPopup = false
-                    onDeleteFileClick()
-                  },
-                )
-              }
-            }
-          }
+    EdgeFloatingMenuPopup(
+      expanded = showContextPopup,
+      onDismissRequest = { showContextPopup = false },
+      alignment = Alignment.TopCenter,
+      minWidth = 212.dp,
+      maxWidth = 260.dp,
+    ) {
+      EdgeMenuHeader(
+        title = contextTitle,
+        leadingIcon = if (isFolder) Icons.Outlined.Folder else Icons.Outlined.Description,
+      )
+      if (isFolder) {
+        EdgeMenuItem(
+          label = "New File",
+          icon = Icons.Outlined.Add,
+          onClick = {
+            showContextPopup = false
+            onNewFileInFolder()
+          },
+        )
+        EdgeMenuItem(
+          label = "New Directory",
+          icon = Icons.Outlined.CreateNewFolder,
+          onClick = {
+            showContextPopup = false
+            onNewDirInFolder()
+          },
+        )
+      } else if (file != null) {
+        EdgeMenuItem(
+          label = "Preview Deployed Worker",
+          icon = Icons.Outlined.Visibility,
+          tone = EdgeMenuTone.ACCENT,
+          onClick = {
+            showContextPopup = false
+            onOpenPreviewClick()
+          },
+        )
+        EdgeMenuItem(
+          label = "Open in Tab",
+          icon = Icons.Outlined.Description,
+          onClick = {
+            showContextPopup = false
+            onClick()
+          },
+        )
+        EdgeMenuItem(
+          label = "New Sibling File",
+          icon = Icons.Outlined.Add,
+          onClick = {
+            showContextPopup = false
+            onNewFileInFolder()
+          },
+        )
+        if (!file.isVirtualReadOnly && !file.isEntryPoint) {
+          EdgeMenuItem(
+            label = "Set Entry Point",
+            icon = Icons.Outlined.StarOutline,
+            tone = EdgeMenuTone.ACCENT,
+            badgeText = "main",
+            onClick = {
+              showContextPopup = false
+              onSetEntryClick()
+            },
+          )
+        }
+        if (!file.isVirtualReadOnly) {
+          EdgeMenuItem(
+            label = "Rename / Move",
+            icon = Icons.Outlined.DriveFileRenameOutline,
+            onClick = {
+              showContextPopup = false
+              onRenameClick()
+            },
+          )
+          EdgeMenuItem(
+            label = "Export File",
+            icon = Icons.Outlined.Download,
+            onClick = {
+              showContextPopup = false
+              onExportClick()
+            },
+          )
+        }
+        if (canDeleteFile) {
+          EdgeMenuDivider()
+          EdgeMenuItem(
+            label = "Delete Script",
+            icon = Icons.Outlined.DeleteOutline,
+            tone = EdgeMenuTone.DANGER,
+            onClick = {
+              showContextPopup = false
+              onDeleteFileClick()
+            },
+          )
         }
       }
     }
-  }
-}
-
-@Composable
-private fun FloatingMenuRow(
-  icon: ImageVector,
-  label: String,
-  tint: Color? = null,
-  onClick: () -> Unit,
-) {
-  val palette = LocalIdePalette.current
-  val fg = tint ?: palette.textPrimary
-  Row(
-    modifier =
-      Modifier
-        .fillMaxWidth()
-        .clickable(onClick = onClick)
-        .padding(horizontal = 16.dp, vertical = 11.dp),
-    verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(14.dp),
-  ) {
-    Icon(imageVector = icon, contentDescription = null, tint = tint ?: palette.textSecondary, modifier = Modifier.size(19.dp))
-    Text(text = label, style = MaterialTheme.typography.bodyMedium, color = fg)
   }
 }
 

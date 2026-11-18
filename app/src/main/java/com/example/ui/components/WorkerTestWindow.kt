@@ -38,8 +38,6 @@ import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -181,10 +179,22 @@ fun WorkerTestWindow(
             )
           }
         }
-        DropdownMenu(expanded = methodMenuOpen, onDismissRequest = { methodMenuOpen = false }) {
+        EdgeMenu(
+          expanded = methodMenuOpen,
+          onDismissRequest = { methodMenuOpen = false },
+          minWidth = 152.dp,
+          maxWidth = 180.dp,
+        ) {
+          EdgeMenuSection("HTTP Method")
           methods.forEach { m ->
-            DropdownMenuItem(
-              text = { Text(m, fontWeight = if (m == activeMethod) FontWeight.Bold else FontWeight.Normal) },
+            val verbTint = edgeHttpVerbColor(m, palette.textSecondary)
+            val isSelected = m == activeMethod
+            EdgeMenuCompactItem(
+              label = m,
+              leadingColorDot = verbTint,
+              selected = isSelected,
+              monospaced = true,
+              accentColor = if (isSelected) verbTint else null,
               onClick = {
                 methodMenuOpen = false
                 onMethodChange(m)

@@ -49,6 +49,7 @@ import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CheckCircleOutline
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
@@ -58,14 +59,14 @@ import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.ListAlt
 import androidx.compose.material.icons.outlined.NoteAdd
 import androidx.compose.material.icons.outlined.Remove
+import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material.icons.outlined.ZoomIn
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -493,16 +494,38 @@ fun CodeEditorPane(
               modifier = Modifier.size(16.dp),
             )
           }
-          DropdownMenu(expanded = showSymbolOutlineMenu, onDismissRequest = { showSymbolOutlineMenu = false }) {
+          EdgeMenu(
+            expanded = showSymbolOutlineMenu,
+            onDismissRequest = { showSymbolOutlineMenu = false },
+            minWidth = 224.dp,
+            maxWidth = 296.dp,
+          ) {
+            EdgeMenuHeader(
+              title = "Outline",
+              badgeText = "${symbols.size}",
+              leadingIcon = Icons.Outlined.ListAlt,
+            )
             symbols.forEach { sym ->
-              DropdownMenuItem(
-                text = {
-                  Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Surface(color = palette.activePillBg, shape = RoundedCornerShape(4.dp)) {
-                      Text(sym.kind, fontSize = 9.sp, color = palette.activePillFg, modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp))
-                    }
-                    Text(sym.name, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(":${sym.line}", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+              EdgeMenuItem(
+                label = sym.name,
+                monospaced = true,
+                badgeText = ":${sym.line}",
+                leadingContent = {
+                  Box(
+                    modifier =
+                      Modifier
+                        .clip(RoundedCornerShape(5.dp))
+                        .background(palette.activePillBg.copy(alpha = 0.85f))
+                        .border(0.5.dp, palette.activePillFg.copy(alpha = 0.25f), RoundedCornerShape(5.dp))
+                        .padding(horizontal = 5.dp, vertical = 2.dp),
+                  ) {
+                    Text(
+                      text = sym.kind,
+                      fontFamily = JetBrainsMono,
+                      fontSize = 8.5.sp,
+                      fontWeight = FontWeight.SemiBold,
+                      color = palette.activePillFg,
+                    )
                   }
                 },
                 onClick = {
@@ -2006,52 +2029,78 @@ private fun EditorFileTabBar(
                 }
               }
 
-              DropdownMenu(
+              EdgeMenu(
                 expanded = contextMenuPath == path,
                 onDismissRequest = { contextMenuPath = null },
+                minWidth = 224.dp,
+                maxWidth = 276.dp,
               ) {
-                DropdownMenuItem(
-                  text = { Text("Close Tab") },
+                EdgeMenuHeader(
+                  title = file?.fileName ?: path.substringAfterLast('/'),
+                  subtitle = path,
+                  leadingContent = { FileTypeBadge(path = path) },
+                )
+                EdgeMenuItem(
+                  label = "Close Tab",
+                  icon = Icons.Outlined.Close,
                   onClick = {
                     contextMenuPath = null
                     onCloseTab(path)
                   },
                 )
                 if (uiState.openTabPaths.size > 1) {
-                  DropdownMenuItem(
-                    text = { Text("Close Other Tabs") },
+                  EdgeMenuItem(
+                    label = "Close Other Tabs",
+                    icon = Icons.Outlined.DeleteSweep,
                     onClick = {
                       contextMenuPath = null
                       onCloseOtherTabs(path)
                     },
                   )
                 }
-                DropdownMenuItem(
-                  text = { Text("Close Saved Tabs") },
+                EdgeMenuItem(
+                  label = "Close Saved Tabs",
+                  icon = Icons.Outlined.CheckCircleOutline,
                   onClick = {
                     contextMenuPath = null
                     onCloseSavedTabs()
                   },
                 )
-                DropdownMenuItem(
-                  text = { Text("Close All Tabs") },
+                EdgeMenuItem(
+                  label = "Close All Tabs",
+                  icon = Icons.Outlined.DeleteSweep,
+                  tone = EdgeMenuTone.DANGER,
                   onClick = {
                     contextMenuPath = null
                     onCloseAllTabs()
                   },
                 )
-                if (file != null && !file.isVirtualReadOnly && !file.isEntryPoint && file.language in setOf(WorkerLanguage.JAVASCRIPT, WorkerLanguage.TYPESCRIPT)) {
-                  DropdownMenuItem(
-                    text = { Text("Set as Worker Entry Point") },
+                val canSetEntry =
+                  file != null &&
+                    !file.isVirtualReadOnly &&
+                    !file.isEntryPoint &&
+                    file.language in setOf(WorkerLanguage.JAVASCRIPT, WorkerLanguage.TYPESCRIPT)
+                val canRevert = file != null && file.isDirty && !file.isVirtualReadOnly
+                if (canSetEntry || canRevert) {
+                  EdgeMenuDivider()
+                }
+                if (canSetEntry) {
+                  EdgeMenuItem(
+                    label = "Set as Entry Point",
+                    icon = Icons.Outlined.StarOutline,
+                    tone = EdgeMenuTone.ACCENT,
+                    badgeText = "main",
                     onClick = {
                       contextMenuPath = null
                       onSetEntryModule(path)
                     },
                   )
                 }
-                if (file != null && file.isDirty && !file.isVirtualReadOnly) {
-                  DropdownMenuItem(
-                    text = { Text("Revert to Imported Baseline", color = MaterialTheme.colorScheme.error) },
+                if (canRevert) {
+                  EdgeMenuItem(
+                    label = "Revert to Baseline",
+                    icon = Icons.Outlined.Restore,
+                    tone = EdgeMenuTone.DANGER,
                     onClick = {
                       contextMenuPath = null
                       onRevertFile(path)
@@ -2119,19 +2168,74 @@ private fun EditorFileTabBar(
           }
         }
 
-        DropdownMenu(
+        EdgeMenu(
           expanded = tabSwitcherOpen,
           onDismissRequest = { tabSwitcherOpen = false },
-          modifier = Modifier.widthIn(min = 260.dp, max = 340.dp).heightIn(max = 420.dp),
+          minWidth = 264.dp,
+          maxWidth = 332.dp,
+          modifier = Modifier.heightIn(max = 440.dp),
         ) {
-          OutlinedTextField(
-            value = switcherQuery,
-            onValueChange = { switcherQuery = it },
-            placeholder = { Text("Jump to file…", fontSize = 12.sp) },
-            singleLine = true,
-            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
-          )
+          Row(
+            modifier =
+              Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 4.dp)
+                .height(34.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(palette.editorBg)
+                .border(0.75.dp, palette.border.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+          ) {
+            Icon(
+              Icons.Outlined.Search,
+              contentDescription = null,
+              tint = palette.textMuted,
+              modifier = Modifier.size(14.dp),
+            )
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+              if (switcherQuery.isEmpty()) {
+                Text(
+                  text = "Jump to file…",
+                  fontFamily = JetBrainsMono,
+                  fontSize = 11.5.sp,
+                  color = palette.textMuted,
+                  maxLines = 1,
+                )
+              }
+              BasicTextField(
+                value = switcherQuery,
+                onValueChange = { switcherQuery = it },
+                singleLine = true,
+                textStyle =
+                  TextStyle(
+                    fontFamily = JetBrainsMono,
+                    fontSize = 11.5.sp,
+                    color = palette.textPrimary,
+                  ),
+                cursorBrush = SolidColor(palette.activePillFg),
+                modifier = Modifier.fillMaxWidth(),
+              )
+            }
+            if (switcherQuery.isNotEmpty()) {
+              Box(
+                modifier =
+                  Modifier
+                    .size(20.dp)
+                    .clip(CircleShape)
+                    .clickable { switcherQuery = "" },
+                contentAlignment = Alignment.Center,
+              ) {
+                Icon(
+                  Icons.Outlined.Close,
+                  contentDescription = "Clear filter",
+                  tint = palette.textMuted,
+                  modifier = Modifier.size(12.dp),
+                )
+              }
+            }
+          }
 
           val openMatches =
             uiState.openTabPaths.filter { p ->
@@ -2143,33 +2247,21 @@ private fun EditorFileTabBar(
               .filter { it !in uiState.openTabPaths && (switcherQuery.isBlank() || it.contains(switcherQuery, ignoreCase = true)) }
 
           if (openMatches.isNotEmpty()) {
-            Text(
-              text = "OPEN TABS (${openMatches.size})",
-              style = MaterialTheme.typography.labelSmall,
-              color = palette.textMuted,
-              modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
-            )
+            EdgeMenuSection("Open Tabs (${openMatches.size})")
             openMatches.forEach { path ->
               val isActive = path == uiState.activeFilePath
               val isDirty = workspaceFiles.firstOrNull { it.path == path }?.isDirty == true
-              DropdownMenuItem(
-                text = {
-                  Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FileTypeBadge(path = path)
-                    Text(
-                      text = path,
-                      style = MaterialTheme.typography.bodySmall,
-                      fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-                      color = if (isActive) palette.activePillFg else palette.textPrimary,
-                      maxLines = 1,
-                      overflow = TextOverflow.Ellipsis,
-                      modifier = Modifier.weight(1f),
-                    )
-                    if (isDirty) {
+              EdgeMenuItem(
+                label = path,
+                monospaced = true,
+                selected = isActive,
+                leadingContent = { FileTypeBadge(path = path) },
+                trailingContent =
+                  if (isDirty) {
+                    {
                       Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(AmberWarn))
                     }
-                  }
-                },
+                  } else null,
                 onClick = {
                   tabSwitcherOpen = false
                   onSelectTab(path)
@@ -2179,28 +2271,13 @@ private fun EditorFileTabBar(
           }
 
           if (closedProjectMatches.isNotEmpty()) {
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-            Text(
-              text = "WORKSPACE FILES (${closedProjectMatches.size})",
-              style = MaterialTheme.typography.labelSmall,
-              color = palette.textMuted,
-              modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
-            )
+            if (openMatches.isNotEmpty()) EdgeMenuDivider()
+            EdgeMenuSection("Workspace Files (${closedProjectMatches.size})")
             closedProjectMatches.forEach { path ->
-              DropdownMenuItem(
-                text = {
-                  Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FileTypeBadge(path = path)
-                    Text(
-                      text = path,
-                      style = MaterialTheme.typography.bodySmall,
-                      color = palette.textSecondary,
-                      maxLines = 1,
-                      overflow = TextOverflow.Ellipsis,
-                      modifier = Modifier.weight(1f),
-                    )
-                  }
-                },
+              EdgeMenuItem(
+                label = path,
+                monospaced = true,
+                leadingContent = { FileTypeBadge(path = path) },
                 onClick = {
                   tabSwitcherOpen = false
                   onSelectTab(path)
@@ -2210,16 +2287,19 @@ private fun EditorFileTabBar(
           }
 
           if (uiState.openTabPaths.isNotEmpty()) {
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-            DropdownMenuItem(
-              text = { Text("Close Saved Tabs") },
+            EdgeMenuDivider()
+            EdgeMenuItem(
+              label = "Close Saved Tabs",
+              icon = Icons.Outlined.CheckCircleOutline,
               onClick = {
                 tabSwitcherOpen = false
                 onCloseSavedTabs()
               },
             )
-            DropdownMenuItem(
-              text = { Text("Close All Tabs") },
+            EdgeMenuItem(
+              label = "Close All Tabs",
+              icon = Icons.Outlined.DeleteSweep,
+              tone = EdgeMenuTone.DANGER,
               onClick = {
                 tabSwitcherOpen = false
                 onCloseAllTabs()
@@ -2404,20 +2484,19 @@ private fun EditorZoomControlCluster(
             .padding(horizontal = 4.dp, vertical = 1.dp)
             .testTag("editor_zoom_label"),
       )
-      DropdownMenu(
+      EdgeMenu(
         expanded = zoomPresetMenuOpen,
         onDismissRequest = { onZoomPresetMenuChange(false) },
+        minWidth = 152.dp,
+        maxWidth = 186.dp,
       ) {
+        EdgeMenuSection("Editor Zoom")
         listOf(75, 100, 125, 150, 175, 200).forEach { preset ->
-          DropdownMenuItem(
-            text = {
-              Text(
-                text = if (preset == 100) "100% (Default)" else "$preset%",
-                fontFamily = JetBrainsMono,
-                fontWeight = if (preset == displayZoomPercent) FontWeight.Bold else FontWeight.Normal,
-                color = if (preset == displayZoomPercent) palette.activePillFg else palette.textPrimary,
-              )
-            },
+          EdgeMenuCompactItem(
+            label = "$preset%",
+            badgeText = if (preset == 100) "Default" else null,
+            selected = preset == displayZoomPercent,
+            monospaced = true,
             onClick = {
               onZoomPresetMenuChange(false)
               onSetZoom(preset)

@@ -53,8 +53,6 @@ import androidx.compose.material.icons.outlined.UnfoldMore
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -80,8 +78,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import com.example.data.remote.WorkerFile
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
@@ -317,24 +313,38 @@ fun ProjectFilesSidebar(
             ) {
               Icon(Icons.Outlined.UploadFile, contentDescription = "Upload or Export", tint = palette.textSecondary, modifier = Modifier.size(18.dp))
             }
-            DropdownMenu(expanded = uploadMenuOpen, onDismissRequest = { uploadMenuOpen = false }) {
-              DropdownMenuItem(
-                text = { Text("Upload Single File") },
+            EdgeMenu(
+              expanded = uploadMenuOpen,
+              onDismissRequest = { uploadMenuOpen = false },
+              minWidth = 216.dp,
+              maxWidth = 264.dp,
+            ) {
+              EdgeMenuHeader(
+                title = "Transfer Files",
+                leadingIcon = Icons.Outlined.UploadFile,
+              )
+              EdgeMenuItem(
+                label = "Upload Single File",
+                icon = Icons.Outlined.UploadFile,
                 onClick = {
                   uploadMenuOpen = false
                   onUploadSingleFile()
                 },
               )
-              DropdownMenuItem(
-                text = { Text("Batch Upload Files") },
+              EdgeMenuItem(
+                label = "Batch Upload Files",
+                icon = Icons.Outlined.SnippetFolder,
+                badgeText = "MULTI",
                 onClick = {
                   uploadMenuOpen = false
                   onUploadBatchFiles()
                 },
               )
               uiState.activeFile?.let { active ->
-                DropdownMenuItem(
-                  text = { Text("Export ${active.fileName}") },
+                EdgeMenuDivider()
+                EdgeMenuItem(
+                  label = "Export ${active.fileName}",
+                  icon = Icons.Outlined.Download,
                   onClick = {
                     uploadMenuOpen = false
                     onExportActiveFile()
@@ -344,7 +354,6 @@ fun ProjectFilesSidebar(
             }
           }
 
-          // Floating 20.dp Explorer Overflow Menu (matching Reference 1 popup!)
           Box {
             IconButton(
               onClick = { treeOverflowMenuOpen = true },
@@ -353,75 +362,77 @@ fun ProjectFilesSidebar(
               Icon(Icons.Outlined.MoreHoriz, contentDescription = "Explorer menu", tint = palette.textSecondary, modifier = Modifier.size(19.dp))
             }
 
-            if (treeOverflowMenuOpen) {
-              Popup(
-                alignment = Alignment.TopEnd,
-                onDismissRequest = { treeOverflowMenuOpen = false },
-                properties = PopupProperties(focusable = true),
-              ) {
-                Surface(
-                  color = palette.glassElevated,
-                  shape = RoundedCornerShape(12.dp),
-                  shadowElevation = 2.dp,
-                  border = rememberGlassBorderStroke(0.75.dp),
-                  modifier = Modifier.widthIn(min = 200.dp, max = 240.dp),
-                ) {
-                  Column(modifier = Modifier.padding(vertical = 8.dp)) {
-                    ProjectPopupMenuRow(Icons.Outlined.Add, "New file") {
-                      treeOverflowMenuOpen = false
-                      onShowNewFileDialog("")
+            EdgeFloatingMenuPopup(
+              expanded = treeOverflowMenuOpen,
+              onDismissRequest = { treeOverflowMenuOpen = false },
+              alignment = Alignment.TopEnd,
+              minWidth = 208.dp,
+              maxWidth = 248.dp,
+            ) {
+              EdgeMenuHeader(
+                title = "Explorer",
+                leadingIcon = Icons.Outlined.Folder,
+              )
+              EdgeMenuItem(
+                label = "New File",
+                icon = Icons.Outlined.Add,
+                onClick = {
+                  treeOverflowMenuOpen = false
+                  onShowNewFileDialog("")
+                },
+              )
+              EdgeMenuItem(
+                label = "New Folder",
+                icon = Icons.Outlined.CreateNewFolder,
+                onClick = {
+                  treeOverflowMenuOpen = false
+                  onShowNewDirectoryDialog("")
+                },
+              )
+              EdgeMenuItem(
+                label = "Expand All",
+                icon = Icons.Outlined.UnfoldMore,
+                onClick = {
+                  treeOverflowMenuOpen = false
+                  expandedFolders.keys.toList().forEach { k -> expandedFolders[k] = true }
+                  folderTreeVersion++
+                },
+              )
+              EdgeMenuItem(
+                label = "Collapse All",
+                icon = Icons.Outlined.UnfoldLess,
+                onClick = {
+                  treeOverflowMenuOpen = false
+                  ws?.files.orEmpty().forEach { f ->
+                    val parts = f.path.split('/')
+                    for (i in 1 until parts.size) {
+                      expandedFolders["folder_${parts.subList(0, i).joinToString("/")}"] = false
                     }
-                    ProjectPopupMenuRow(Icons.Outlined.Folder, "New folder") {
-                      treeOverflowMenuOpen = false
-                      onShowNewDirectoryDialog("")
-                    }
-                    ProjectPopupMenuRow(Icons.Outlined.UnfoldMore, "Expand all") {
-                      treeOverflowMenuOpen = false
-                      expandedFolders.keys.toList().forEach { k -> expandedFolders[k] = true }
-                      folderTreeVersion++
-                    }
-                    ProjectPopupMenuRow(Icons.Outlined.UnfoldLess, "Collapse all") {
-                      treeOverflowMenuOpen = false
-                      ws?.files.orEmpty().forEach { f ->
-                        val parts = f.path.split('/')
-                        for (i in 1 until parts.size) {
-                          expandedFolders["folder_${parts.subList(0, i).joinToString("/")}"] = false
-                        }
-                      }
-                      ws?.directories.orEmpty().forEach { d ->
-                        expandedFolders["folder_$d"] = false
-                      }
-                      folderTreeVersion++
-                    }
-                    HorizontalDivider(
-                      color = palette.border.copy(alpha = 0.5f),
-                      modifier = Modifier.padding(vertical = 6.dp),
-                    )
-                    Text(
-                      text = "Sort by",
-                      style = MaterialTheme.typography.labelSmall,
-                      color = palette.textMuted,
-                      modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
-                    )
-                    SortOptionRow(
-                      label = "Name",
-                      selected = sortMode == TreeSortMode.NAME,
-                      onClick = {
-                        sortMode = TreeSortMode.NAME
-                        treeOverflowMenuOpen = false
-                      },
-                    )
-                    SortOptionRow(
-                      label = "Type",
-                      selected = sortMode == TreeSortMode.TYPE,
-                      onClick = {
-                        sortMode = TreeSortMode.TYPE
-                        treeOverflowMenuOpen = false
-                      },
-                    )
                   }
-                }
-              }
+                  ws?.directories.orEmpty().forEach { d ->
+                    expandedFolders["folder_$d"] = false
+                  }
+                  folderTreeVersion++
+                },
+              )
+              EdgeMenuDivider()
+              EdgeMenuSection("Sort By")
+              EdgeMenuCompactItem(
+                label = "Name",
+                selected = sortMode == TreeSortMode.NAME,
+                onClick = {
+                  sortMode = TreeSortMode.NAME
+                  treeOverflowMenuOpen = false
+                },
+              )
+              EdgeMenuCompactItem(
+                label = "Type",
+                selected = sortMode == TreeSortMode.TYPE,
+                onClick = {
+                  sortMode = TreeSortMode.TYPE
+                  treeOverflowMenuOpen = false
+                },
+              )
             }
           }
         }
@@ -730,131 +741,94 @@ private fun ProjectTreeRowItem(
       }
     }
 
-    if (showContextPopup) {
-      Popup(
-        alignment = Alignment.TopCenter,
-        onDismissRequest = { showContextPopup = false },
-        properties = PopupProperties(focusable = true),
-      ) {
-        Surface(
-          color = palette.glassElevated,
-          shape = RoundedCornerShape(12.dp),
-          shadowElevation = 2.dp,
-          border = rememberGlassBorderStroke(0.75.dp),
-          modifier = Modifier.widthIn(min = 196.dp, max = 244.dp),
-        ) {
-          Column(modifier = Modifier.padding(vertical = 8.dp)) {
-            Text(
-              text = contextTitle,
-              style = MaterialTheme.typography.labelMedium,
-              color = palette.textMuted,
-              maxLines = 1,
-              overflow = TextOverflow.Ellipsis,
-              modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-            )
-            if (isFolder) {
-              ProjectPopupMenuRow(Icons.Outlined.Add, "New File") {
-                showContextPopup = false
-                onNewFileInFolder()
-              }
-              ProjectPopupMenuRow(Icons.Outlined.Folder, "New Folder") {
-                showContextPopup = false
-                onNewDirInFolder()
-              }
-            } else if (file != null) {
-              ProjectPopupMenuRow(Icons.Outlined.Description, "Open in Editor") {
-                showContextPopup = false
-                onClick()
-              }
-              ProjectPopupMenuRow(Icons.Outlined.Add, "New Sibling File") {
-                showContextPopup = false
-                onNewFileInFolder()
-              }
-              if (!file.isVirtualReadOnly && !file.isEntryPoint) {
-                ProjectPopupMenuRow(Icons.Outlined.StarOutline, "Set Entry Point") {
-                  showContextPopup = false
-                  onSetEntryClick()
-                }
-              }
-              if (!file.isVirtualReadOnly) {
-                ProjectPopupMenuRow(Icons.Outlined.DriveFileRenameOutline, "Rename / Move") {
-                  showContextPopup = false
-                  onRenameClick()
-                }
-                ProjectPopupMenuRow(Icons.Outlined.Download, "Export File") {
-                  showContextPopup = false
-                  onExportClick()
-                }
-              }
-              if (canDeleteFile) {
-                ProjectPopupMenuRow(
-                  icon = Icons.Outlined.DeleteOutline,
-                  label = "Delete File",
-                  tint = MaterialTheme.colorScheme.error,
-                ) {
-                  showContextPopup = false
-                  onDeleteFileClick()
-                }
-              }
-            }
-          }
+    EdgeFloatingMenuPopup(
+      expanded = showContextPopup,
+      onDismissRequest = { showContextPopup = false },
+      alignment = Alignment.TopCenter,
+      minWidth = 204.dp,
+      maxWidth = 252.dp,
+    ) {
+      EdgeMenuHeader(
+        title = contextTitle,
+        leadingIcon = if (isFolder) Icons.Outlined.Folder else Icons.Outlined.Description,
+      )
+      if (isFolder) {
+        EdgeMenuItem(
+          label = "New File",
+          icon = Icons.Outlined.Add,
+          onClick = {
+            showContextPopup = false
+            onNewFileInFolder()
+          },
+        )
+        EdgeMenuItem(
+          label = "New Folder",
+          icon = Icons.Outlined.CreateNewFolder,
+          onClick = {
+            showContextPopup = false
+            onNewDirInFolder()
+          },
+        )
+      } else if (file != null) {
+        EdgeMenuItem(
+          label = "Open in Editor",
+          icon = Icons.Outlined.Description,
+          onClick = {
+            showContextPopup = false
+            onClick()
+          },
+        )
+        EdgeMenuItem(
+          label = "New Sibling File",
+          icon = Icons.Outlined.Add,
+          onClick = {
+            showContextPopup = false
+            onNewFileInFolder()
+          },
+        )
+        if (!file.isVirtualReadOnly && !file.isEntryPoint) {
+          EdgeMenuItem(
+            label = "Set Entry Point",
+            icon = Icons.Outlined.StarOutline,
+            tone = EdgeMenuTone.ACCENT,
+            badgeText = "main",
+            onClick = {
+              showContextPopup = false
+              onSetEntryClick()
+            },
+          )
+        }
+        if (!file.isVirtualReadOnly) {
+          EdgeMenuItem(
+            label = "Rename / Move",
+            icon = Icons.Outlined.DriveFileRenameOutline,
+            onClick = {
+              showContextPopup = false
+              onRenameClick()
+            },
+          )
+          EdgeMenuItem(
+            label = "Export File",
+            icon = Icons.Outlined.Download,
+            onClick = {
+              showContextPopup = false
+              onExportClick()
+            },
+          )
+        }
+        if (canDeleteFile) {
+          EdgeMenuDivider()
+          EdgeMenuItem(
+            label = "Delete File",
+            icon = Icons.Outlined.DeleteOutline,
+            tone = EdgeMenuTone.DANGER,
+            onClick = {
+              showContextPopup = false
+              onDeleteFileClick()
+            },
+          )
         }
       }
-    }
-  }
-}
-
-@Composable
-private fun ProjectPopupMenuRow(
-  icon: ImageVector,
-  label: String,
-  tint: Color? = null,
-  onClick: () -> Unit,
-) {
-  val palette = LocalIdePalette.current
-  Row(
-    modifier =
-      Modifier
-        .fillMaxWidth()
-        .clickable(onClick = onClick)
-        .padding(horizontal = 16.dp, vertical = 10.dp),
-    verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(12.dp),
-  ) {
-    Icon(imageVector = icon, contentDescription = null, tint = tint ?: palette.textSecondary, modifier = Modifier.size(18.dp))
-    Text(text = label, style = MaterialTheme.typography.bodyMedium, color = tint ?: palette.textPrimary)
-  }
-}
-
-@Composable
-private fun SortOptionRow(
-  label: String,
-  selected: Boolean,
-  onClick: () -> Unit,
-) {
-  val palette = LocalIdePalette.current
-  Row(
-    modifier =
-      Modifier
-        .fillMaxWidth()
-        .clickable(onClick = onClick)
-        .padding(start = 46.dp, end = 18.dp, top = 10.dp, bottom = 10.dp),
-    verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.SpaceBetween,
-  ) {
-    Text(
-      text = label,
-      style = MaterialTheme.typography.bodyMedium,
-      fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-      color = if (selected) palette.activePillFg else palette.textPrimary,
-    )
-    if (selected) {
-      Icon(
-        imageVector = Icons.Outlined.Check,
-        contentDescription = "Selected",
-        tint = palette.activePillFg,
-        modifier = Modifier.size(16.dp),
-      )
     }
   }
 }

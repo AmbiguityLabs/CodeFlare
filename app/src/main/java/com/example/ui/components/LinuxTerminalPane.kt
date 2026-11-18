@@ -38,10 +38,9 @@ import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -339,28 +338,32 @@ fun LinuxTerminalPane(
             )
           }
         }
-        DropdownMenu(
+        EdgeMenu(
           expanded = showMoreCommandsMenu,
           onDismissRequest = { showMoreCommandsMenu = false },
+          minWidth = 236.dp,
+          maxWidth = 286.dp,
         ) {
+          EdgeMenuHeader(
+            title = "Quick Commands",
+            badgeText = "CLI",
+            leadingIcon = Icons.Outlined.Terminal,
+          )
           listOf(
-            "wrangler dev",
-            "wrangler deploy",
-            "wrangler tail",
-            "wrangler versions",
-            "wrangler d1 list",
-            "wrangler r2 bucket list",
-            "wrangler pages project list",
-            "uname -a",
-          ).forEach { cmd ->
-            DropdownMenuItem(
-              text = {
-                Text(
-                  text = cmd,
-                  fontFamily = JetBrainsMono,
-                  fontSize = 12.sp,
-                )
-              },
+            "wrangler dev" to "DEV",
+            "wrangler deploy" to "DEPLOY",
+            "wrangler tail" to "LOGS",
+            "wrangler versions" to "VER",
+            "wrangler d1 list" to "D1",
+            "wrangler r2 bucket list" to "R2",
+            "wrangler pages project list" to "PAGES",
+            "uname -a" to "SYS",
+          ).forEach { (cmd, tag) ->
+            EdgeMenuItem(
+              label = cmd,
+              icon = Icons.Outlined.Terminal,
+              badgeText = tag,
+              monospaced = true,
               onClick = {
                 showMoreCommandsMenu = false
                 onRunCommand(cmd)

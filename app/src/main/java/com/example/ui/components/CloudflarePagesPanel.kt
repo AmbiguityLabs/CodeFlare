@@ -46,8 +46,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -832,16 +830,49 @@ private fun PagesProjectDetailView(
               OutlinedButton(onClick = { resourceMenuOpen = true }, shape = RoundedCornerShape(10.dp)) {
                 Text("Pick", fontSize = 11.sp)
               }
-              DropdownMenu(expanded = resourceMenuOpen, onDismissRequest = { resourceMenuOpen = false }) {
+              EdgeMenu(
+                expanded = resourceMenuOpen,
+                onDismissRequest = { resourceMenuOpen = false },
+                minWidth = 216.dp,
+                maxWidth = 280.dp,
+              ) {
+                EdgeMenuHeader(
+                  title = "Select $bindKind Resource",
+                  badgeText = bindKind,
+                )
                 when (bindKind) {
                   "KV" -> uiState.kvNamespaces.forEach { ns ->
-                    DropdownMenuItem(text = { Text(ns.title) }, onClick = { bindResourceId = ns.id; resourceMenuOpen = false })
+                    EdgeMenuCompactItem(
+                      label = ns.title,
+                      subtitle = ns.id,
+                      selected = bindResourceId == ns.id,
+                      onClick = {
+                        bindResourceId = ns.id
+                        resourceMenuOpen = false
+                      },
+                    )
                   }
                   "D1" -> uiState.d1Databases.forEach { db ->
-                    DropdownMenuItem(text = { Text(db.name) }, onClick = { bindResourceId = db.uuid; resourceMenuOpen = false })
+                    EdgeMenuCompactItem(
+                      label = db.name,
+                      subtitle = db.uuid,
+                      selected = bindResourceId == db.uuid,
+                      onClick = {
+                        bindResourceId = db.uuid
+                        resourceMenuOpen = false
+                      },
+                    )
                   }
                   "R2" -> uiState.r2Buckets.forEach { b ->
-                    DropdownMenuItem(text = { Text(b.name) }, onClick = { bindResourceId = b.name; resourceMenuOpen = false })
+                    EdgeMenuCompactItem(
+                      label = b.name,
+                      selected = bindResourceId == b.name,
+                      monospaced = true,
+                      onClick = {
+                        bindResourceId = b.name
+                        resourceMenuOpen = false
+                      },
+                    )
                   }
                 }
               }

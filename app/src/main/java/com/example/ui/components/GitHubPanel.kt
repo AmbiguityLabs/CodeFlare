@@ -50,8 +50,6 @@ import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -1893,10 +1891,23 @@ private fun BoxBranchPicker(
       Spacer(Modifier.width(4.dp))
       Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(16.dp))
     }
-    DropdownMenu(expanded = expanded, onDismissRequest = { onOpenChange(false) }) {
+    EdgeMenu(
+      expanded = expanded,
+      onDismissRequest = { onOpenChange(false) },
+      minWidth = 204.dp,
+      maxWidth = 268.dp,
+    ) {
+      EdgeMenuHeader(
+        title = "Switch Branch",
+        badgeText = "${branches.size}",
+        leadingIcon = Icons.Outlined.AccountTree,
+      )
       branches.forEach { b ->
-        DropdownMenuItem(
-          text = { Text(b) },
+        EdgeMenuCompactItem(
+          label = b,
+          icon = Icons.Outlined.AccountTree,
+          selected = b == currentBranch,
+          monospaced = true,
           onClick = {
             onOpenChange(false)
             onSelect(b)

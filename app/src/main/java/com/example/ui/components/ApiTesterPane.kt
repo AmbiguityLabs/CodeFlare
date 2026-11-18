@@ -45,8 +45,6 @@ import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -436,10 +434,22 @@ fun ApiTesterPane(
             Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Select HTTP method", tint = palette.textSecondary, modifier = Modifier.size(16.dp))
           }
         }
-        DropdownMenu(expanded = methodMenuOpen, onDismissRequest = { methodMenuOpen = false }) {
+        EdgeMenu(
+          expanded = methodMenuOpen,
+          onDismissRequest = { methodMenuOpen = false },
+          minWidth = 152.dp,
+          maxWidth = 180.dp,
+        ) {
+          EdgeMenuSection("HTTP Method")
           httpVerbs.forEach { verb ->
-            DropdownMenuItem(
-              text = { Text(verb, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold) },
+            val tint = edgeHttpVerbColor(verb, palette.textSecondary)
+            val isSelected = verb.equals(req.method, ignoreCase = true)
+            EdgeMenuCompactItem(
+              label = verb,
+              leadingColorDot = tint,
+              selected = isSelected,
+              monospaced = true,
+              accentColor = if (isSelected) tint else null,
               onClick = {
                 onUpdateRequest { it.copy(method = verb) }
                 methodMenuOpen = false
@@ -1072,10 +1082,17 @@ private fun ApiAssertionsEditor(
                 Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(14.dp), tint = palette.textSecondary)
               }
             }
-            DropdownMenu(expanded = targetMenuOpen, onDismissRequest = { targetMenuOpen = false }) {
+            EdgeMenu(
+              expanded = targetMenuOpen,
+              onDismissRequest = { targetMenuOpen = false },
+              minWidth = 186.dp,
+              maxWidth = 232.dp,
+            ) {
+              EdgeMenuSection("Assertion Target")
               ApiAssertionTarget.entries.forEach { t ->
-                DropdownMenuItem(
-                  text = { Text(t.label) },
+                EdgeMenuCompactItem(
+                  label = t.label,
+                  selected = t == rule.target,
                   onClick = {
                     val defaultOp =
                       when (t) {
@@ -1100,10 +1117,18 @@ private fun ApiAssertionsEditor(
                 Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(14.dp), tint = palette.textSecondary)
               }
             }
-            DropdownMenu(expanded = opMenuOpen, onDismissRequest = { opMenuOpen = false }) {
+            EdgeMenu(
+              expanded = opMenuOpen,
+              onDismissRequest = { opMenuOpen = false },
+              minWidth = 178.dp,
+              maxWidth = 228.dp,
+            ) {
+              EdgeMenuSection("Operator")
               ApiAssertionOperator.entries.forEach { op ->
-                DropdownMenuItem(
-                  text = { Text(op.label) },
+                EdgeMenuCompactItem(
+                  label = op.label,
+                  selected = op == rule.operator,
+                  monospaced = true,
                   onClick = {
                     onRulesChange(rules.mapIndexed { i, r -> if (i == idx) r.copy(operator = op) else r })
                     opMenuOpen = false

@@ -35,8 +35,6 @@ import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -1107,10 +1105,23 @@ private fun RoutesDomainsCronSection(
       OutlinedButton(onClick = { zoneDropdownExpanded = true }, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
         Text("Zone: ${activeZone.name}")
       }
-      DropdownMenu(expanded = zoneDropdownExpanded, onDismissRequest = { zoneDropdownExpanded = false }) {
+      EdgeMenu(
+        expanded = zoneDropdownExpanded,
+        onDismissRequest = { zoneDropdownExpanded = false },
+        minWidth = 210.dp,
+        maxWidth = 272.dp,
+      ) {
+        EdgeMenuHeader(
+          title = "Cloudflare Zone",
+          badgeText = "${uiState.zones.size}",
+          leadingIcon = Icons.Outlined.Language,
+        )
         uiState.zones.forEach { zone ->
-          DropdownMenuItem(
-            text = { Text(zone.name) },
+          EdgeMenuCompactItem(
+            label = zone.name,
+            icon = Icons.Outlined.Language,
+            selected = zone.id == activeZone.id,
+            monospaced = true,
             onClick = {
               selectedZoneId = zone.id
               if (customHostname.isBlank()) customHostname = "api.${zone.name}"

@@ -64,8 +64,6 @@ import androidx.compose.material.icons.outlined.Web
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -98,6 +96,9 @@ import androidx.compose.ui.unit.sp
 import com.example.data.local.RamWorkspaceRecord
 import com.example.data.remote.CfWorkerScript
 import com.example.ui.components.ChangeSubdomainDialog
+import com.example.ui.components.EdgeMenu
+import com.example.ui.components.EdgeMenuCompactItem
+import com.example.ui.components.EdgeMenuHeader
 import com.example.ui.components.CloudflareInfraPanel
 import com.example.ui.components.CloudflarePagesPanel
 import com.example.ui.components.EdgeBottomDock
@@ -513,15 +514,22 @@ fun HomeScreen(
                       )
                     }
                   }
-                  DropdownMenu(expanded = accountMenuOpen, onDismissRequest = { accountMenuOpen = false }) {
+                  EdgeMenu(
+                    expanded = accountMenuOpen,
+                    onDismissRequest = { accountMenuOpen = false },
+                    minWidth = 224.dp,
+                    maxWidth = 280.dp,
+                  ) {
+                    EdgeMenuHeader(
+                      title = "Cloudflare Accounts",
+                      badgeText = "${uiState.accounts.size}",
+                      leadingIcon = Icons.Outlined.CloudQueue,
+                    )
                     uiState.accounts.forEach { acc ->
-                      DropdownMenuItem(
-                        text = {
-                          Text(
-                            text = formatAccountDisplayName(acc.name),
-                            fontWeight = if (acc.id == uiState.selectedAccount?.id) FontWeight.Bold else FontWeight.Normal,
-                          )
-                        },
+                      EdgeMenuCompactItem(
+                        label = formatAccountDisplayName(acc.name),
+                        icon = Icons.Outlined.CloudQueue,
+                        selected = acc.id == uiState.selectedAccount?.id,
                         onClick = {
                           accountMenuOpen = false
                           viewModel.selectAccount(acc)

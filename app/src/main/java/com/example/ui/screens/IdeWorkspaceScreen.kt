@@ -65,8 +65,6 @@ import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -113,6 +111,14 @@ import com.example.ui.components.ConsoleView
 import com.example.ui.components.DeployedWorkerPreviewPane
 import com.example.ui.components.DiffReviewIntent
 import com.example.ui.components.DiffReviewModal
+import com.example.ui.components.EdgeMenu
+import com.example.ui.components.EdgeMenuDivider
+import com.example.ui.components.EdgeMenuHeader
+import com.example.ui.components.EdgeMenuItem
+import com.example.ui.components.EdgeMenuQuickAction
+import com.example.ui.components.EdgeMenuQuickActionRow
+import com.example.ui.components.EdgeMenuSection
+import com.example.ui.components.EdgeMenuTone
 import com.example.ui.components.EdgeBottomDock
 import com.example.ui.components.EdgeBottomDockItem
 import com.example.ui.components.GitHubAndDiffPanel
@@ -832,102 +838,106 @@ fun IdeWorkspaceScreen(
                 )
               }
 
-              DropdownMenu(
+              EdgeMenu(
                 expanded = overflowMenuOpen,
                 onDismissRequest = { overflowMenuOpen = false },
+                minWidth = 258.dp,
+                maxWidth = 296.dp,
               ) {
+                val activeWs = uiState.workspace
+                val menuFileCount = activeWs?.files?.count { !it.isVirtualReadOnly } ?: 0
+                val menuDirtyCount = activeWs?.files?.count { it.isDirty } ?: 0
+                val allHidden = uiState.isBottomDockHidden && uiState.isEditorBottomBarsHidden
+                val effectiveSub = activeWs?.accountSubdomain?.takeIf { it.isNotBlank() } ?: uiState.accountSubdomain
+
+                EdgeMenuHeader(
+                  title = activeWs?.scriptName ?: "Project",
+                  subtitle =
+                    when {
+                      menuDirtyCount > 0 -> "$menuDirtyCount edited · unsaved"
+                      uiState.isLocalScratchpad -> "Local workspace"
+                      else -> "Synced with Cloudflare"
+                    },
+                  badgeText = if (activeWs != null) "$menuFileCount files" else null,
+                  leadingIcon = Icons.Outlined.Code,
+                )
+
+                val quickActions =
+                  buildList {
+                    if (!isExpanded) {
+                      add(
+                        EdgeMenuQuickAction(
+                          label = "Files",
+                          icon = Icons.Outlined.FolderOpen,
+                          onClick = {
+                            overflowMenuOpen = false
+                            scope.launch { drawerState.open() }
+                          },
+                        ),
+                      )
+                    } else {
+                      add(
+                        EdgeMenuQuickAction(
+                          label = "Palette",
+                          icon = Icons.Outlined.Terminal,
+                          onClick = {
+                            overflowMenuOpen = false
+                            showCommandPalette = true
+                          },
+                        ),
+                      )
+                    }
+                    add(
+                      EdgeMenuQuickAction(
+                        label = if (allHidden) "Show UI" else "Hide UI",
+                        icon = if (allHidden) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
+                        active = allHidden,
+                        onClick = {
+                          overflowMenuOpen = false
+                          viewModel.toggleAllBottomMenus(!allHidden)
+                        },
+                      ),
+                    )
+                    add(
+                      EdgeMenuQuickAction(
+                        label = "Settings",
+                        icon = Icons.Outlined.Settings,
+                        onClick = {
+                          overflowMenuOpen = false
+                          showProjectSettingsModal = true
+                        },
+                      ),
+                    )
+                  }
+                EdgeMenuQuickActionRow(actions = quickActions)
+
+                EdgeMenuSection("Workspace")
                 if (!isExpanded) {
-                  DropdownMenuItem(
-                    text = { Text("Project Files") },
-                    leadingIcon = { Icon(Icons.Outlined.FolderOpen, contentDescription = null) },
+                  EdgeMenuItem(
+                    label = "Command Palette",
+                    icon = Icons.Outlined.Terminal,
+                    badgeText = "⌘K",
                     onClick = {
                       overflowMenuOpen = false
-                      scope.launch { drawerState.open() }
+                      showCommandPalette = true
                     },
                   )
                 }
-                DropdownMenuItem(
-                  text = { Text("Command Palette") },
-                  leadingIcon = { Icon(Icons.Outlined.Terminal, contentDescription = null) },
-                  onClick = {
-                    overflowMenuOpen = false
-                    showCommandPalette = true
-                  },
-                )
-                val allHidden = uiState.isBottomDockHidden && uiState.isEditorBottomBarsHidden
-                DropdownMenuItem(
-                  text = {
-                    Text(if (allHidden) "Show All Bottom Menus" else "Hide All Bottom Menus")
-                  },
-                  leadingIcon = {
-                    Icon(
-                      imageVector = if (allHidden) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
-                      contentDescription = null,
-                    )
-                  },
-                  onClick = {
-                    overflowMenuOpen = false
-                    viewModel.toggleAllBottomMenus(!allHidden)
-                  },
-                )
-                DropdownMenuItem(
-                  text = { Text("Sync wrangler.jsonc") },
-                  leadingIcon = { Icon(Icons.Outlined.Sync, contentDescription = null) },
+                EdgeMenuItem(
+                  label = "Sync wrangler.jsonc",
+                  icon = Icons.Outlined.Sync,
+                  badgeText = "CONFIG",
                   onClick = {
                     overflowMenuOpen = false
                     viewModel.syncWranglerFileToWorkspace()
                   },
                 )
-                if (uiState.workspace != null) {
-                  DropdownMenuItem(
-                    text = { Text("Rename Worker") },
-                    leadingIcon = { Icon(Icons.Outlined.DriveFileRenameOutline, contentDescription = null) },
-                    onClick = {
-                      overflowMenuOpen = false
-                      showRenameWorkerDialog = true
-                    },
-                  )
-                  DropdownMenuItem(
-                    text = { Text("Change Subdomain (*.workers.dev)") },
-                    leadingIcon = { Icon(Icons.Outlined.Language, contentDescription = null) },
-                    onClick = {
-                      overflowMenuOpen = false
-                      showChangeSubdomainDialog = true
-                    },
-                  )
-                }
-                DropdownMenuItem(
-                  text = { Text("Export Workspace (.json)") },
-                  leadingIcon = { Icon(Icons.Outlined.UploadFile, contentDescription = null) },
-                  onClick = {
-                    overflowMenuOpen = false
-                    if (uiState.workspace != null) triggerExportWorkspaceBundle()
-                  },
-                )
-                DropdownMenuItem(
-                  text = { Text("Import Workspace (.json)") },
-                  leadingIcon = { Icon(Icons.Outlined.FolderOpen, contentDescription = null) },
-                  onClick = {
-                    overflowMenuOpen = false
-                    triggerImportWorkspaceBundle()
-                  },
-                )
-                if (!uiState.isLocalScratchpad && uiState.workspace != null) {
-                  DropdownMenuItem(
-                    text = { Text("Re-Import from Cloudflare") },
-                    leadingIcon = { Icon(Icons.Outlined.Refresh, contentDescription = null) },
-                    onClick = {
-                      overflowMenuOpen = false
-                      viewModel.reimportActiveWorkerFromCloudflare()
-                    },
-                  )
-                }
                 if (uiState.hasUnsavedChanges) {
-                  DropdownMenuItem(
-                    text = {
-                      Text(if (uiState.isLocalScratchpad) "Review Workspace Diff" else "Review Diff & Deploy")
-                    },
-                    leadingIcon = { Icon(Icons.Outlined.Difference, contentDescription = null) },
+                  EdgeMenuItem(
+                    label = if (uiState.isLocalScratchpad) "Review Workspace Diff" else "Review Diff & Deploy",
+                    icon = Icons.Outlined.Difference,
+                    tone = EdgeMenuTone.ACCENT,
+                    badgeText = "DIFF",
                     onClick = {
                       overflowMenuOpen = false
                       viewModel.openDiffReview(
@@ -935,18 +945,20 @@ fun IdeWorkspaceScreen(
                       )
                     },
                   )
-                  DropdownMenuItem(
-                    text = { Text("Revert Workspace") },
-                    leadingIcon = { Icon(Icons.Outlined.Restore, contentDescription = null) },
+                  EdgeMenuItem(
+                    label = "Revert Workspace",
+                    icon = Icons.Outlined.Restore,
+                    tone = EdgeMenuTone.DANGER,
                     onClick = {
                       overflowMenuOpen = false
                       viewModel.revertWorkspaceToImportedBaseline()
                     },
                   )
-                } else if (uiState.workspace != null) {
-                  DropdownMenuItem(
-                    text = { Text("Diff Viewer") },
-                    leadingIcon = { Icon(Icons.Outlined.Difference, contentDescription = null) },
+                } else if (activeWs != null) {
+                  EdgeMenuItem(
+                    label = "Diff Viewer",
+                    icon = Icons.Outlined.Difference,
+                    badgeText = "DIFF",
                     onClick = {
                       overflowMenuOpen = false
                       viewModel.openDiffReview(DiffReviewIntent.WORKSPACE)
@@ -954,30 +966,82 @@ fun IdeWorkspaceScreen(
                   )
                 }
                 if (uiState.pendingMergeConflicts.isNotEmpty()) {
-                  DropdownMenuItem(
-                    text = { Text("Resolve Merge Conflicts (${uiState.pendingMergeConflicts.size})") },
-                    leadingIcon = { Icon(Icons.Outlined.MergeType, contentDescription = null, tint = AmberWarn) },
+                  EdgeMenuItem(
+                    label = "Merge Conflicts",
+                    icon = Icons.Outlined.MergeType,
+                    tone = EdgeMenuTone.WARNING,
+                    badgeText = "${uiState.pendingMergeConflicts.size}",
                     onClick = {
                       overflowMenuOpen = false
                       viewModel.openConflictResolver()
                     },
                   )
                 }
-                HorizontalDivider()
-                DropdownMenuItem(
-                  text = { Text("Git Sync (Optional)") },
-                  leadingIcon = { Icon(Icons.Outlined.AccountTree, contentDescription = null) },
+
+                if (activeWs != null) {
+                  EdgeMenuDivider()
+                  EdgeMenuSection("Worker & Cloud")
+                  EdgeMenuItem(
+                    label = "Rename Worker",
+                    icon = Icons.Outlined.DriveFileRenameOutline,
+                    onClick = {
+                      overflowMenuOpen = false
+                      showRenameWorkerDialog = true
+                    },
+                  )
+                  EdgeMenuItem(
+                    label = "Workers Subdomain",
+                    subtitle =
+                      if (effectiveSub.isNotBlank()) "$effectiveSub.workers.dev"
+                      else "Configure *.workers.dev",
+                    icon = Icons.Outlined.Language,
+                    badgeText = "*.dev",
+                    onClick = {
+                      overflowMenuOpen = false
+                      showChangeSubdomainDialog = true
+                    },
+                  )
+                  if (!uiState.isLocalScratchpad) {
+                    EdgeMenuItem(
+                      label = "Re-Import from Cloudflare",
+                      icon = Icons.Outlined.Refresh,
+                      onClick = {
+                        overflowMenuOpen = false
+                        viewModel.reimportActiveWorkerFromCloudflare()
+                      },
+                    )
+                  }
+                }
+
+                EdgeMenuDivider()
+                EdgeMenuSection("Transfer & Git")
+                EdgeMenuItem(
+                  label = "Export Workspace",
+                  icon = Icons.Outlined.UploadFile,
+                  badgeText = ".json",
+                  enabled = activeWs != null,
+                  onClick = {
+                    overflowMenuOpen = false
+                    if (activeWs != null) triggerExportWorkspaceBundle()
+                  },
+                )
+                EdgeMenuItem(
+                  label = "Import Workspace",
+                  icon = Icons.Outlined.FolderOpen,
+                  badgeText = ".json",
+                  onClick = {
+                    overflowMenuOpen = false
+                    triggerImportWorkspaceBundle()
+                  },
+                )
+                EdgeMenuItem(
+                  label = "Git Sync",
+                  subtitle = "Optional repository sync",
+                  icon = Icons.Outlined.AccountTree,
+                  badgeText = "GIT",
                   onClick = {
                     overflowMenuOpen = false
                     showProjectGitModal = true
-                  },
-                )
-                DropdownMenuItem(
-                  text = { Text("Settings & Credentials") },
-                  leadingIcon = { Icon(Icons.Outlined.Settings, contentDescription = null) },
-                  onClick = {
-                    overflowMenuOpen = false
-                    showProjectSettingsModal = true
                   },
                 )
               }
