@@ -13,14 +13,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.calculateCentroid
-import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -41,7 +36,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.FormatIndentIncrease
 import androidx.compose.material.icons.automirrored.outlined.Redo
@@ -73,7 +67,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -81,55 +74,44 @@ import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.PlatformTextStyle
-import androidx.compose.ui.text.TextLayoutResult
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.R
+import com.example.data.remote.DiagnosticItem
 import com.example.data.remote.DiagnosticSeverity
 import com.example.data.remote.WorkerLanguage
-import com.example.editor.BracketMatch
-import com.example.editor.CodeAnalyzer
-import com.example.editor.CodeEditHelper
+import com.example.data.remote.WorkerWorkspace
+import com.example.editor.CodeEditorController
 import com.example.editor.CodeSymbol
-import com.example.editor.CodeSyntaxVisualTransformation
+import com.example.editor.EdgeCodeEditorView
+import com.example.editor.EditorCursorTelemetry
 import com.example.editor.MergeConflictResolver
 import com.example.editor.WranglerSyncParser
 import com.example.ui.theme.AmberWarn
@@ -143,9 +125,19 @@ import com.example.ui.theme.rememberGlassBorderStroke
 import com.example.ui.viewmodel.IdeUiState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.roundToInt
+
+/**
+ * Isolated mutable state holder read ONLY by tiny leaf HUD composables
+ * (status line cursor counter, floating autocomplete bar, zoom pill, floating diagnostic pill).
+ * Updating these fields during typing NEVER recomposes CodeEditorPane or the native editor view.
+ */
+@Stable
+private class EditorLiveHudHolder(initialZoomPercent: Int) {
+  var telemetry by mutableStateOf(EditorCursorTelemetry())
+  var liveZoomPercent by mutableIntStateOf(initialZoomPercent.coerceIn(60, 220))
+  var isPinching by mutableStateOf(false)
+}
 
 @Composable
 fun CodeEditorPane(
@@ -189,22 +181,18 @@ fun CodeEditorPane(
   onJumpToLocation: (String, Int, Int) -> Unit = { path, line, _ -> onJumpToLine(path, line) },
   onHideEditorBottomBars: () -> Unit = {},
   onOpenConflictResolver: (() -> Unit)? = null,
+  onRegisterFlushHook: ((() -> Unit)?) -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
   val activeFile = uiState.activeFile
 
-  var localTfv by remember(activeFile?.path) {
-    mutableStateOf(uiState.activeTextFieldValue)
-  }
-  val latestLocalTfv by rememberUpdatedState(localTfv)
-  val latestVmTfv by rememberUpdatedState(uiState.activeTextFieldValue)
+  val editorController = remember { CodeEditorController() }
+  val hudHolder = remember { EditorLiveHudHolder(uiState.editorSettings.zoomPercent) }
   val latestOnCodeChange by rememberUpdatedState(onCodeChange)
 
   fun flushThen(action: () -> Unit) {
-    if (activeFile != null && !activeFile.isVirtualReadOnly && localTfv != latestVmTfv) {
-      onCodeChange(localTfv)
-    }
+    editorController.flushNow()
     action()
   }
 
@@ -259,7 +247,11 @@ fun CodeEditorPane(
 
     val activeConflicts =
       remember(activeFile?.path, activeFile?.content) {
-        activeFile?.let { MergeConflictResolver.parseConflictMarkers(it.content) }.orEmpty()
+        if (activeFile != null && activeFile.content.contains("<<<<<<<")) {
+          MergeConflictResolver.parseConflictMarkers(activeFile.content)
+        } else {
+          emptyList()
+        }
       }
     if (activeConflicts.isNotEmpty() && onOpenConflictResolver != null) {
       Surface(
@@ -309,44 +301,25 @@ fun CodeEditorPane(
       return
     }
 
-    // Keep local editor buffer in sync with external ViewModel mutations (Undo/Redo/Format/Jump/Revert)
-    LaunchedEffect(activeFile.path, uiState.editorRevision) {
-      val vmVal = latestVmTfv
-      if (localTfv != vmVal) {
-        localTfv = vmVal
-      }
-    }
-
-    // Debounce typing sync back to ViewModel so rapid keystrokes never trigger full-app recomposition
-    LaunchedEffect(activeFile.path, localTfv) {
-      if (!activeFile.isVirtualReadOnly && localTfv != latestVmTfv) {
-        delay(110L)
-        latestOnCodeChange(latestLocalTfv)
-      }
-    }
-
-    // Flush any pending typed text when switching tabs, pausing app, or leaving the editor
+    // Flush any pending typed text when switching tabs, pausing app, deploying, or leaving the editor
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(activeFile.path, lifecycleOwner) {
+      onRegisterFlushHook { editorController.flushNow() }
       val observer =
         LifecycleEventObserver { _, event ->
-          if ((event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) &&
-            !activeFile.isVirtualReadOnly &&
-            latestLocalTfv != latestVmTfv
-          ) {
-            latestOnCodeChange(latestLocalTfv)
+          if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+            editorController.flushNow()
           }
         }
       lifecycleOwner.lifecycle.addObserver(observer)
       onDispose {
+        onRegisterFlushHook(null)
         lifecycleOwner.lifecycle.removeObserver(observer)
-        if (!activeFile.isVirtualReadOnly && latestLocalTfv != latestVmTfv) {
-          latestOnCodeChange(latestLocalTfv)
-        }
+        editorController.flushNow()
       }
     }
 
-    val tfv = localTfv
+    val syncedTfv = uiState.activeTextFieldValue
     val isWranglerConfig =
       activeFile.path.equals("wrangler.jsonc", ignoreCase = true) ||
         activeFile.path.equals("wrangler.json", ignoreCase = true) ||
@@ -356,14 +329,14 @@ fun CodeEditorPane(
     var symbols by remember(activeFile.path, activeFile.language) {
       mutableStateOf<List<CodeSymbol>>(emptyList())
     }
-    LaunchedEffect(activeFile.path, activeFile.language, tfv.text) {
+    LaunchedEffect(activeFile.path, activeFile.language, activeFile.content) {
       if (activeFile.language == WorkerLanguage.TEXT) {
         symbols = emptyList()
         return@LaunchedEffect
       }
-      val snapshot = tfv.text
+      val snapshot = activeFile.content
       val lang = activeFile.language
-      if (snapshot.length > 2_000) delay(320L)
+      if (snapshot.length > 1_200) delay(900L)
       symbols =
         withContext(Dispatchers.Default) {
           WranglerSyncParser.extractCodeSymbols(snapshot, lang)
@@ -548,7 +521,7 @@ fun CodeEditorPane(
       }
 
       IconButton(
-        onClick = onToggleFindBar,
+        onClick = { flushThen(onToggleFindBar) },
         modifier = Modifier.size(32.dp).testTag("find_replace_toggle"),
       ) {
         Icon(
@@ -574,9 +547,9 @@ fun CodeEditorPane(
     }
     }
 
-    // Compute active tab find match ranges for counter & live editor canvas highlights
+    // Compute active tab find match ranges ONLY when Find bar is open
     val activeFindMatches =
-      remember(uiState.showFindBar, uiState.findQuery, uiState.findMatchCase, tfv.text) {
+      remember(uiState.showFindBar, uiState.findQuery, uiState.findMatchCase, syncedTfv.text) {
         if (!uiState.showFindBar || uiState.findQuery.isEmpty()) {
           emptyList()
         } else {
@@ -584,8 +557,9 @@ fun CodeEditorPane(
           val ignoreCase = !uiState.findMatchCase
           val hits = ArrayList<IntRange>(32)
           var pos = 0
-          while (pos <= tfv.text.length - q.length && hits.size < 500) {
-            val found = tfv.text.indexOf(q, pos, ignoreCase = ignoreCase)
+          val hay = syncedTfv.text
+          while (pos <= hay.length - q.length && hits.size < 500) {
+            val found = hay.indexOf(q, pos, ignoreCase = ignoreCase)
             if (found < 0) break
             hits.add(found until (found + q.length))
             pos = found + q.length
@@ -594,11 +568,11 @@ fun CodeEditorPane(
         }
       }
     val activeFindMatchIndex =
-      remember(activeFindMatches, tfv.selection) {
+      remember(activeFindMatches, syncedTfv.selection) {
         if (activeFindMatches.isEmpty()) -1
         else {
-          val selStart = tfv.selection.min
-          val selEnd = tfv.selection.max
+          val selStart = syncedTfv.selection.min
+          val selEnd = syncedTfv.selection.max
           activeFindMatches.indexOfFirst { it.first == selStart && (it.last + 1) == selEnd }
             .takeIf { it >= 0 }
             ?: activeFindMatches.indexOfFirst { selStart in it.first..(it.last + 1) }
@@ -613,7 +587,7 @@ fun CodeEditorPane(
         uiState.openTabPaths,
         uiState.workspace?.files,
         uiState.editorFieldValues,
-        tfv.text,
+        syncedTfv.text,
       ) {
         if (!uiState.showFindBar || uiState.findQuery.isEmpty() || uiState.findScope == 0) {
           activeFindMatches.size
@@ -626,7 +600,7 @@ fun CodeEditorPane(
           var total = 0
           targetPaths.forEach { p ->
             val txt =
-              if (p == activeFile.path) tfv.text
+              if (p == activeFile.path) syncedTfv.text
               else uiState.editorFieldValues[p]?.text
                 ?: uiState.workspace?.files?.firstOrNull { it.path == p }?.content
                 ?: ""
@@ -909,158 +883,19 @@ fun CodeEditorPane(
       remember(fileDiagnostics) {
         fileDiagnostics.filter { it.severity != DiagnosticSeverity.INFO }.ifEmpty { fileDiagnostics }
       }
-    val (activeLine, activeCol) =
-      remember(tfv.text, tfv.selection.start) {
-        CodeEditHelper.computeCursorLineAndCol(tfv.text, tfv.selection.start)
-      }
-    var selectedDiagIndex by remember(activeFile.path) { mutableIntStateOf(0) }
-    val activeLineDiagIdx =
-      remember(actionableDiagnostics, activeLine) {
-        actionableDiagnostics.indexOfFirst { it.line == activeLine }
-      }
-    LaunchedEffect(activeLineDiagIdx) {
-      if (activeLineDiagIdx >= 0) {
-        selectedDiagIndex = activeLineDiagIdx
-      }
-    }
-    val currentDiag =
-      if (actionableDiagnostics.isNotEmpty()) {
-        actionableDiagnostics[selectedDiagIndex.coerceIn(0, actionableDiagnostics.lastIndex)]
-      } else null
 
-    // Inline Syntax Catching Bar (live error & warning navigator — hidden with Layer 2)
-    if (currentDiag != null && !uiState.isEditorTopChromeHidden) {
-      val isErr = currentDiag.severity == DiagnosticSeverity.ERROR
-      val isWarn = currentDiag.severity == DiagnosticSeverity.WARNING
-      val stripBg =
-        when {
-          isErr -> RoseError.copy(alpha = 0.13f)
-          isWarn -> AmberWarn.copy(alpha = 0.13f)
-          else -> palette.activePillBg.copy(alpha = 0.7f)
-        }
-      val stripFg =
-        when {
-          isErr -> RoseError
-          isWarn -> AmberWarn
-          else -> palette.activePillFg
-        }
-      Surface(
-        color = stripBg,
-        modifier =
-          Modifier
-            .fillMaxWidth()
-            .clickable { flushThen { onJumpToLocation(currentDiag.filePath, currentDiag.line, currentDiag.column) } }
-            .testTag("editor_syntax_catcher_bar"),
-      ) {
-        Row(
-          modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-          Icon(
-            imageVector = if (isErr) Icons.Outlined.ErrorOutline else Icons.Outlined.WarningAmber,
-            contentDescription = currentDiag.severity.name,
-            tint = stripFg,
-            modifier = Modifier.size(14.dp),
-          )
-          Surface(
-            color = stripFg.copy(alpha = 0.18f),
-            shape = RoundedCornerShape(4.dp),
-          ) {
-            Text(
-              text = "Ln ${currentDiag.line}:${currentDiag.column}",
-              fontFamily = JetBrainsMono,
-              fontSize = 10.sp,
-              fontWeight = FontWeight.Bold,
-              color = stripFg,
-              modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
-            )
-          }
-          Text(
-            text = currentDiag.message,
-            fontFamily = JetBrainsMono,
-            fontSize = 11.sp,
-            color = palette.textPrimary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-          )
-          if (actionableDiagnostics.size > 1) {
-            Text(
-              text = "${(selectedDiagIndex.coerceIn(0, actionableDiagnostics.lastIndex)) + 1}/${actionableDiagnostics.size}",
-              fontFamily = JetBrainsMono,
-              fontSize = 10.sp,
-              color = palette.textMuted,
-            )
-            IconButton(
-              onClick = {
-                val prev =
-                  if (selectedDiagIndex <= 0) actionableDiagnostics.lastIndex else selectedDiagIndex - 1
-                selectedDiagIndex = prev
-                val d = actionableDiagnostics[prev]
-                flushThen { onJumpToLocation(d.filePath, d.line, d.column) }
-              },
-              modifier = Modifier.size(24.dp).testTag("syntax_prev_button"),
-            ) {
-              Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = "Previous syntax issue", tint = stripFg, modifier = Modifier.size(16.dp))
-            }
-            IconButton(
-              onClick = {
-                val next = (selectedDiagIndex + 1) % actionableDiagnostics.size
-                selectedDiagIndex = next
-                val d = actionableDiagnostics[next]
-                flushThen { onJumpToLocation(d.filePath, d.line, d.column) }
-              },
-              modifier = Modifier.size(24.dp).testTag("syntax_next_button"),
-            ) {
-              Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Next syntax issue", tint = stripFg, modifier = Modifier.size(16.dp))
-            }
-          }
-        }
-      }
-      HorizontalDivider(color = stripFg.copy(alpha = 0.35f))
-    }
-
-    // Real Vector Typographic Pinch-to-Zoom + Pure VisualTransformation + TextLayoutResult Overlays
     var committedZoomPercent by remember {
       mutableIntStateOf(uiState.editorSettings.zoomPercent.coerceIn(60, 220))
     }
-    var liveZoomPercent by remember {
-      mutableFloatStateOf(committedZoomPercent.toFloat())
-    }
-    var isPinching by remember { mutableStateOf(false) }
-    var gutterWidthPx by remember { mutableFloatStateOf(0f) }
-
     LaunchedEffect(uiState.editorSettings.zoomPercent) {
-      if (!isPinching) {
+      if (!hudHolder.isPinching) {
         val next = uiState.editorSettings.zoomPercent.coerceIn(60, 220)
         committedZoomPercent = next
-        liveZoomPercent = next.toFloat()
+        hudHolder.liveZoomPercent = next
       }
     }
 
-    val activeZoomPercent = if (isPinching) liveZoomPercent.coerceIn(60f, 220f) else committedZoomPercent.toFloat()
-    val effectiveFontSizeSp = (uiState.editorSettings.fontSizeSp * (activeZoomPercent / 100f)).coerceIn(8f, 34f)
-    val effectiveLineHeightSp = effectiveFontSizeSp * 1.48f
-    val fontSize = effectiveFontSizeSp.sp
-    val lineHeight = effectiveLineHeightSp.sp
-    val sharedLineHeightStyle =
-      remember {
-        LineHeightStyle(
-          alignment = LineHeightStyle.Alignment.Center,
-          trim = LineHeightStyle.Trim.None,
-        )
-      }
-    val sharedPlatformStyle = remember { PlatformTextStyle(includeFontPadding = false) }
-    val density = LocalDensity.current
-    val lineHeightPx = with(density) { lineHeight.toPx() }
-    val topPaddingPx = with(density) { 8.dp.toPx() }
-    val hPadPx = with(density) { 10.dp.toPx() }
-
-    val scope = rememberCoroutineScope()
-    val latestCommittedZoom by rememberUpdatedState(committedZoomPercent)
     val latestOnZoomPercentChange by rememberUpdatedState(onZoomPercentChange)
-    val latestGutterWidthPx by rememberUpdatedState(gutterWidthPx)
     var showZoomHud by remember { mutableStateOf(false) }
     var zoomHudBump by remember { mutableIntStateOf(0) }
     var zoomPresetMenuOpen by remember { mutableStateOf(false) }
@@ -1073,149 +908,16 @@ fun CodeEditorPane(
       }
     }
 
-    val verticalScroll = rememberScrollState()
-    val horizontalScroll = rememberScrollState()
+    val hasCustomBg = rememberHasActiveEditorBackground(uiState.editorSettings)
 
-    val lineStarts = remember(tfv.text) { CodeEditHelper.computeLineStarts(tfv.text) }
-    val lineCount = lineStarts.size
-
-    // Pure VisualTransformation keyed ONLY on (language, palette) -> never invalidated on cursor moves, diagnostics, or zoom
-    val visualTransformation =
-      remember(activeFile.language, palette) {
-        CodeSyntaxVisualTransformation(
-          language = activeFile.language,
-          palette = palette,
-        )
-      }
-
-    var textLayoutResult by remember(activeFile.path) { mutableStateOf<TextLayoutResult?>(null) }
-
-    var bracketMatch by remember(activeFile.path) { mutableStateOf<BracketMatch?>(null) }
-    LaunchedEffect(activeFile.path, activeFile.language, tfv.text, tfv.selection.start) {
-      val text = tfv.text
-      val cursor = tfv.selection.start
-      if (activeFile.language == WorkerLanguage.TEXT || text.isEmpty()) {
-        bracketMatch = null
-        return@LaunchedEffect
-      }
-      val atCursor = cursor in text.indices && text[cursor] in charArrayOf('{', '}', '(', ')', '[', ']')
-      val beforeCursor = (cursor - 1) in text.indices && text[cursor - 1] in charArrayOf('{', '}', '(', ')', '[', ']')
-      if (!atCursor && !beforeCursor) {
-        bracketMatch = null
-        return@LaunchedEffect
-      }
-      val lang = activeFile.language
-      bracketMatch =
-        if (text.length > 4_000) {
-          delay(35L)
-          withContext(Dispatchers.Default) { CodeAnalyzer.findMatchingBracket(text, cursor, lang) }
-        } else {
-          CodeAnalyzer.findMatchingBracket(text, cursor, lang)
-        }
-    }
-
-    val lineSeverityMap =
-      remember(fileDiagnostics) {
-        val map = HashMap<Int, DiagnosticSeverity>()
-        fileDiagnostics.forEach { d ->
-          val existing = map[d.line]
-          if (existing == null || d.severity.ordinal < existing.ordinal) {
-            map[d.line] = d.severity
-          }
-        }
-        map
-      }
-
-    val rawGutterText =
-      remember(lineCount) {
-        buildString(lineCount * 4) {
-          for (n in 1..lineCount) {
-            if (n > 1) append('\n')
-            append(n)
-          }
-        }
-      }
-
-    BoxWithConstraints(
+    // Native Hardware-Accelerated Code Canvas (0 layout shifts, 0 recompositions per keystroke)
+    Box(
       modifier =
         Modifier
           .weight(1f)
           .fillMaxWidth()
-          .clipToBounds()
-          .pointerInput(Unit) {
-            awaitEachGesture {
-              awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-              var activePinch = false
-              var workingZoom = latestCommittedZoom.toFloat().coerceIn(60f, 220f)
-              var lastCentroid = Offset.Zero
-              do {
-                val event = awaitPointerEvent(PointerEventPass.Initial)
-                val pressedCount = event.changes.count { it.pressed }
-                if (pressedCount >= 2) {
-                  if (!activePinch) {
-                    activePinch = true
-                    isPinching = true
-                    workingZoom = latestCommittedZoom.toFloat().coerceIn(60f, 220f)
-                    liveZoomPercent = workingZoom
-                    val initialCentroid = event.calculateCentroid(useCurrent = false)
-                    lastCentroid = if (initialCentroid != Offset.Unspecified) initialCentroid else Offset.Zero
-                  }
-                  val zoomDelta = event.calculateZoom()
-                  val centroid = event.calculateCentroid(useCurrent = true)
-                  if (centroid != Offset.Unspecified) {
-                    lastCentroid = centroid
-                  }
-                  if (zoomDelta != 1f && zoomDelta.isFinite()) {
-                    val nextZoom = (workingZoom * zoomDelta).coerceIn(60f, 220f)
-                    if (kotlin.math.abs(nextZoom - workingZoom) >= 0.05f) {
-                      val stepRatio = nextZoom / workingZoom.coerceAtLeast(1f)
-                      val focalX = ((lastCentroid.x - latestGutterWidthPx) - hPadPx).coerceAtLeast(0f)
-                      val focalY = (lastCentroid.y - topPaddingPx).coerceAtLeast(0f)
-                      val curScrollX = horizontalScroll.value
-                      val curScrollY = verticalScroll.value
-                      workingZoom = nextZoom
-                      liveZoomPercent = nextZoom
-                      scope.launch {
-                        val targetY = ((curScrollY + focalY) * stepRatio - focalY).roundToInt().coerceAtLeast(0)
-                        val targetX = ((curScrollX + focalX) * stepRatio - focalX).roundToInt().coerceAtLeast(0)
-                        verticalScroll.scrollTo(targetY)
-                        horizontalScroll.scrollTo(targetX)
-                      }
-                    }
-                  }
-                  event.changes.forEach { it.consume() }
-                } else if (activePinch) {
-                  val anchor = latestCommittedZoom
-                  val finalZoom = workingZoom.roundToInt().coerceIn(60, 220)
-                  isPinching = false
-                  liveZoomPercent = finalZoom.toFloat()
-                  activePinch = false
-                  zoomHudBump++
-                  if (finalZoom != anchor) {
-                    committedZoomPercent = finalZoom
-                    latestOnZoomPercentChange(finalZoom)
-                  }
-                }
-              } while (event.changes.any { it.pressed })
-
-              if (activePinch) {
-                val anchor = latestCommittedZoom
-                val finalZoom = workingZoom.roundToInt().coerceIn(60, 220)
-                isPinching = false
-                liveZoomPercent = finalZoom.toFloat()
-                zoomHudBump++
-                if (finalZoom != anchor) {
-                  committedZoomPercent = finalZoom
-                  latestOnZoomPercentChange(finalZoom)
-                }
-              }
-            }
-          },
+          .clipToBounds(),
     ) {
-      val minEditorHeight = maxHeight
-      val hasCustomBg = rememberHasActiveEditorBackground(uiState.editorSettings)
-
-      // Custom Editor Background Image / Ambient Backdrop (with live Opacity, Zoom & Scrim)
       if (hasCustomBg) {
         EditorBackgroundLayer(
           settings = uiState.editorSettings,
@@ -1223,262 +925,95 @@ fun CodeEditorPane(
         )
       }
 
-      Row(
-        modifier =
-          Modifier
-            .fillMaxSize()
-            .verticalScroll(verticalScroll),
-      ) {
-        if (uiState.editorSettings.showLineNumbers) {
-          val scalePad = (activeZoomPercent / 100f).coerceIn(0.6f, 2.2f)
-          val gutterMinWidth =
-            (when {
-              lineCount >= 1000 -> 46f
-              lineCount >= 100 -> 38f
-              else -> 32f
-            } * scalePad).dp
-          Box(
-            modifier =
-              Modifier
-                .widthIn(min = gutterMinWidth)
-                .heightIn(min = minEditorHeight)
-                .onSizeChanged { gutterWidthPx = it.width.toFloat() }
-                .background(if (hasCustomBg) palette.editorGutterBg.copy(alpha = 0.62f) else palette.editorGutterBg)
-                .drawBehind {
-                  val layout = textLayoutResult
-                  val canUseLayout =
-                    !uiState.editorSettings.wordWrap && layout != null && layout.lineCount >= lineCount
-                  fun lineBounds(oneBasedLine: Int): Pair<Float, Float> {
-                    val idx = (oneBasedLine - 1).coerceAtLeast(0)
-                    return if (canUseLayout && idx < layout!!.lineCount) {
-                      val top = topPaddingPx + layout.getLineTop(idx)
-                      val h = (layout.getLineBottom(idx) - layout.getLineTop(idx)).coerceAtLeast(1f)
-                      top to h
-                    } else {
-                      (topPaddingPx + idx * lineHeightPx) to lineHeightPx
-                    }
-                  }
-                  lineSeverityMap.forEach { (lineNum, sev) ->
-                    if (sev != DiagnosticSeverity.INFO) {
-                      val (errY, errH) = lineBounds(lineNum)
-                      if (errY < size.height) {
-                        val c = if (sev == DiagnosticSeverity.ERROR) RoseError else AmberWarn
-                        drawRect(
-                          color = c.copy(alpha = 0.16f),
-                          topLeft = Offset(0f, errY),
-                          size = Size(size.width, errH),
-                        )
-                        drawRect(
-                          color = c,
-                          topLeft = Offset(0f, errY),
-                          size = Size(3.dp.toPx(), errH),
-                        )
-                      }
-                    }
-                  }
-                  val (activeY, activeH) = lineBounds(activeLine)
-                  if (activeY < size.height) {
-                    drawRect(
-                      color = palette.editorActiveLineBg,
-                      topLeft = Offset(0f, activeY),
-                      size = Size(size.width, activeH),
-                    )
-                  }
-                }
-                .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 12.dp),
-            contentAlignment = Alignment.TopEnd,
-          ) {
-            Text(
-              text = rawGutterText,
-              style =
-                TextStyle(
-                  fontFamily = JetBrainsMono,
-                  fontSize = fontSize,
-                  lineHeight = lineHeight,
-                  fontFeatureSettings = "tnum",
-                  platformStyle = sharedPlatformStyle,
-                  lineHeightStyle = sharedLineHeightStyle,
-                  color = palette.textMuted,
-                  textAlign = TextAlign.End,
-                ),
-            )
-          }
-
-          VerticalDivider(color = palette.border.copy(alpha = 0.7f), thickness = 1.dp)
-        }
-
-        val editorModifier =
-          Modifier
-            .weight(1f)
-            .heightIn(min = minEditorHeight)
-            .then(
-              if (!uiState.editorSettings.wordWrap) Modifier.horizontalScroll(horizontalScroll)
-              else Modifier
-            )
-            .drawBehind {
-              val layout = textLayoutResult
-              if (layout != null && layout.layoutInput.text.length == tfv.text.length) {
-                val docLen = layout.layoutInput.text.length
-                val safeCursor = tfv.selection.start.coerceIn(0, docLen)
-                val curVisualLine = layout.getLineForOffset(safeCursor)
-                val curTop = topPaddingPx + layout.getLineTop(curVisualLine)
-                val curBottom = topPaddingPx + layout.getLineBottom(curVisualLine)
-                drawRect(
-                  color = palette.editorActiveLineBg.copy(alpha = 0.55f),
-                  topLeft = Offset(0f, curTop),
-                  size = Size(size.width, (curBottom - curTop).coerceAtLeast(1f)),
-                )
-
-                for (diag in fileDiagnostics) {
-                  if (diag.severity == DiagnosticSeverity.INFO) continue
-                  val lineIdx = (diag.line - 1).coerceIn(0, lineStarts.lastIndex)
-                  val lineStart = lineStarts[lineIdx]
-                  val nextStart = if (lineIdx + 1 < lineStarts.size) lineStarts[lineIdx + 1] else docLen
-                  val lineEnd =
-                    if (nextStart > lineStart && tfv.text[nextStart - 1] == '\n') nextStart - 1
-                    else nextStart
-                  val isErr = diag.severity == DiagnosticSeverity.ERROR
-                  val diagColor = if (isErr) RoseError else AmberWarn
-
-                  val visualLine = layout.getLineForOffset(lineStart.coerceIn(0, docLen))
-                  val lTop = topPaddingPx + layout.getLineTop(visualLine)
-                  val lBottom = topPaddingPx + layout.getLineBottom(visualLine)
-                  drawRect(
-                    color = diagColor.copy(alpha = if (isErr) 0.08f else 0.06f),
-                    topLeft = Offset(0f, lTop),
-                    size = Size(size.width, (lBottom - lTop).coerceAtLeast(1f)),
-                  )
-
-                  if (lineStart < lineEnd && docLen > 0) {
-                    val rawStart = (lineStart + (diag.column - 1).coerceAtLeast(0)).coerceIn(lineStart, lineEnd - 1)
-                    val rawEnd = (rawStart + diag.length.coerceAtLeast(1)).coerceIn(rawStart + 1, lineEnd)
-                    val startBox = layout.getBoundingBox(rawStart.coerceIn(0, docLen - 1))
-                    val endBox = layout.getBoundingBox((rawEnd - 1).coerceIn(0, docLen - 1))
-                    val uLeft = hPadPx + startBox.left
-                    val uRight =
-                      if (endBox.top == startBox.top) hPadPx + endBox.right
-                      else hPadPx + startBox.right.coerceAtLeast(startBox.left + 8.dp.toPx())
-                    val uWidth = (uRight - uLeft).coerceAtLeast(6.dp.toPx())
-                    val uY = topPaddingPx + startBox.bottom - 1.5.dp.toPx()
-                    drawRect(
-                      color = diagColor.copy(alpha = 0.20f),
-                      topLeft = Offset(uLeft, topPaddingPx + startBox.top),
-                      size = Size(uWidth, (startBox.bottom - startBox.top).coerceAtLeast(1f)),
-                    )
-                    drawLine(
-                      color = diagColor,
-                      start = Offset(uLeft, uY),
-                      end = Offset(uLeft + uWidth, uY),
-                      strokeWidth = 1.6.dp.toPx(),
-                    )
-                  }
-                }
-
-                bracketMatch?.let { bm ->
-                  if (docLen > 0) {
-                    val boxColor = if (bm.isMismatch) RoseError else palette.activePillFg
-                    val bgAlpha = if (bm.isMismatch) 0.24f else 0.18f
-                    listOfNotNull(bm.primaryOffset, bm.partnerOffset).forEach { off ->
-                      if (off in 0 until docLen) {
-                        val box = layout.getBoundingBox(off)
-                        val left = hPadPx + box.left
-                        val top = topPaddingPx + box.top
-                        val w = (box.right - box.left).coerceAtLeast(4.dp.toPx())
-                        val h = (box.bottom - box.top).coerceAtLeast(1f)
-                        drawRect(
-                          color = boxColor.copy(alpha = bgAlpha),
-                          topLeft = Offset(left, top),
-                          size = Size(w, h),
-                        )
-                        drawLine(
-                          color = boxColor,
-                          start = Offset(left, top + h - 1.dp.toPx()),
-                          end = Offset(left + w, top + h - 1.dp.toPx()),
-                          strokeWidth = 1.5.dp.toPx(),
-                        )
-                      }
-                    }
-                  }
-                }
-
-                // Live Find & Replace match highlights on the editor canvas
-                if (activeFindMatches.isNotEmpty() && docLen > 0) {
-                  val maxRender = activeFindMatches.size.coerceAtMost(200)
-                  for (mIdx in 0 until maxRender) {
-                    val range = activeFindMatches[mIdx]
-                    val startOff = range.first.coerceIn(0, docLen - 1)
-                    val endOff = range.last.coerceIn(startOff, docLen - 1)
-                    val isCurrent = mIdx == activeFindMatchIndex
-                    val highlightColor = if (isCurrent) palette.searchActiveMatchBg else palette.searchMatchBg
-                    val startBox = layout.getBoundingBox(startOff)
-                    val endBox = layout.getBoundingBox(endOff)
-                    if (startBox.top == endBox.top) {
-                      drawRect(
-                        color = highlightColor,
-                        topLeft = Offset(hPadPx + startBox.left, topPaddingPx + startBox.top),
-                        size = Size((endBox.right - startBox.left).coerceAtLeast(4.dp.toPx()), (startBox.bottom - startBox.top).coerceAtLeast(1f)),
-                      )
-                    } else {
-                      val startLine = layout.getLineForOffset(startOff)
-                      val endLine = layout.getLineForOffset(endOff)
-                      for (ln in startLine..endLine) {
-                        val segLeft = if (ln == startLine) startBox.left else layout.getLineLeft(ln)
-                        val segRight = if (ln == endLine) endBox.right else layout.getLineRight(ln)
-                        drawRect(
-                          color = highlightColor,
-                          topLeft = Offset(hPadPx + segLeft, topPaddingPx + layout.getLineTop(ln)),
-                          size = Size((segRight - segLeft).coerceAtLeast(4.dp.toPx()), (layout.getLineBottom(ln) - layout.getLineTop(ln)).coerceAtLeast(1f)),
-                        )
-                      }
-                    }
-                  }
-                }
+      AndroidView(
+        factory = { context ->
+          EdgeCodeEditorView(context).apply {
+            editorController.attach(this)
+            onDebouncedSync = { synced -> latestOnCodeChange(synced) }
+            onTelemetryUpdate = { telemetry -> hudHolder.telemetry = telemetry }
+            onPinchZoomChanged = { zoom, pinching ->
+              hudHolder.liveZoomPercent = zoom
+              hudHolder.isPinching = pinching
+            }
+            onPinchZoomCommitted = { finalZoom ->
+              hudHolder.liveZoomPercent = finalZoom
+              hudHolder.isPinching = false
+              val prev = committedZoomPercent
+              committedZoomPercent = finalZoom
+              zoomHudBump++
+              if (finalZoom != prev) {
+                latestOnZoomPercentChange(finalZoom)
               }
             }
-            .padding(horizontal = 10.dp, vertical = 8.dp)
-            .testTag("code_editor_input")
+          }
+        },
+        update = { view ->
+          editorController.attach(view)
+          view.configureDocumentAndSettings(
+            filePath = activeFile.path,
+            externalTfv = syncedTfv,
+            editorRevision = uiState.editorRevision,
+            language = activeFile.language,
+            palette = palette,
+            hasCustomBg = hasCustomBg,
+            showLineNumbers = uiState.editorSettings.showLineNumbers,
+            wordWrap = uiState.editorSettings.wordWrap,
+            autoCloseBrackets = uiState.editorSettings.autoCloseBrackets,
+            tabSize = uiState.editorSettings.tabSize,
+            fontSizeSp = uiState.editorSettings.fontSizeSp,
+            zoomPercent = committedZoomPercent,
+            readOnly = activeFile.isVirtualReadOnly,
+            diagnostics = fileDiagnostics,
+            findMatches = activeFindMatches,
+            activeFindMatchIndex = activeFindMatchIndex,
+          )
+        },
+        onRelease = { view ->
+          view.flushPendingSyncNow()
+          editorController.detach(view)
+        },
+        modifier = Modifier.fillMaxSize().testTag("code_editor_input"),
+      )
 
-        BasicTextField(
-          value = tfv,
-          onValueChange = { rawNext ->
-            if (!activeFile.isVirtualReadOnly) {
-              localTfv =
-                CodeEditHelper.applySmartCodeEdit(
-                  prev = localTfv,
-                  next = rawNext,
-                  language = activeFile.language,
-                  tabSize = uiState.editorSettings.tabSize,
-                  autoCloseBrackets = uiState.editorSettings.autoCloseBrackets,
-                )
-            }
-          },
-          readOnly = activeFile.isVirtualReadOnly,
-          onTextLayout = { textLayoutResult = it },
-          textStyle =
-            TextStyle(
-              fontFamily = JetBrainsMono,
-              fontSize = fontSize,
-              lineHeight = lineHeight,
-              fontFeatureSettings = "tnum",
-              platformStyle = sharedPlatformStyle,
-              lineHeightStyle = sharedLineHeightStyle,
-              color = palette.textPrimary,
-            ),
-          cursorBrush = SolidColor(palette.activePillFg),
-          visualTransformation = visualTransformation,
-          modifier = editorModifier,
+      // Non-shifting floating inline diagnostic pill (overlays top-end, NEVER pushes editor vertically)
+      FloatingSyntaxDiagnosticPill(
+        visible = actionableDiagnostics.isNotEmpty() && !uiState.isEditorTopChromeHidden,
+        filePath = activeFile.path,
+        diagnostics = actionableDiagnostics,
+        hudHolder = hudHolder,
+        onJumpToLocation = { path, line, col ->
+          flushThen { onJumpToLocation(path, line, col) }
+        },
+        modifier = Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp),
+      )
+
+      // Floating Pinch-Zoom Indicator HUD
+      EditorZoomHud(
+        visible = hudHolder.isPinching || showZoomHud,
+        zoomPercentProvider = { hudHolder.liveZoomPercent },
+        modifier = Modifier.align(Alignment.TopCenter).padding(top = 10.dp),
+      )
+
+      // Non-shifting floating autocomplete strip (overlays bottom edge, NEVER bounces layout height)
+      if (!activeFile.isVirtualReadOnly &&
+        !uiState.isEditorBottomBarsHidden &&
+        activeFile.language in setOf(WorkerLanguage.JAVASCRIPT, WorkerLanguage.TYPESCRIPT, WorkerLanguage.JSON)
+      ) {
+        FloatingAutocompleteOverlay(
+          workspace = uiState.workspace,
+          language = activeFile.language,
+          hudHolder = hudHolder,
+          editorController = editorController,
+          modifier =
+            Modifier
+              .align(Alignment.BottomCenter)
+              .fillMaxWidth()
+              .padding(horizontal = 8.dp, vertical = 6.dp),
         )
       }
-
-      // Floating Pinch-Zoom Indicator HUD (reads live typographic zoom percentage)
-      EditorZoomHud(
-        visible = isPinching || showZoomHud,
-        zoomPercentProvider = { activeZoomPercent.roundToInt().coerceIn(60, 220) },
-        modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
-      )
     }
 
-    // Hideable Bottom Coding Dock: Status Line + Zoom Controls + Autocomplete + Ergonomic Key Rail
+    // Hideable Bottom Coding Dock: Fixed-height Status Line + Zoom Controls + Ergonomic Key Rail
     AnimatedVisibility(
       visible = !uiState.isEditorBottomBarsHidden,
       enter = slideInVertically(tween(180)) { it } + fadeIn(tween(160)),
@@ -1495,41 +1030,15 @@ fun CodeEditorPane(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-          Text(
-            text = "Ln $activeLine, Col $activeCol",
-            fontFamily = JetBrainsMono,
-            fontSize = 10.sp,
-            color = palette.textSecondary,
-            maxLines = 1,
-          )
-          Text("·", fontSize = 10.sp, color = palette.textMuted)
-          Text(
-            text =
-              when (activeFile.language) {
-                WorkerLanguage.JAVASCRIPT -> "JS"
-                WorkerLanguage.TYPESCRIPT -> "TS"
-                WorkerLanguage.JSON -> "JSON"
-                WorkerLanguage.TEXT -> "TXT"
-              },
-            fontFamily = JetBrainsMono,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = palette.textMuted,
-            maxLines = 1,
-          )
-          Text("·", fontSize = 10.sp, color = palette.textMuted)
-          Text(
-            text = "$lineCount lines",
-            fontFamily = JetBrainsMono,
-            fontSize = 10.sp,
-            color = palette.textMuted,
-            maxLines = 1,
+          EditorLiveStatusTelemetry(
+            hudHolder = hudHolder,
+            language = activeFile.language,
           )
           Spacer(Modifier.weight(1f))
 
-          // Compact Editor Zoom Controls (- | 100% | +) scaling crisp vector text
+          // Compact Editor Zoom Controls (- | 100% | +) scaling native vector text
           EditorZoomControlCluster(
-            zoomPercentProvider = { activeZoomPercent.roundToInt().coerceIn(60, 220) },
+            zoomPercentProvider = { hudHolder.liveZoomPercent },
             zoomPresetMenuOpen = zoomPresetMenuOpen,
             onZoomPresetMenuChange = { zoomPresetMenuOpen = it },
             onSetZoom = { next ->
@@ -1537,24 +1046,20 @@ fun CodeEditorPane(
               val prev = committedZoomPercent.toFloat().coerceAtLeast(1f)
               val ratio = clamped.toFloat() / prev
               committedZoomPercent = clamped
-              liveZoomPercent = clamped.toFloat()
+              hudHolder.liveZoomPercent = clamped
               onZoomPercentChange(clamped)
               zoomHudBump++
-              scope.launch {
-                verticalScroll.scrollTo((verticalScroll.value * ratio).roundToInt().coerceAtLeast(0))
-              }
+              editorController.scaleScrollBy(ratio)
             },
             onStepZoom = { delta ->
               val prev = committedZoomPercent.toFloat().coerceAtLeast(1f)
               val next = (committedZoomPercent + delta).coerceIn(60, 220)
               val ratio = next.toFloat() / prev
               committedZoomPercent = next
-              liveZoomPercent = next.toFloat()
+              hudHolder.liveZoomPercent = next
               onZoomPercentChange(next)
               zoomHudBump++
-              scope.launch {
-                verticalScroll.scrollTo((verticalScroll.value * ratio).roundToInt().coerceAtLeast(0))
-              }
+              editorController.scaleScrollBy(ratio)
             },
           )
 
@@ -1616,78 +1121,6 @@ fun CodeEditorPane(
         }
 
         if (!activeFile.isVirtualReadOnly) {
-          if (activeFile.language in setOf(WorkerLanguage.JAVASCRIPT, WorkerLanguage.TYPESCRIPT, WorkerLanguage.JSON)) {
-            val cursorPos = tfv.selection.start.coerceIn(0, tfv.text.length)
-            val wordBeforeCursor =
-              remember(tfv.text, cursorPos) {
-                val start = (cursorPos - 40).coerceAtLeast(0)
-                var idx = cursorPos
-                while (idx > start) {
-                  val ch = tfv.text[idx - 1]
-                  if (ch.isLetterOrDigit() || ch == '_' || ch == '.' || ch == '$') idx--
-                  else break
-                }
-                if (idx == cursorPos) "" else tfv.text.substring(idx, cursorPos)
-              }
-            val completions =
-              remember(uiState.workspace?.bindings, activeFile.language, wordBeforeCursor) {
-                WranglerSyncParser.buildWorkersCompletions(uiState.workspace, activeFile.language, wordBeforeCursor)
-              }
-            if (completions.isNotEmpty()) {
-              HorizontalDivider(color = palette.glassBorderSubtle)
-              Row(
-                modifier =
-                  Modifier
-                    .fillMaxWidth()
-                    .height(34.dp)
-                    .background(palette.glassSurface)
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-              ) {
-                completions.forEach { sug ->
-                  Surface(
-                    onClick = {
-                      if (wordBeforeCursor.isNotEmpty() && sug.label.startsWith(wordBeforeCursor, ignoreCase = true)) {
-                        val replaceStart = (cursorPos - wordBeforeCursor.length).coerceAtLeast(0)
-                        val nextText = tfv.text.replaceRange(replaceStart, cursorPos, sug.insertText)
-                        val nextPos = (replaceStart + sug.insertText.length - sug.cursorBackOffset).coerceIn(0, nextText.length)
-                        val nextVal = TextFieldValue(nextText, TextRange(nextPos))
-                        localTfv = nextVal
-                        onCodeChange(nextVal)
-                      } else {
-                        flushThen { onInsertText(sug.insertText, sug.cursorBackOffset) }
-                      }
-                    },
-                    shape = RoundedCornerShape(7.dp),
-                    color = palette.glassElevated,
-                    border = rememberGlassBorderStroke(1.dp),
-                  ) {
-                    Row(
-                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                      verticalAlignment = Alignment.CenterVertically,
-                      horizontalArrangement = Arrangement.spacedBy(5.dp),
-                    ) {
-                      Text(
-                        text = sug.label,
-                        style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
-                        color = palette.activePillFg,
-                        maxLines = 1,
-                      )
-                      Text(
-                        text = sug.detail,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = palette.textMuted,
-                        maxLines = 1,
-                      )
-                    }
-                  }
-                }
-              }
-            }
-          }
-
           HorizontalDivider(color = palette.glassBorderSubtle)
           Row(
             modifier =
@@ -1716,25 +1149,262 @@ fun CodeEditorPane(
               modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp),
             )
 
-            // Scrollable tactile coding key rail
+            // Instant 0ms in-place coding key rail
             Row(
               modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
               horizontalArrangement = Arrangement.spacedBy(5.dp),
               verticalAlignment = Alignment.CenterVertically,
             ) {
-              AccessoryKey("TAB") { flushThen(onInsertTab) }
-              AccessoryKey("//") { flushThen(onToggleComment) }
-              AccessoryKey("{ }") { flushThen { onInsertText("{}", 1) } }
-              AccessoryKey("( )") { flushThen { onInsertText("()", 1) } }
-              AccessoryKey("[ ]") { flushThen { onInsertText("[]", 1) } }
-              AccessoryKey("=>") { flushThen { onInsertText(" => ", 0) } }
-              AccessoryKey(";") { flushThen { onInsertText(";", 0) } }
-              AccessoryKey(":") { flushThen { onInsertText(": ", 0) } }
-              AccessoryKey("\"") { flushThen { onInsertText("\"\"", 1) } }
-              AccessoryKey("'") { flushThen { onInsertText("''", 1) } }
-              AccessoryKey("`") { flushThen { onInsertText("``", 1) } }
-              AccessoryKey("=") { flushThen { onInsertText(" = ", 0) } }
-              AccessoryKey(".") { flushThen { onInsertText(".", 0) } }
+              AccessoryKey("TAB") { editorController.insertTab(uiState.editorSettings.tabSize) }
+              AccessoryKey("//") { editorController.toggleLineComment() }
+              AccessoryKey("{ }") { editorController.insertSnippet("{}", 1) }
+              AccessoryKey("( )") { editorController.insertSnippet("()", 1) }
+              AccessoryKey("[ ]") { editorController.insertSnippet("[]", 1) }
+              AccessoryKey("=>") { editorController.insertSnippet(" => ", 0) }
+              AccessoryKey(";") { editorController.insertSnippet(";", 0) }
+              AccessoryKey(":") { editorController.insertSnippet(": ", 0) }
+              AccessoryKey("\"") { editorController.insertSnippet("\"\"", 1) }
+              AccessoryKey("'") { editorController.insertSnippet("''", 1) }
+              AccessoryKey("`") { editorController.insertSnippet("``", 1) }
+              AccessoryKey("=") { editorController.insertSnippet(" = ", 0) }
+              AccessoryKey(".") { editorController.insertSnippet(".", 0) }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun EditorLiveStatusTelemetry(
+  hudHolder: EditorLiveHudHolder,
+  language: WorkerLanguage,
+) {
+  val palette = LocalIdePalette.current
+  val t = hudHolder.telemetry
+  Row(
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(6.dp),
+  ) {
+    Text(
+      text = "Ln ${t.line}, Col ${t.col}",
+      fontFamily = JetBrainsMono,
+      fontSize = 10.sp,
+      color = palette.textSecondary,
+      maxLines = 1,
+    )
+    Text("·", fontSize = 10.sp, color = palette.textMuted)
+    Text(
+      text =
+        when (language) {
+          WorkerLanguage.JAVASCRIPT -> "JS"
+          WorkerLanguage.TYPESCRIPT -> "TS"
+          WorkerLanguage.JSON -> "JSON"
+          WorkerLanguage.TEXT -> "TXT"
+        },
+      fontFamily = JetBrainsMono,
+      fontSize = 10.sp,
+      fontWeight = FontWeight.SemiBold,
+      color = palette.textMuted,
+      maxLines = 1,
+    )
+    Text("·", fontSize = 10.sp, color = palette.textMuted)
+    Text(
+      text = "${t.lineCount} lines",
+      fontFamily = JetBrainsMono,
+      fontSize = 10.sp,
+      color = palette.textMuted,
+      maxLines = 1,
+    )
+  }
+}
+
+@Composable
+private fun FloatingSyntaxDiagnosticPill(
+  visible: Boolean,
+  filePath: String,
+  diagnostics: List<DiagnosticItem>,
+  hudHolder: EditorLiveHudHolder,
+  onJumpToLocation: (String, Int, Int) -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val palette = LocalIdePalette.current
+  var selectedDiagIndex by remember(filePath) { mutableIntStateOf(0) }
+  val activeLine = hudHolder.telemetry.line
+  val activeLineDiagIdx =
+    remember(diagnostics, activeLine) {
+      diagnostics.indexOfFirst { it.line == activeLine }
+    }
+  LaunchedEffect(activeLineDiagIdx) {
+    if (activeLineDiagIdx >= 0) {
+      selectedDiagIndex = activeLineDiagIdx
+    }
+  }
+
+  AnimatedVisibility(
+    visible = visible && diagnostics.isNotEmpty(),
+    enter = fadeIn(tween(140)),
+    exit = fadeOut(tween(110)),
+    modifier = modifier,
+  ) {
+    if (diagnostics.isEmpty()) return@AnimatedVisibility
+    val safeIdx = selectedDiagIndex.coerceIn(0, diagnostics.lastIndex)
+    val currentDiag = diagnostics[safeIdx]
+    val isErr = currentDiag.severity == DiagnosticSeverity.ERROR
+    val isWarn = currentDiag.severity == DiagnosticSeverity.WARNING
+    val accent =
+      when {
+        isErr -> RoseError
+        isWarn -> AmberWarn
+        else -> palette.activePillFg
+      }
+
+    Surface(
+      color = palette.chromeSurface.copy(alpha = 0.94f),
+      shape = RoundedCornerShape(10.dp),
+      border = BorderStroke(0.75.dp, accent.copy(alpha = 0.45f)),
+      shadowElevation = 2.dp,
+      modifier =
+        Modifier
+          .widthIn(max = 310.dp)
+          .clip(RoundedCornerShape(10.dp))
+          .clickable { onJumpToLocation(currentDiag.filePath, currentDiag.line, currentDiag.column) }
+          .testTag("editor_syntax_catcher_bar"),
+    ) {
+      Row(
+        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+      ) {
+        Icon(
+          imageVector = if (isErr) Icons.Outlined.ErrorOutline else Icons.Outlined.WarningAmber,
+          contentDescription = currentDiag.severity.name,
+          tint = accent,
+          modifier = Modifier.size(13.dp),
+        )
+        Text(
+          text = "Ln ${currentDiag.line}:${currentDiag.column}",
+          fontFamily = JetBrainsMono,
+          fontSize = 9.5.sp,
+          fontWeight = FontWeight.Bold,
+          color = accent,
+          maxLines = 1,
+        )
+        Text(
+          text = currentDiag.message,
+          fontFamily = JetBrainsMono,
+          fontSize = 10.sp,
+          color = palette.textPrimary,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+          modifier = Modifier.weight(1f, fill = false),
+        )
+        if (diagnostics.size > 1) {
+          Text(
+            text = "${safeIdx + 1}/${diagnostics.size}",
+            fontFamily = JetBrainsMono,
+            fontSize = 9.5.sp,
+            color = palette.textMuted,
+          )
+          IconButton(
+            onClick = {
+              val prev = if (safeIdx <= 0) diagnostics.lastIndex else safeIdx - 1
+              selectedDiagIndex = prev
+              val d = diagnostics[prev]
+              onJumpToLocation(d.filePath, d.line, d.column)
+            },
+            modifier = Modifier.size(22.dp).testTag("syntax_prev_button"),
+          ) {
+            Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = "Previous syntax issue", tint = accent, modifier = Modifier.size(14.dp))
+          }
+          IconButton(
+            onClick = {
+              val next = (safeIdx + 1) % diagnostics.size
+              selectedDiagIndex = next
+              val d = diagnostics[next]
+              onJumpToLocation(d.filePath, d.line, d.column)
+            },
+            modifier = Modifier.size(22.dp).testTag("syntax_next_button"),
+          ) {
+            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Next syntax issue", tint = accent, modifier = Modifier.size(14.dp))
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun FloatingAutocompleteOverlay(
+  workspace: WorkerWorkspace?,
+  language: WorkerLanguage,
+  hudHolder: EditorLiveHudHolder,
+  editorController: CodeEditorController,
+  modifier: Modifier = Modifier,
+) {
+  val palette = LocalIdePalette.current
+  val word = hudHolder.telemetry.wordBeforeCursor
+  val completions =
+    remember(workspace?.bindings, language, word) {
+      if (word.isEmpty()) emptyList()
+      else WranglerSyncParser.buildWorkersCompletions(workspace, language, word)
+    }
+
+  AnimatedVisibility(
+    visible = completions.isNotEmpty(),
+    enter = fadeIn(tween(100)),
+    exit = fadeOut(tween(80)),
+    modifier = modifier,
+  ) {
+    Surface(
+      color = palette.chromeSurface.copy(alpha = 0.94f),
+      shape = RoundedCornerShape(10.dp),
+      border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.65f)),
+      shadowElevation = 2.dp,
+    ) {
+      Row(
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        completions.forEach { sug ->
+          Surface(
+            onClick = {
+              if (word.isNotEmpty() && sug.label.startsWith(word, ignoreCase = true)) {
+                editorController.replaceBeforeCursor(word.length, sug.insertText, sug.cursorBackOffset)
+              } else {
+                editorController.insertSnippet(sug.insertText, sug.cursorBackOffset)
+              }
+            },
+            shape = RoundedCornerShape(7.dp),
+            color = palette.editorBg,
+            border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.55f)),
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+              Text(
+                text = sug.label,
+                style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
+                color = palette.activePillFg,
+                maxLines = 1,
+              )
+              if (sug.detail.isNotBlank()) {
+                Text(
+                  text = sug.detail,
+                  style = MaterialTheme.typography.labelSmall,
+                  fontSize = 9.5.sp,
+                  color = palette.textMuted,
+                  maxLines = 1,
+                )
+              }
             }
           }
         }

@@ -450,6 +450,17 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
     return ramDb.workspaceKey(accId, ws.scriptName)
   }
 
+  @Volatile
+  private var activeEditorFlushHook: (() -> Unit)? = null
+
+  fun registerEditorFlushHook(hook: (() -> Unit)?) {
+    activeEditorFlushHook = hook
+  }
+
+  fun flushActiveEditorBuffer() {
+    activeEditorFlushHook?.invoke()
+  }
+
   private fun syncActiveStateToRamDb() {
     val state = _uiState.value
     val key = activeWorkspaceKey(state) ?: return
@@ -461,7 +472,8 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
       tabNavIndex = state.tabNavIndex,
       fieldValues = state.editorFieldValues,
     )
-    _uiState.update { it.copy(ramDbStats = ramDb.computeStats(key)) }
+    val stats = ramDb.computeStats(key)
+    _uiState.update { if (it.ramDbStats != stats) it.copy(ramDbStats = stats) else it }
   }
 
   init {
@@ -1173,6 +1185,7 @@ export default {
   }
 
   fun closeWorkspaceToHome() {
+    flushActiveEditorBuffer()
     stopTailIfRunning()
     flushAutoSaveNow(clearSessionPointer = true)
     periodicAutoSaveJob?.cancel()
@@ -2233,7 +2246,7 @@ export default {
         diagnosticsJob?.cancel()
         diagnosticsJob =
           viewModelScope.launch {
-            delay(180L)
+            delay(420L)
             val editedFile = filesSnapshot.firstOrNull { it.path == path }
             val diags =
               withContext(Dispatchers.Default) {
@@ -2241,8 +2254,11 @@ export default {
                 else rebuildDiagnosticsFull(filesSnapshot)
               }
             _uiState.update { state ->
-              if (state.workspace?.files == filesSnapshot) state.copy(diagnostics = diags)
-              else state
+              if (state.workspace?.files == filesSnapshot && state.diagnostics != diags) {
+                state.copy(diagnostics = diags)
+              } else {
+                state
+              }
             }
           }
       }
@@ -2250,12 +2266,12 @@ export default {
         ramStatsJob?.cancel()
         ramStatsJob =
           viewModelScope.launch {
-            delay(650L)
+            delay(1200L)
             val stats = withContext(Dispatchers.Default) { ramDb.computeStats(ramKey) }
-            _uiState.update { it.copy(ramDbStats = stats) }
+            _uiState.update { if (it.ramDbStats != stats) it.copy(ramDbStats = stats) else it }
           }
       }
-      scheduleDraftSave()
+      scheduleDraftSave(syncRamDb = false)
     }
   }
 
@@ -2993,6 +3009,7 @@ export default {
   }
 
   fun deployActiveWorker() {
+    flushActiveEditorBuffer()
     if (_uiState.value.isLocalScratchpad) {
       _uiState.update {
         it.copy(
@@ -7529,6 +7546,7 @@ jobs:
   }
 
   fun flushAutoSaveNow(clearSessionPointer: Boolean = false) {
+    flushActiveEditorBuffer()
     val state = _uiState.value
     val activeKey = activeWorkspaceKey(state)
     val snapshot = buildActiveAutoSaveSnapshot(state)
@@ -7539,12 +7557,13 @@ jobs:
         if (prevDigest != draft.contentDigest) {
           autoSaveStore.saveWorkspaceDraft(draft)
           lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
-          _uiState.update { it.copy(lastAutoSavedEpochMs = draft.savedAtEpochMs) }
         }
         if (activeKey != null) {
           ramDb.getWorkspace(activeKey)?.let { projectDirManager.saveWorkspaceRecord(it) }
           val summary = projectDirManager.computeStorageSummary()
-          _uiState.update { it.copy(projectStorageSummary = summary) }
+          _uiState.update {
+            if (it.projectStorageSummary != summary) it.copy(projectStorageSummary = summary) else it
+          }
         }
         if (clearSessionPointer) {
           autoSaveStore.clearLastActiveSession()
@@ -7557,13 +7576,15 @@ jobs:
     }
   }
 
-  private fun scheduleDraftSave() {
-    syncActiveStateToRamDb()
+  private fun scheduleDraftSave(syncRamDb: Boolean = true) {
+    if (syncRamDb) {
+      syncActiveStateToRamDb()
+    }
     val settings = _uiState.value.editorSettings
     draftSaveJob?.cancel()
     draftSaveJob =
       viewModelScope.launch {
-        delay(200L)
+        delay(1800L)
         val state = _uiState.value
         val activeKey = activeWorkspaceKey(state)
         if (state.workspace == null) return@launch
@@ -7605,7 +7626,6 @@ jobs:
       if (lastPersistedDraftDigests[draft.workspaceKey] != draft.contentDigest) {
         autoSaveStore.saveWorkspaceDraft(draft)
         lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
-        _uiState.update { it.copy(lastAutoSavedEpochMs = draft.savedAtEpochMs) }
       }
     }
   }
@@ -7622,7 +7642,6 @@ jobs:
         autoSaveStore.saveLastActiveSession(pointer)
       }
       lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
-      _uiState.update { it.copy(lastAutoSavedEpochMs = draft.savedAtEpochMs) }
     } else if (forceSessionPointer) {
       withContext(Dispatchers.IO) {
         autoSaveStore.saveLastActiveSession(pointer)

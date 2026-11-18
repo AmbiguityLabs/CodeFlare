@@ -15,6 +15,8 @@ import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.IdePalette
 import com.example.ui.theme.RoseError
 
+import androidx.compose.ui.graphics.toArgb
+
 data class CodeSyntaxVisualTransformation(
   val language: WorkerLanguage,
   val palette: IdePalette,
@@ -23,6 +25,17 @@ data class CodeSyntaxVisualTransformation(
     val highlighted = SyntaxHighlighter.highlight(text.text, language, palette)
     return TransformedText(highlighted, OffsetMapping.Identity)
   }
+}
+
+private class PaletteIntColors(palette: IdePalette) {
+  val comment = palette.syntaxComment.toArgb()
+  val property = palette.syntaxProperty.toArgb()
+  val string = palette.syntaxString.toArgb()
+  val number = palette.syntaxNumber.toArgb()
+  val keyword = palette.syntaxKeyword.toArgb()
+  val control = palette.syntaxControl.toArgb()
+  val type = palette.syntaxType.toArgb()
+  val function = palette.syntaxFunction.toArgb()
 }
 
 private class PaletteSpanStyles(palette: IdePalette) {
@@ -214,6 +227,7 @@ object SyntaxHighlighter {
 
   private val cacheLock = Any()
   private val stylesCache = HashMap<IdePalette, PaletteSpanStyles>(8)
+  private val intColorsCache = HashMap<IdePalette, PaletteIntColors>(8)
   private val highlightCache =
     object : LinkedHashMap<HighlightCacheKey, HighlightCacheEntry>(32, 0.75f, true) {
       override fun removeEldestEntry(eldest: MutableMap.MutableEntry<HighlightCacheKey, HighlightCacheEntry>?): Boolean {
@@ -224,6 +238,12 @@ object SyntaxHighlighter {
   private fun stylesFor(palette: IdePalette): PaletteSpanStyles {
     synchronized(cacheLock) {
       return stylesCache.getOrPut(palette) { PaletteSpanStyles(palette) }
+    }
+  }
+
+  private fun intColorsFor(palette: IdePalette): PaletteIntColors {
+    synchronized(cacheLock) {
+      return intColorsCache.getOrPut(palette) { PaletteIntColors(palette) }
     }
   }
 
@@ -504,9 +524,201 @@ object SyntaxHighlighter {
     }
   }
 
-  private fun isFollowedByColon(code: String, startIndex: Int, endLimit: Int): Boolean {
+  private fun isFollowedByColon(code: CharSequence, startIndex: Int, endLimit: Int): Boolean {
     var k = startIndex
     while (k < endLimit && code[k].isWhitespace()) k++
     return k < endLimit && code[k] == ':'
+  }
+
+  /**
+   * High-speed visible-window tokenizer operating directly on a CharSequence (such as Android Editable).
+   * Scans from [scanStart] through [emitEnd] to keep multi-line comments/templates accurate,
+   * while only emitting spans that intersect [emitStart, emitEnd].
+   */
+  fun tokenizeVisibleRange(
+    code: CharSequence,
+    scanStart: Int,
+    emitStart: Int,
+    emitEnd: Int,
+    language: WorkerLanguage,
+    palette: IdePalette,
+    onToken: (start: Int, end: Int, colorArgb: Int) -> Unit,
+  ) {
+    if (language == WorkerLanguage.TEXT || code.isEmpty()) return
+    val safeEnd = emitEnd.coerceIn(0, code.length)
+    val safeEmitStart = emitStart.coerceIn(0, safeEnd)
+    val safeScanStart = scanStart.coerceIn(0, safeEmitStart)
+    if (safeScanStart >= safeEnd) return
+
+    val colors = intColorsFor(palette)
+    tokenizeCharRange(code, safeScanStart, safeEnd, safeEmitStart, safeEnd, language, colors, onToken)
+  }
+
+  private inline fun emitClipped(
+    start: Int,
+    end: Int,
+    emitStart: Int,
+    emitEnd: Int,
+    color: Int,
+    onToken: (Int, Int, Int) -> Unit,
+  ) {
+    val cs = if (start < emitStart) emitStart else start
+    val ce = if (end > emitEnd) emitEnd else end
+    if (cs < ce) onToken(cs, ce, color)
+  }
+
+  private fun tokenizeCharRange(
+    code: CharSequence,
+    start: Int,
+    endLimit: Int,
+    emitStart: Int,
+    emitEnd: Int,
+    language: WorkerLanguage,
+    colors: PaletteIntColors,
+    onToken: (start: Int, end: Int, colorArgb: Int) -> Unit,
+  ) {
+    var i = start
+    while (i < endLimit) {
+      val c = code[i]
+
+      if (c == '/' && i + 1 < endLimit && code[i + 1] == '/') {
+        var end = i + 2
+        while (end < endLimit && code[end] != '\n') end++
+        emitClipped(i, end, emitStart, emitEnd, colors.comment, onToken)
+        i = end
+        continue
+      }
+
+      if (c == '/' && i + 1 < endLimit && code[i + 1] == '*') {
+        var end = i + 2
+        while (end + 1 < endLimit && !(code[end] == '*' && code[end + 1] == '/')) end++
+        end = if (end + 1 < endLimit) end + 2 else endLimit
+        emitClipped(i, end, emitStart, emitEnd, colors.comment, onToken)
+        i = end
+        continue
+      }
+
+      if (c == '`' && language != WorkerLanguage.JSON) {
+        var segStart = i
+        var j = i + 1
+        while (j < endLimit) {
+          if (code[j] == '\\' && j + 1 < endLimit) {
+            j += 2
+            continue
+          }
+          if (code[j] == '$' && j + 1 < endLimit && code[j + 1] == '{') {
+            if (j > segStart) emitClipped(segStart, j, emitStart, emitEnd, colors.string, onToken)
+            emitClipped(j, j + 2, emitStart, emitEnd, colors.control, onToken)
+            val exprStart = j + 2
+            var depth = 1
+            var k = exprStart
+            while (k < endLimit && depth > 0) {
+              when (code[k]) {
+                '\\' -> k += 2
+                '{' -> {
+                  depth++
+                  k++
+                }
+                '}' -> {
+                  depth--
+                  if (depth > 0) k++
+                }
+                else -> k++
+              }
+            }
+            if (k > exprStart) {
+              tokenizeCharRange(code, exprStart, k, emitStart, emitEnd, language, colors, onToken)
+            }
+            if (k < endLimit && code[k] == '}') {
+              emitClipped(k, k + 1, emitStart, emitEnd, colors.control, onToken)
+              j = k + 1
+              segStart = j
+              continue
+            } else {
+              j = k
+              segStart = j
+              break
+            }
+          }
+          if (code[j] == '`') {
+            j++
+            break
+          }
+          j++
+        }
+        if (j > segStart) emitClipped(segStart, j, emitStart, emitEnd, colors.string, onToken)
+        i = j
+        continue
+      }
+
+      if (c == '"' || c == '\'') {
+        val quote = c
+        var j = i + 1
+        while (j < endLimit) {
+          val ch = code[j]
+          if (ch == '\n') break
+          if (ch == '\\' && j + 1 < endLimit) {
+            j += 2
+            continue
+          }
+          if (ch == quote) {
+            j++
+            break
+          }
+          j++
+        }
+        if (j > emitStart && i < emitEnd) {
+          val isJsonKey =
+            language == WorkerLanguage.JSON && quote == '"' && isFollowedByColon(code, j, endLimit)
+          emitClipped(i, j, emitStart, emitEnd, if (isJsonKey) colors.property else colors.string, onToken)
+        }
+        i = j
+        continue
+      }
+
+      if (c in '0'..'9' && (i == start || !code[i - 1].isLetterOrDigit())) {
+        var j = i + 1
+        while (j < endLimit && (code[j].isLetterOrDigit() || code[j] == '.' || code[j] == '_')) j++
+        emitClipped(i, j, emitStart, emitEnd, colors.number, onToken)
+        i = j
+        continue
+      }
+
+      if (c == '=' && i + 1 < endLimit && code[i + 1] == '>') {
+        emitClipped(i, i + 2, emitStart, emitEnd, colors.control, onToken)
+        i += 2
+        continue
+      }
+
+      if (c.isLetter() || c == '_' || c == '$') {
+        var j = i + 1
+        while (j < endLimit && (code[j].isLetterOrDigit() || code[j] == '_' || code[j] == '$')) j++
+        if (j > emitStart && i < emitEnd) {
+          val word = code.subSequence(i, j).toString()
+          val color =
+            when {
+              language == WorkerLanguage.JSON && (word == "true" || word == "false" || word == "null") ->
+                colors.keyword
+              word in controlKeywords -> colors.control
+              word in jsKeywords -> colors.keyword
+              word in cloudflareGlobals -> colors.type
+              j < endLimit && code[j] == '(' -> colors.function
+              i > start && code[i - 1] == '.' -> colors.property
+              language == WorkerLanguage.TYPESCRIPT &&
+                word.length > 1 &&
+                word[0].isUpperCase() &&
+                word.any { it.isLowerCase() } -> colors.type
+              else -> 0
+            }
+          if (color != 0) {
+            emitClipped(i, j, emitStart, emitEnd, color, onToken)
+          }
+        }
+        i = j
+        continue
+      }
+
+      i++
+    }
   }
 }

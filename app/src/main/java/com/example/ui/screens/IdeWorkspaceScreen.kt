@@ -924,6 +924,7 @@ fun IdeWorkspaceScreen(
                       onJumpToLocation = viewModel::jumpToLine,
                       onHideEditorBottomBars = { viewModel.setEditorBottomBarsHidden(true) },
                       onOpenConflictResolver = viewModel::openConflictResolver,
+                      onRegisterFlushHook = viewModel::registerEditorFlushHook,
                       modifier = Modifier.fillMaxSize(),
                     )
                   }
