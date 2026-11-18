@@ -1,7 +1,17 @@
 name: Build APK
+
 on:
   push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "public/**"
   workflow_dispatch:
+
+# New push cancels the older running build (saves minutes)
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -9,6 +19,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -20,21 +31,86 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 9.3.1
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
-      - name: Setup keystore and licenses
+      - name: Prepare keystores and SDK licenses
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          SECRET_STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          SECRET_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          set -euo pipefail
+
+          # debug.keystore is required by build.gradle.kts (debugConfig)
           keytool -genkeypair -keystore debug.keystore -storepass android -keypass android \
             -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
 
-      - name: Build
-        run: gradle assembleDebug --stacktrace
+          if [ -n "${KEYSTORE_BASE64:-}" ]; then
+            echo "Using permanent keystore from GitHub Secrets"
+            echo "$KEYSTORE_BASE64" | base64 -d > release.jks
+            STORE_PW="$SECRET_STORE_PASSWORD"
+            KEY_PW="${SECRET_KEY_PASSWORD:-$SECRET_STORE_PASSWORD}"
+            echo "::add-mask::$STORE_PW"
+            echo "::add-mask::$KEY_PW"
+          else
+            echo "No secrets found: using a temporary keystore (updates will need uninstall first)"
+            STORE_PW="android123"
+            KEY_PW="android123"
+            keytool -genkeypair -keystore release.jks -storepass "$STORE_PW" -keypass "$KEY_PW" \
+              -alias upload -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=EdgeCode,O=AmbiguityLabs,C=US"
+          fi
 
-      - name: Publish APK to Releases
+          {
+            echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/release.jks"
+            echo "STORE_PASSWORD=$STORE_PW"
+            echo "KEY_PASSWORD=$KEY_PW"
+          } >> "$GITHUB_ENV"
+
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Build release APK
+        run: gradle assembleRelease --stacktrace
+
+      - name: Verify APK signature
+        run: |
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -f "$APK"
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1 || true)
+          if [ -n "$APKSIGNER" ]; then "$APKSIGNER" verify --verbose "$APK"; else echo "apksigner not found, skipping"; fi
+          cp "$APK" EdgeCode.apk
+          sha256sum EdgeCode.apk | tee EdgeCode.apk.sha256
+          ls -lh EdgeCode.apk
+
+      - name: Publish to Releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk EdgeCode.apk
-          gh release create "build-${{ github.run_number }}" EdgeCode.apk \
-            --title "EdgeCode build ${{ github.run_number }}" --notes "Debug APK"
+          TAG="build-${{ github.run_number }}"
+          # allow safe re-runs of the same build number
+          gh release delete "$TAG" --cleanup-tag -y 2>/dev/null || true
+          gh release create "$TAG" EdgeCode.apk EdgeCode.apk.sha256 \
+            --target "${{ github.sha }}" \
+            --title "EdgeCode build ${{ github.run_number }}" \
+            --notes "Commit: ${{ github.sha }}" \
+            --latest
+
+      - name: Keep only the newest 10 build releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --limit 200 --json tagName \
+            --jq '[.[] | select(.tagName | startswith("build-"))] | .[10:] | .[].tagName' \
+          | while read -r t; do gh release delete "$t" --cleanup-tag -y || true; done
+
+      - name: Upload build reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-reports
+          path: |
+            app/build/reports/
+            build/reports/
+          if-no-files-found: ignore
+          retention-days: 7
