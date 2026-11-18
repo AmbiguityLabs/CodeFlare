@@ -14,6 +14,18 @@ data class CurlSpec(
   val headOnly: Boolean,
   val verbose: Boolean,
   val followRedirects: Boolean,
+  val outputFile: String? = null,
+)
+
+enum class ShellChainOp {
+  ALWAYS,
+  AND_ON_SUCCESS,
+  OR_ON_FAILURE,
+}
+
+data class ChainedShellCommand(
+  val command: String,
+  val conditionFromPrevious: ShellChainOp,
 )
 
 object ShellTokenizer {
@@ -119,6 +131,83 @@ object ShellTokenizer {
     return parts
   }
 
+  fun splitCommandList(command: String): List<ChainedShellCommand> {
+    val result = mutableListOf<ChainedShellCommand>()
+    val current = StringBuilder()
+    var inSingle = false
+    var inDouble = false
+    var escaped = false
+    var pendingOp = ShellChainOp.ALWAYS
+    var i = 0
+
+    while (i < command.length) {
+      val ch = command[i]
+      if (escaped) {
+        current.append(ch)
+        escaped = false
+        i++
+        continue
+      }
+      if (ch == '\\' && !inSingle) {
+        escaped = true
+        current.append(ch)
+        i++
+        continue
+      }
+      if (ch == '\'' && !inDouble) {
+        inSingle = !inSingle
+        current.append(ch)
+        i++
+        continue
+      }
+      if (ch == '"' && !inSingle) {
+        inDouble = !inDouble
+        current.append(ch)
+        i++
+        continue
+      }
+      if (!inSingle && !inDouble) {
+        if (ch == ';') {
+          val piece = current.toString().trim()
+          if (piece.isNotEmpty()) {
+            result.add(ChainedShellCommand(piece, pendingOp))
+          }
+          current.clear()
+          pendingOp = ShellChainOp.ALWAYS
+          i++
+          continue
+        }
+        if (ch == '&' && command.getOrNull(i + 1) == '&') {
+          val piece = current.toString().trim()
+          if (piece.isNotEmpty()) {
+            result.add(ChainedShellCommand(piece, pendingOp))
+          }
+          current.clear()
+          pendingOp = ShellChainOp.AND_ON_SUCCESS
+          i += 2
+          continue
+        }
+        if (ch == '|' && command.getOrNull(i + 1) == '|') {
+          val piece = current.toString().trim()
+          if (piece.isNotEmpty()) {
+            result.add(ChainedShellCommand(piece, pendingOp))
+          }
+          current.clear()
+          pendingOp = ShellChainOp.OR_ON_FAILURE
+          i += 2
+          continue
+        }
+      }
+      current.append(ch)
+      i++
+    }
+    val tail = current.toString().trim()
+    if (tail.isNotEmpty()) {
+      result.add(ChainedShellCommand(tail, pendingOp))
+    }
+    return result
+  }
+
   fun expandEnvVars(input: String, env: Map<String, String>): String {
     val braced = Regex("\\$\\{([A-Za-z_][A-Za-z0-9_]*)}")
     val simple = Regex("\\$([A-Za-z_][A-Za-z0-9_]*)")
@@ -152,6 +241,8 @@ object CurlCommandParser {
     var headOnly = false
     var verbose = false
     var followRedirects = true
+    var outputFile: String? = null
+    var useRemoteName = false
 
     var startIndex = 1
     if (cmd.uppercase() in httpVerbs) {
@@ -215,12 +306,19 @@ object CurlCommandParser {
           headers["Cookie"] = c
           i += 2
         }
+        tok == "-o" || tok == "--output" -> {
+          outputFile = tokens.getOrNull(i + 1) ?: return Result.failure(IllegalArgumentException("Missing filename after $tok"))
+          i += 2
+        }
+        tok == "-O" || tok == "--remote-name" -> {
+          useRemoteName = true
+          i++
+        }
         tok == "--url" -> {
           urlToken = tokens.getOrNull(i + 1)
           i += 2
         }
         tok.startsWith("-") && !tok.startsWith("--") -> {
-          // Handle combined short flags like -sSLiv or -XPOST
           for (flag in tok.drop(1)) {
             when (flag) {
               'i' -> includeHeaders = true
@@ -234,6 +332,7 @@ object CurlCommandParser {
                 includeHeaders = true
               }
               'L' -> followRedirects = true
+              'O' -> useRemoteName = true
               's', 'S', 'f', 'k', 'g' -> Unit
             }
           }
@@ -289,6 +388,10 @@ object CurlCommandParser {
 
     val body = if (dataParts.isEmpty()) null else dataParts.joinToString("&")
     val resolvedMethod = method ?: if (body != null) "POST" else "GET"
+    val resolvedOutput =
+      outputFile ?: if (useRemoteName) {
+        resolvedUrl.substringBefore('?').substringAfterLast('/').ifBlank { "index.html" }
+      } else null
 
     return Result.success(
       CurlSpec(
@@ -300,6 +403,7 @@ object CurlCommandParser {
         headOnly = headOnly,
         verbose = verbose,
         followRedirects = followRedirects,
+        outputFile = resolvedOutput,
       ),
     )
   }
@@ -331,7 +435,12 @@ object JqEvaluator {
     }.getOrDefault(raw)
   }
 
-  fun evaluate(rawInput: String, expressionRaw: String): Result<String> {
+  fun evaluate(
+    rawInput: String,
+    expressionRaw: String,
+    rawOutput: Boolean = false,
+    compactOutput: Boolean = false,
+  ): Result<String> {
     val expr = expressionRaw.trim().ifEmpty { "." }
     val trimmed = rawInput.trim()
     if (trimmed.isEmpty()) return Result.failure(IllegalArgumentException("jq: empty input"))
@@ -339,10 +448,17 @@ object JqEvaluator {
     return runCatching {
       val root: Any? = JSONTokener(trimmed).nextValue()
 
-      if (expr == "keys") {
+      if (expr == "keys" || expr == "keys_unsorted") {
         return@runCatching when (root) {
-          is JSONObject -> JSONArray(root.keys().asSequence().toList().sorted()).toString(2)
-          is JSONArray -> JSONArray((0 until root.length()).toList()).toString(2)
+          is JSONObject -> {
+            val keys = root.keys().asSequence().toList()
+            val arr = JSONArray(if (expr == "keys") keys.sorted() else keys)
+            if (compactOutput) arr.toString() else arr.toString(2)
+          }
+          is JSONArray -> {
+            val arr = JSONArray((0 until root.length()).toList())
+            if (compactOutput) arr.toString() else arr.toString(2)
+          }
           else -> "[]"
         }
       }
@@ -355,7 +471,6 @@ object JqEvaluator {
         }
       }
 
-      // Support map(.field) or map(.a.b)
       val mapMatch = Regex("""^map\(\s*([^)]+)\s*\)$""").matchEntire(expr)
       if (mapMatch != null) {
         val innerExpr = mapMatch.groupValues[1].trim()
@@ -364,14 +479,14 @@ object JqEvaluator {
         for (i in 0 until arr.length()) {
           mapped.put(evalSegments(arr.opt(i), tokenizePath(innerExpr)))
         }
-        return@runCatching mapped.toString(2)
+        return@runCatching if (compactOutput) mapped.toString() else mapped.toString(2)
       }
 
       val result =
         if (expr == ".") root
         else evalSegments(root, tokenizePath(expr))
 
-      formatJsonNode(result)
+      formatJsonNode(result, rawOutput = rawOutput, compactOutput = compactOutput)
     }
   }
 
@@ -420,11 +535,16 @@ object JqEvaluator {
     }
   }
 
-  private fun formatJsonNode(node: Any?): String =
+  private fun formatJsonNode(
+    node: Any?,
+    rawOutput: Boolean = false,
+    compactOutput: Boolean = false,
+  ): String =
     when (node) {
       null, JSONObject.NULL -> "null"
-      is JSONObject -> node.toString(2)
-      is JSONArray -> node.toString(2)
+      is JSONObject -> if (compactOutput) node.toString() else node.toString(2)
+      is JSONArray -> if (compactOutput) node.toString() else node.toString(2)
+      is String -> if (rawOutput) node else JSONObject.quote(node)
       else -> node.toString()
     }
 

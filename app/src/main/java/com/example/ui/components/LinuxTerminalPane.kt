@@ -4,6 +4,7 @@ import android.content.Intent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -29,6 +31,8 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Send
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.DeleteSweep
@@ -38,6 +42,7 @@ import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -63,19 +68,28 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.terminal.JqEvaluator
 import com.example.terminal.TerminalEntry
 import com.example.terminal.TerminalEntryKind
+import com.example.terminal.TerminalQuickEditTarget
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
@@ -95,6 +109,14 @@ fun LinuxTerminalPane(
   onSaveEntryToFile: (fileName: String, content: String) -> Unit,
   onNotifyCopied: (String) -> Unit,
   modifier: Modifier = Modifier,
+  onInsertToken: (String) -> Unit = { token -> onInputChange(uiState.terminalInput + token) },
+  onCreateSession: () -> Unit = {},
+  onSwitchSession: (String) -> Unit = {},
+  onCloseSession: (String) -> Unit = {},
+  onInterruptCommand: () -> Unit = {},
+  onSendStdin: (String) -> Unit = {},
+  onSaveQuickEdit: (filePath: String, content: String) -> Unit = { _, _ -> },
+  onDismissQuickEdit: () -> Unit = {},
 ) {
   val palette = LocalIdePalette.current
   val clipboard = LocalClipboardManager.current
@@ -103,16 +125,36 @@ fun LinuxTerminalPane(
   var inspectedEntry by remember { mutableStateOf<TerminalEntry?>(null) }
   var pendingSaveEntry by remember { mutableStateOf<TerminalEntry?>(null) }
   var showMoreCommandsMenu by remember { mutableStateOf(false) }
+  var stdinDraft by remember { mutableStateOf("") }
+  var classicStreamMode by remember { mutableStateOf(false) }
+  var inputFieldValue by remember {
+    mutableStateOf(TextFieldValue(uiState.terminalInput, TextRange(uiState.terminalInput.length)))
+  }
 
-  LaunchedEffect(uiState.terminalEntries.size) {
-    if (uiState.terminalEntries.isNotEmpty()) {
-      listState.animateScrollToItem(uiState.terminalEntries.lastIndex)
+  LaunchedEffect(uiState.terminalInput) {
+    if (uiState.terminalInput != inputFieldValue.text) {
+      inputFieldValue = TextFieldValue(uiState.terminalInput, TextRange(uiState.terminalInput.length))
+    }
+  }
+
+  LaunchedEffect(uiState.terminalEntries.size, uiState.isTerminalBusy, uiState.terminalLiveOutput) {
+    val totalItems = uiState.terminalEntries.size + if (uiState.isTerminalBusy) 1 else 0
+    if (totalItems > 0) {
+      listState.animateScrollToItem(totalItems - 1)
     }
   }
 
   val copyText: (label: String, content: String) -> Unit = { label, content ->
     clipboard.setText(AnnotatedString(content))
     onNotifyCopied("Copied $label to clipboard")
+  }
+
+  uiState.terminalQuickEdit?.let { target ->
+    TerminalQuickEditDialog(
+      target = target,
+      onSave = { updated -> onSaveQuickEdit(target.filePath, updated) },
+      onDismiss = onDismissQuickEdit,
+    )
   }
 
   inspectedEntry?.let { entry ->
@@ -154,46 +196,187 @@ fun LinuxTerminalPane(
   Column(
     modifier = modifier.fillMaxSize().background(palette.editorBg),
   ) {
-    // Scrollable Terminal Output Feed (Native Selection + Per-Block 1-Tap Copy)
-    LazyColumn(
-      state = listState,
-      modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-      verticalArrangement = Arrangement.spacedBy(8.dp),
+    Row(
+      modifier =
+        Modifier
+          .fillMaxWidth()
+          .height(34.dp)
+          .background(palette.chromeSurface)
+          .padding(horizontal = 6.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-      if (uiState.terminalEntries.isEmpty()) {
-        item {
+      Row(
+        modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+      ) {
+        uiState.terminalSessions.forEach { tab ->
+          val selected = tab.id == uiState.activeTerminalSessionId
           Surface(
-            color = palette.chromeSurface,
-            shape = RoundedCornerShape(10.dp),
-            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
-            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            onClick = { onSwitchSession(tab.id) },
+            shape = RoundedCornerShape(6.dp),
+            color = if (selected) palette.activePillBg else palette.chromePill,
+            border =
+              BorderStroke(
+                1.dp,
+                if (selected) palette.activePillFg.copy(alpha = 0.3f) else palette.border.copy(alpha = 0.45f),
+              ),
+            modifier = Modifier.height(24.dp).testTag("terminal_tab_${tab.id}"),
           ) {
-            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-              Text(
-                text = "Edge Terminal Ready",
-                style = MaterialTheme.typography.titleSmall,
-                color = palette.activePillFg,
+            Row(
+              modifier = Modifier.padding(horizontal = 7.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+              Box(
+                modifier =
+                  Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(if (tab.isBusy) AmberWarn else if (selected) EmeraldLive else palette.textMuted),
               )
               Text(
-                text = "Run curl -i /, POST /echo '{\"ok\":true}', wrangler deploy, ls -la, cat src/index.js, jq ., or uname -a.",
-                style = MaterialTheme.typography.bodySmall,
-                color = palette.textSecondary,
+                text = tab.title,
+                fontFamily = JetBrainsMono,
+                fontSize = 10.5.sp,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (selected) palette.activePillFg else palette.textSecondary,
+                maxLines = 1,
               )
+              if (uiState.terminalSessions.size > 1) {
+                Icon(
+                  imageVector = Icons.Outlined.Close,
+                  contentDescription = "Close ${tab.title}",
+                  tint = palette.textMuted,
+                  modifier =
+                    Modifier
+                      .size(12.dp)
+                      .clickable { onCloseSession(tab.id) },
+                )
+              }
             }
           }
         }
-      } else {
-        items(uiState.terminalEntries, key = { it.id }) { entry ->
-          TerminalEntryCard(
-            entry = entry,
-            onCopy = copyText,
-            onRerun = { onRunCommand(entry.command) },
-            onSave = { pendingSaveEntry = entry },
-            onShare = {
-              val shareBody = buildString {
-                appendLine("$ ${entry.command}")
-                append(entry.output)
+
+        Surface(
+          onClick = onCreateSession,
+          shape = RoundedCornerShape(6.dp),
+          color = palette.chromePill,
+          border = BorderStroke(1.dp, palette.border.copy(alpha = 0.45f)),
+          modifier = Modifier.size(24.dp).testTag("terminal_new_session_button"),
+        ) {
+          Box(contentAlignment = Alignment.Center) {
+            Icon(
+              imageVector = Icons.Outlined.Add,
+              contentDescription = "New shell session",
+              tint = palette.textPrimary,
+              modifier = Modifier.size(14.dp),
+            )
+          }
+        }
+      }
+
+      TerminalQuickChip(
+        label = if (classicStreamMode) "Cards" else "Stream",
+        onClick = { classicStreamMode = !classicStreamMode },
+        modifier = Modifier.testTag("terminal_view_mode_toggle"),
+      )
+      TerminalQuickChip(label = "sysinfo", onClick = { onRunCommand("sysinfo") })
+      TerminalQuickChip(label = "pkg", onClick = { onRunCommand("pkg") })
+    }
+    HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
+
+    if (classicStreamMode) {
+      val streamLines =
+        remember(uiState.terminalEntries, uiState.isTerminalBusy, uiState.terminalLiveOutput, uiState.terminalRunningCommand) {
+          buildList {
+            var lineId = 1L
+            uiState.terminalEntries.forEach { entry ->
+              add(
+                TerminalOutputLine(
+                  id = lineId++,
+                  text = "${entry.promptPrefix} ${entry.command}",
+                  isCommand = true,
+                ),
+              )
+              if (entry.output.isNotEmpty()) {
+                entry.output.split('\n').forEach { outLine ->
+                  add(
+                    TerminalOutputLine(
+                      id = lineId++,
+                      text = outLine,
+                      isError = entry.isError || entry.kind == TerminalEntryKind.ERROR,
+                    ),
+                  )
+                }
               }
+            }
+            if (uiState.isTerminalBusy) {
+              uiState.terminalRunningCommand?.let { running ->
+                add(TerminalOutputLine(id = lineId++, text = "$ $running", isCommand = true))
+              }
+              if (uiState.terminalLiveOutput.isNotEmpty()) {
+                uiState.terminalLiveOutput.split('\n').forEach { liveLine ->
+                  add(TerminalOutputLine(id = lineId++, text = liveLine))
+                }
+              }
+            }
+          }
+        }
+      TerminalInterface(
+        outputLines = streamLines,
+        onExecuteCommand = onRunCommand,
+        prompt = "${uiState.terminalPromptPath}$",
+        isBusy = uiState.isTerminalBusy,
+        externalInput = uiState.terminalInput,
+        onExternalInputChange = onInputChange,
+        onExternalHistoryUp = { onRecallHistory(true) },
+        onExternalHistoryDown = { onRecallHistory(false) },
+        onAutocomplete = onAutocomplete,
+        showHeader = false,
+        modifier = Modifier.weight(1f).fillMaxWidth(),
+      )
+    } else {
+      LazyColumn(
+        state = listState,
+        modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        if (uiState.terminalEntries.isEmpty() && !uiState.isTerminalBusy) {
+          item {
+            Surface(
+              color = palette.chromeSurface,
+              shape = RoundedCornerShape(10.dp),
+              border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
+              modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            ) {
+              Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                  text = "EdgeCode Linux Terminal Ready",
+                  style = MaterialTheme.typography.titleSmall,
+                  color = palette.activePillFg,
+                )
+                Text(
+                  text = "Run any Linux command (ls, tree, grep, zip, unzip, wget, curl, jq, sha256sum, nano, pkg, sysinfo, wrangler, git).",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = palette.textSecondary,
+                )
+              }
+            }
+          }
+        } else {
+          items(uiState.terminalEntries, key = { it.id }) { entry ->
+            TerminalEntryCard(
+              entry = entry,
+              onCopy = copyText,
+              onRerun = { onRunCommand(entry.command) },
+              onSave = { pendingSaveEntry = entry },
+              onShare = {
+                val shareBody = buildString {
+                  appendLine("$ ${entry.command}")
+                  append(stripTerminalAnsi(entry.output))
+                }
               val shareIntent =
                 Intent(Intent.ACTION_SEND).apply {
                   type = "text/plain"
@@ -207,10 +390,178 @@ fun LinuxTerminalPane(
           )
         }
       }
+
+      if (uiState.isTerminalBusy) {
+        item(key = "live_running_card") {
+          Surface(
+            color = palette.chromeSurface,
+            shape = RoundedCornerShape(10.dp),
+            border = BorderStroke(1.dp, AmberWarn.copy(alpha = 0.55f)),
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Column(
+              modifier = Modifier.fillMaxWidth().padding(10.dp),
+              verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+              ) {
+                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = AmberWarn)
+                Text(
+                  text = uiState.terminalRunningCommand ?: "Running…",
+                  fontFamily = JetBrainsMono,
+                  fontSize = 11.5.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = palette.activePillFg,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                  modifier = Modifier.weight(1f),
+                )
+                Surface(
+                  onClick = onInterruptCommand,
+                  shape = RoundedCornerShape(6.dp),
+                  color = RoseError.copy(alpha = 0.18f),
+                  border = BorderStroke(1.dp, RoseError.copy(alpha = 0.45f)),
+                  modifier = Modifier.testTag("terminal_interrupt_button"),
+                ) {
+                  Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                  ) {
+                    Icon(Icons.Outlined.Stop, contentDescription = "Interrupt process", tint = RoseError, modifier = Modifier.size(13.dp))
+                    Text("^C Stop", fontFamily = JetBrainsMono, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = RoseError)
+                  }
+                }
+              }
+
+              if (uiState.terminalLiveOutput.isNotBlank()) {
+                val styledLive = parseTerminalAnsi(uiState.terminalLiveOutput, palette.textPrimary)
+                SelectionContainer {
+                  Box(
+                    modifier =
+                      Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(palette.editorBg)
+                        .horizontalScroll(rememberScrollState())
+                        .padding(8.dp),
+                  ) {
+                    Text(
+                      text = styledLive,
+                      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 16.5.sp),
+                    )
+                  }
+                }
+              }
+
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                Box(
+                  modifier =
+                    Modifier
+                      .weight(1f)
+                      .clip(RoundedCornerShape(7.dp))
+                      .background(palette.editorBg)
+                      .border(1.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(7.dp))
+                      .padding(horizontal = 8.dp, vertical = 5.dp),
+                ) {
+                  if (stdinDraft.isEmpty()) {
+                    Text(
+                      text = "Send stdin line to running process…",
+                      fontFamily = JetBrainsMono,
+                      fontSize = 10.5.sp,
+                      color = palette.textMuted,
+                    )
+                  }
+                  BasicTextField(
+                    value = stdinDraft,
+                    onValueChange = { stdinDraft = it },
+                    singleLine = true,
+                    textStyle = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, color = palette.textPrimary),
+                    cursorBrush = SolidColor(palette.activePillFg),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions =
+                      KeyboardActions(
+                        onSend = {
+                          onSendStdin(stdinDraft)
+                          stdinDraft = ""
+                        },
+                      ),
+                    modifier = Modifier.fillMaxWidth(),
+                  )
+                }
+                Surface(
+                  onClick = {
+                    onSendStdin(stdinDraft)
+                    stdinDraft = ""
+                  },
+                  shape = RoundedCornerShape(7.dp),
+                  color = palette.activePillBg,
+                ) {
+                  Text(
+                    text = "Stdin",
+                    fontFamily = JetBrainsMono,
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = palette.activePillFg,
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+    }
     }
 
-    // Rebuilt Bottom Terminal Dock: Sticky Utility Strip + Primary Commands + Prompt Row
     HorizontalDivider(color = palette.border.copy(alpha = 0.55f))
+    Row(
+      modifier =
+        Modifier
+          .fillMaxWidth()
+          .height(34.dp)
+          .background(palette.chromeBg)
+          .horizontalScroll(rememberScrollState())
+          .padding(horizontal = 6.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+      TerminalExtraKeyChip(label = "TAB", onClick = onAutocomplete)
+      if (uiState.isTerminalBusy) {
+        Surface(
+          onClick = onInterruptCommand,
+          shape = RoundedCornerShape(5.dp),
+          color = RoseError.copy(alpha = 0.16f),
+          border = BorderStroke(1.dp, RoseError.copy(alpha = 0.4f)),
+          modifier = Modifier.height(24.dp),
+        ) {
+          Box(modifier = Modifier.padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
+            Text("^C", fontFamily = JetBrainsMono, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = RoseError)
+          }
+        }
+      }
+      listOf("|", "&&", ";", ">", ">>", "~/", "/", "-", "$", "\"", "'", "↑", "↓").forEach { key ->
+        TerminalExtraKeyChip(
+          label = key,
+          onClick = {
+            when (key) {
+              "↑" -> onRecallHistory(true)
+              "↓" -> onRecallHistory(false)
+              else -> onInsertToken(key)
+            }
+          },
+        )
+      }
+    }
+
+    HorizontalDivider(color = palette.border.copy(alpha = 0.4f))
     Row(
       modifier =
         Modifier
@@ -220,7 +571,6 @@ fun LinuxTerminalPane(
           .padding(horizontal = 6.dp),
       verticalAlignment = Alignment.CenterVertically,
     ) {
-      // Sticky Left Utility Controls
       Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -260,7 +610,7 @@ fun LinuxTerminalPane(
           }
         }
 
-        val lastOut = uiState.terminalEntries.lastOrNull()?.let { it.httpMeta?.bodyText ?: it.output }
+        val lastOut = uiState.terminalEntries.lastOrNull()?.let { it.httpMeta?.bodyText ?: stripTerminalAnsi(it.output) }
         TerminalDockIconBtn(
           icon = Icons.Outlined.ContentCopy,
           contentDescription = "Copy last output",
@@ -290,26 +640,21 @@ fun LinuxTerminalPane(
         modifier = Modifier.padding(horizontal = 6.dp, vertical = 7.dp),
       )
 
-      // Concise Primary Command Rail
       Row(
         modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(5.dp),
         verticalAlignment = Alignment.CenterVertically,
       ) {
-        TerminalQuickChip(label = "Tab", onClick = onAutocomplete)
-        TerminalQuickChip(label = "curl /", onClick = { onInputChange("curl -i /") })
-        TerminalQuickChip(
-          label = "POST /",
-          onClick = { onInputChange("curl -i -X POST -H \"Content-Type: application/json\" -d '{\"ping\":\"edge\"}' /") },
-        )
-        TerminalQuickChip(label = "jq .", onClick = { onInputChange("curl -s / | jq .") })
-        TerminalQuickChip(label = "deploy", onClick = { onRunCommand("wrangler deploy") })
         TerminalQuickChip(label = "ls -la", onClick = { onRunCommand("ls -la") })
+        TerminalQuickChip(label = "tree", onClick = { onRunCommand("tree -L 2") })
+        TerminalQuickChip(label = "curl /", onClick = { onInputChange("curl -i /") })
+        TerminalQuickChip(label = "wget", onClick = { onInputChange("wget ") })
+        TerminalQuickChip(label = "unzip", onClick = { onInputChange("unzip ") })
+        TerminalQuickChip(label = "deploy", onClick = { onRunCommand("wrangler deploy") })
       }
 
       Spacer(Modifier.width(4.dp))
 
-      // Sticky Right Cmds Dropdown for secondary wrangler/system commands
       Box {
         Surface(
           onClick = { showMoreCommandsMenu = true },
@@ -341,23 +686,27 @@ fun LinuxTerminalPane(
         EdgeMenu(
           expanded = showMoreCommandsMenu,
           onDismissRequest = { showMoreCommandsMenu = false },
-          minWidth = 236.dp,
-          maxWidth = 286.dp,
+          minWidth = 248.dp,
+          maxWidth = 296.dp,
         ) {
           EdgeMenuHeader(
-            title = "Quick Commands",
-            badgeText = "CLI",
+            title = "Linux & Edge CLI",
+            badgeText = "SHELL",
             leadingIcon = Icons.Outlined.Terminal,
           )
           listOf(
+            "sysinfo" to "INFO",
+            "pkg" to "TOOLS",
+            "tree -L 3" to "FILES",
+            "projects" to "IDE",
+            "uname -a && id" to "SYS",
             "wrangler dev" to "DEV",
             "wrangler deploy" to "DEPLOY",
             "wrangler tail" to "LOGS",
-            "wrangler versions" to "VER",
             "wrangler d1 list" to "D1",
             "wrangler r2 bucket list" to "R2",
-            "wrangler pages project list" to "PAGES",
-            "uname -a" to "SYS",
+            "git status" to "GIT",
+            "help" to "HELP",
           ).forEach { (cmd, tag) ->
             EdgeMenuItem(
               label = cmd,
@@ -374,90 +723,231 @@ fun LinuxTerminalPane(
       }
     }
 
-    HorizontalDivider(color = palette.border.copy(alpha = 0.4f))
+    if (!classicStreamMode) {
+      HorizontalDivider(color = palette.border.copy(alpha = 0.4f))
 
-    // Active Linux Prompt Input Row
-    Row(
-      modifier =
-        Modifier
-          .fillMaxWidth()
-          .background(palette.chromeBg)
-          .padding(horizontal = 8.dp, vertical = 6.dp),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-      Surface(
-        color = palette.chromeSurface,
-        shape = RoundedCornerShape(6.dp),
-        border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
-      ) {
-        Text(
-          text = "${uiState.terminalPromptPath}$",
-          style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.Bold),
-          color = palette.activePillFg,
-          maxLines = 1,
-          modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
-        )
-      }
-
-      Box(
+      Row(
         modifier =
           Modifier
-            .weight(1f)
-            .clip(RoundedCornerShape(8.dp))
-            .background(palette.editorBg)
-            .border(1.dp, palette.border.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
-            .padding(horizontal = 10.dp, vertical = 7.dp),
+            .fillMaxWidth()
+            .background(palette.chromeBg)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
       ) {
-        if (uiState.terminalInput.isEmpty()) {
+        Surface(
+          color = palette.chromeSurface,
+          shape = RoundedCornerShape(6.dp),
+          border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
+        ) {
           Text(
-            text = "curl -i /health  |  wrangler deploy  |  paste…",
-            style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
-            color = palette.textMuted,
+            text = "${uiState.terminalPromptPath}$",
+            style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.Bold),
+            color = palette.activePillFg,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
           )
         }
-        BasicTextField(
-          value = uiState.terminalInput,
-          onValueChange = onInputChange,
-          textStyle = TextStyle(fontFamily = JetBrainsMono, fontSize = 12.sp, color = palette.textPrimary),
-          cursorBrush = SolidColor(palette.activePillFg),
-          maxLines = 4,
-          keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-          keyboardActions = KeyboardActions(onSend = { onRunCommand(uiState.terminalInput) }),
-          modifier = Modifier.fillMaxWidth().testTag("terminal_command_input"),
-        )
-      }
 
-      val canRun = !uiState.isTerminalBusy && uiState.terminalInput.isNotBlank()
-      Surface(
-        onClick = { if (canRun) onRunCommand(uiState.terminalInput) },
-        enabled = canRun,
-        shape = RoundedCornerShape(8.dp),
-        color = if (canRun) palette.activePillBg else palette.chromeSurface,
-        border =
-          BorderStroke(
-            1.dp,
-            if (canRun) palette.activePillFg.copy(alpha = 0.3f) else palette.border.copy(alpha = 0.45f),
-          ),
-        modifier = Modifier.size(34.dp).testTag("terminal_run_button"),
-      ) {
-        Box(contentAlignment = Alignment.Center) {
-          if (uiState.isTerminalBusy) {
-            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-          } else {
-            Icon(
-              imageVector = Icons.AutoMirrored.Outlined.Send,
-              contentDescription = "Execute terminal command",
-              tint = if (canRun) palette.activePillFg else palette.textMuted,
-              modifier = Modifier.size(17.dp),
+        Box(
+          modifier =
+            Modifier
+              .weight(1f)
+              .clip(RoundedCornerShape(8.dp))
+              .background(palette.editorBg)
+              .border(1.dp, palette.border.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+              .padding(horizontal = 10.dp, vertical = 7.dp),
+        ) {
+          if (uiState.terminalInput.isEmpty()) {
+            Text(
+              text = "ls -la | zip | curl | wrangler | nano | help…",
+              style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
+              color = palette.textMuted,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
             )
+          }
+          BasicTextField(
+            value = inputFieldValue,
+            onValueChange = { next ->
+              inputFieldValue = next
+              onInputChange(next.text)
+            },
+            singleLine = true,
+            textStyle = TextStyle(fontFamily = JetBrainsMono, fontSize = 12.sp, color = palette.textPrimary),
+            cursorBrush = SolidColor(palette.activePillFg),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+            keyboardActions =
+              KeyboardActions(
+                onSend = { onRunCommand(uiState.terminalInput) },
+                onDone = { onRunCommand(uiState.terminalInput) },
+              ),
+            modifier =
+              Modifier
+                .fillMaxWidth()
+                .onPreviewKeyEvent { keyEvent ->
+                  if (keyEvent.type != KeyEventType.KeyDown) {
+                    false
+                  } else {
+                    when (keyEvent.key) {
+                      Key.Enter, Key.NumPadEnter -> {
+                        if (!keyEvent.isShiftPressed) {
+                          onRunCommand(uiState.terminalInput)
+                          true
+                        } else {
+                          false
+                        }
+                      }
+                      Key.DirectionUp -> {
+                        onRecallHistory(true)
+                        true
+                      }
+                      Key.DirectionDown -> {
+                        onRecallHistory(false)
+                        true
+                      }
+                      Key.Tab -> {
+                        onAutocomplete()
+                        true
+                      }
+                      else -> false
+                    }
+                  }
+                }
+                .testTag("terminal_command_input"),
+          )
+        }
+
+        val canRun = !uiState.isTerminalBusy && uiState.terminalInput.isNotBlank()
+        Surface(
+          onClick = {
+            if (uiState.isTerminalBusy) onInterruptCommand()
+            else if (canRun) onRunCommand(uiState.terminalInput)
+          },
+          enabled = uiState.isTerminalBusy || canRun,
+          shape = RoundedCornerShape(8.dp),
+          color =
+            when {
+              uiState.isTerminalBusy -> RoseError.copy(alpha = 0.16f)
+              canRun -> palette.activePillBg
+              else -> palette.chromeSurface
+            },
+          border =
+            BorderStroke(
+              1.dp,
+              when {
+                uiState.isTerminalBusy -> RoseError.copy(alpha = 0.45f)
+                canRun -> palette.activePillFg.copy(alpha = 0.3f)
+                else -> palette.border.copy(alpha = 0.45f)
+              },
+            ),
+          modifier = Modifier.size(34.dp).testTag("terminal_run_button"),
+        ) {
+          Box(contentAlignment = Alignment.Center) {
+            if (uiState.isTerminalBusy) {
+              Icon(
+                imageVector = Icons.Outlined.Stop,
+                contentDescription = "Stop running command",
+                tint = RoseError,
+                modifier = Modifier.size(17.dp),
+              )
+            } else {
+              Icon(
+                imageVector = Icons.AutoMirrored.Outlined.Send,
+                contentDescription = "Execute terminal command",
+                tint = if (canRun) palette.activePillFg else palette.textMuted,
+                modifier = Modifier.size(17.dp),
+              )
+            }
           }
         }
       }
     }
   }
+}
+
+@Composable
+private fun TerminalExtraKeyChip(
+  label: String,
+  onClick: () -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  Surface(
+    onClick = onClick,
+    shape = RoundedCornerShape(5.dp),
+    color = palette.chromePill,
+    border = BorderStroke(1.dp, palette.border.copy(alpha = 0.4f)),
+    modifier = Modifier.height(24.dp),
+  ) {
+    Box(modifier = Modifier.padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
+      Text(
+        text = label,
+        fontFamily = JetBrainsMono,
+        fontSize = 10.5.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = palette.textPrimary,
+        maxLines = 1,
+      )
+    }
+  }
+}
+
+@Composable
+private fun TerminalQuickEditDialog(
+  target: TerminalQuickEditTarget,
+  onSave: (String) -> Unit,
+  onDismiss: () -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  var text by remember(target.filePath) { mutableStateOf(target.content) }
+
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = {
+      Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(text = "nano • ${target.displayName}", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+          text = target.filePath,
+          fontFamily = JetBrainsMono,
+          fontSize = 10.sp,
+          color = palette.textMuted,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+    },
+    text = {
+      Box(
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .heightIn(min = 200.dp, max = 340.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(palette.editorBg)
+            .border(1.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+            .verticalScroll(rememberScrollState())
+            .padding(10.dp),
+      ) {
+        BasicTextField(
+          value = text,
+          onValueChange = { text = it },
+          textStyle = TextStyle(fontFamily = JetBrainsMono, fontSize = 12.sp, color = palette.textPrimary, lineHeight = 17.sp),
+          cursorBrush = SolidColor(palette.activePillFg),
+          modifier = Modifier.fillMaxWidth().testTag("terminal_quick_edit_input"),
+        )
+      }
+    },
+    confirmButton = {
+      FilledTonalButton(onClick = { onSave(text) }) {
+        Text("Save File")
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("Cancel")
+      }
+    },
+  )
 }
 
 @Composable
@@ -503,6 +993,8 @@ private fun TerminalEntryCard(
       entry.kind == TerminalEntryKind.HTTP -> palette.activePillBg
       else -> palette.border.copy(alpha = 0.7f)
     }
+  val defaultColor = if (entry.isError) RoseError else palette.textPrimary
+  val annotatedOutput = remember(entry.output, defaultColor) { parseTerminalAnsi(entry.output, defaultColor) }
 
   Column(
     modifier =
@@ -514,7 +1006,6 @@ private fun TerminalEntryCard(
         .padding(horizontal = 10.dp, vertical = 8.dp),
     verticalArrangement = Arrangement.spacedBy(6.dp),
   ) {
-    // Prompt & Command Header + Copy/Re-run
     Row(
       modifier = Modifier.fillMaxWidth(),
       verticalAlignment = Alignment.CenterVertically,
@@ -541,7 +1032,6 @@ private fun TerminalEntryCard(
       }
     }
 
-    // Real HTTP Status + DNS/TLS/TTFB Trace Badge
     entry.httpMeta?.let { meta ->
       val statusColor =
         when {
@@ -575,7 +1065,6 @@ private fun TerminalEntryCard(
       }
     }
 
-    // Native Drag-Selectable Terminal Output
     if (entry.output.isNotBlank()) {
       SelectionContainer {
         Box(
@@ -588,15 +1077,13 @@ private fun TerminalEntryCard(
               .padding(8.dp),
         ) {
           Text(
-            text = entry.output,
+            text = annotatedOutput,
             style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 16.5.sp),
-            color = if (entry.isError) RoseError else palette.textPrimary,
           )
         }
       }
     }
 
-    // Effortless 1-Tap Copy Strip
     Row(
       modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
       horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -605,7 +1092,7 @@ private fun TerminalEntryCard(
       TerminalMiniAction(
         label = "Copy Output",
         icon = Icons.Outlined.ContentCopy,
-        onClick = { onCopy("output", entry.httpMeta?.bodyText?.ifBlank { entry.output } ?: entry.output) },
+        onClick = { onCopy("output", entry.httpMeta?.bodyText?.ifBlank { stripTerminalAnsi(entry.output) } ?: stripTerminalAnsi(entry.output)) },
       )
       entry.httpMeta?.let { meta ->
         if (meta.headersText.isNotBlank()) {
@@ -642,6 +1129,7 @@ private fun TerminalEntryCard(
 private fun TerminalQuickChip(
   label: String,
   onClick: () -> Unit,
+  modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
   Surface(
@@ -649,7 +1137,7 @@ private fun TerminalQuickChip(
     shape = RoundedCornerShape(6.dp),
     color = palette.chromeBg,
     border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
-    modifier = Modifier.height(26.dp),
+    modifier = modifier.height(26.dp),
   ) {
     Box(
       modifier = Modifier.padding(horizontal = 8.dp),
@@ -703,11 +1191,11 @@ private fun TerminalCopyInspectorDialog(
   onDismiss: () -> Unit,
 ) {
   val palette = LocalIdePalette.current
-  val rawText = entry.output
-  val bodyForJson = entry.httpMeta?.bodyText ?: entry.output
+  val rawText = remember(entry.output) { stripTerminalAnsi(entry.output) }
+  val bodyForJson = entry.httpMeta?.bodyText ?: rawText
   val jsonFields = remember(bodyForJson) { JqEvaluator.extractCopyableFields(bodyForJson) }
   val lines = remember(rawText) { rawText.lines().filter { it.isNotEmpty() } }
-  var mode by remember { mutableIntStateOf(0) } // 0 = Free Select, 1 = Line Tap, 2 = JSON Fields
+  var mode by remember { mutableIntStateOf(0) }
 
   AlertDialog(
     onDismissRequest = onDismiss,

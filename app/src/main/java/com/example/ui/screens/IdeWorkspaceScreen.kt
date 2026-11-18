@@ -1848,6 +1848,14 @@ private fun ProjectConsoleModeWorkspace(
             onClearTerminal = viewModel::clearTerminal,
             onSaveEntryToFile = viewModel::saveTerminalOutputToWorkspaceFile,
             onNotifyCopied = viewModel::showStatus,
+            onInsertToken = viewModel::insertTerminalToken,
+            onCreateSession = viewModel::createTerminalSession,
+            onSwitchSession = viewModel::switchTerminalSession,
+            onCloseSession = viewModel::closeTerminalSession,
+            onInterruptCommand = viewModel::interruptTerminalCommand,
+            onSendStdin = viewModel::sendTerminalStdin,
+            onSaveQuickEdit = viewModel::saveTerminalQuickEditFile,
+            onDismissQuickEdit = viewModel::dismissTerminalQuickEdit,
             modifier = Modifier.fillMaxSize(),
           )
 

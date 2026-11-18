@@ -126,6 +126,8 @@ import com.example.terminal.LinuxTerminalEngine
 import com.example.terminal.ShellExecutionResult
 import com.example.terminal.TerminalEntry
 import com.example.terminal.TerminalEntryKind
+import com.example.terminal.TerminalQuickEditTarget
+import com.example.terminal.TerminalSessionTab
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -266,6 +268,7 @@ data class IdeUiState(
   val isEditorBottomBarsHidden: Boolean = false,
   val showHomeGitHubHub: Boolean = false,
   val showHomeSettings: Boolean = false,
+  val showHomeTerminal: Boolean = false,
   val isTestingCfCredentials: Boolean = false,
   val cfCredentialTestMessage: String? = null,
   val isCfCredentialTestError: Boolean = false,
@@ -350,8 +353,13 @@ data class IdeUiState(
   val terminalInput: String = "",
   val terminalPromptPath: String = "~/scratch",
   val isTerminalBusy: Boolean = false,
+  val terminalRunningCommand: String? = null,
+  val terminalLiveOutput: String = "",
   val terminalHistory: List<String> = emptyList(),
   val terminalHistoryCursor: Int = -1,
+  val terminalSessions: List<TerminalSessionTab> = listOf(TerminalSessionTab("sh-1", "sh-1", "~/scratch", false)),
+  val activeTerminalSessionId: String = "sh-1",
+  val terminalQuickEdit: TerminalQuickEditTarget? = null,
   val isTailRunning: Boolean = false,
   val tailLogs: List<ConsoleLogEntry> = emptyList(),
   val consoleLogs: List<ConsoleLogEntry> = emptyList(),
@@ -446,6 +454,11 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   private val autoSaveIoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
   private val ramDb = RamWorkspaceDatabase()
   private val terminalIdGen = AtomicLong(1L)
+  private val terminalBuffersBySession = ConcurrentHashMap<String, List<TerminalEntry>>()
+  private val terminalHistoryBySession = ConcurrentHashMap<String, List<String>>()
+  private val terminalInputBySession = ConcurrentHashMap<String, String>()
+  private val terminalCursorBySession = ConcurrentHashMap<String, Int>()
+  private val terminalDraftBySession = ConcurrentHashMap<String, String>()
 
   // IDE Core engines adapted from CodeAssist ide-core
   private val ideCoreIndexExecutor = IdeBackgroundThreads.single("ide-core-index")
@@ -1331,6 +1344,48 @@ export default {
 
   fun setShowHomeSettings(show: Boolean) {
     _uiState.update { it.copy(showHomeSettings = show) }
+  }
+
+  fun setShowHomeTerminal(show: Boolean) {
+    if (show) {
+      val ws = _uiState.value.workspace
+      if (_uiState.value.terminalEntries.isEmpty()) {
+        val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+        val prompt = terminalEngine.currentPromptPath(ws)
+        val welcome =
+          TerminalEntry(
+            id = terminalIdGen.getAndIncrement(),
+            timestamp = ts,
+            promptPrefix = "dev@edgecode:$prompt$",
+            command = "sysinfo --quick",
+            output =
+              "EdgeCode Lightweight Linux Terminal (${terminalEngine.getActiveSessionId()})\n" +
+                "Working dir: ${terminalEngine.currentDirPath()}\n" +
+                "Type 'help', 'pkg' to view installed utilities, or 'sysinfo' for environment stats.",
+            kind = TerminalEntryKind.SYSTEM,
+          )
+        val activeId = terminalEngine.getActiveSessionId()
+        terminalBuffersBySession[activeId] = listOf(welcome)
+        _uiState.update {
+          it.copy(
+            showHomeTerminal = true,
+            terminalEntries = listOf(welcome),
+            terminalPromptPath = prompt,
+            terminalSessions = terminalEngine.listSessionTabs(ws),
+          )
+        }
+      } else {
+        _uiState.update {
+          it.copy(
+            showHomeTerminal = true,
+            terminalPromptPath = terminalEngine.currentPromptPath(ws),
+            terminalSessions = terminalEngine.listSessionTabs(ws),
+          )
+        }
+      }
+    } else {
+      _uiState.update { it.copy(showHomeTerminal = false) }
+    }
   }
 
   fun exitScratchpadToAuth() {
@@ -7023,23 +7078,43 @@ jobs:
     pushQueuedAndActiveChangesToGitHub(commitMessageOverride = commitMessage)
   }
 
-  // Linux Terminal & Enhanced API Testing Environment
   fun setTerminalInput(input: String) {
+    val activeId = _uiState.value.activeTerminalSessionId
+    terminalInputBySession[activeId] = input
+    terminalCursorBySession[activeId] = -1
+    terminalDraftBySession[activeId] = input
     _uiState.update { it.copy(terminalInput = input, terminalHistoryCursor = -1) }
+  }
+
+  fun insertTerminalToken(token: String) {
+    val activeId = _uiState.value.activeTerminalSessionId
+    _uiState.update { state ->
+      val next = state.terminalInput + token
+      terminalInputBySession[activeId] = next
+      terminalCursorBySession[activeId] = -1
+      terminalDraftBySession[activeId] = next
+      state.copy(terminalInput = next, terminalHistoryCursor = -1)
+    }
   }
 
   fun pasteIntoTerminal(clipboardText: String) {
     val clean = clipboardText.replace("\r\n", "\n")
+    val activeId = _uiState.value.activeTerminalSessionId
     _uiState.update { state ->
       val current = state.terminalInput
       val next = if (current.isEmpty()) clean else "$current$clean"
+      terminalInputBySession[activeId] = next
+      terminalCursorBySession[activeId] = -1
+      terminalDraftBySession[activeId] = next
       state.copy(terminalInput = next, terminalHistoryCursor = -1)
     }
   }
 
   fun autocompleteTerminal() {
     val state = _uiState.value
-    val completed = terminalEngine.autocomplete(state.terminalInput, state.workspace)
+    val completed = terminalEngine.autocomplete(state.terminalInput, state.workspace, state.activeTerminalSessionId)
+    terminalInputBySession[state.activeTerminalSessionId] = completed
+    terminalDraftBySession[state.activeTerminalSessionId] = completed
     _uiState.update { it.copy(terminalInput = completed) }
   }
 
@@ -7047,6 +7122,10 @@ jobs:
     val state = _uiState.value
     val history = state.terminalHistory
     if (history.isEmpty()) return
+    val sessionId = state.activeTerminalSessionId
+    if (older && state.terminalHistoryCursor < 0) {
+      terminalDraftBySession[sessionId] = state.terminalInput
+    }
     val nextCursor =
       if (older) {
         if (state.terminalHistoryCursor < 0) history.lastIndex
@@ -7056,32 +7135,226 @@ jobs:
         else if (state.terminalHistoryCursor >= history.lastIndex) -1
         else state.terminalHistoryCursor + 1
       }
-    val nextText = if (nextCursor in history.indices) history[nextCursor] else ""
+    val nextText =
+      if (nextCursor in history.indices) history[nextCursor]
+      else terminalDraftBySession[sessionId].orEmpty()
+    terminalInputBySession[sessionId] = nextText
+    terminalCursorBySession[sessionId] = nextCursor
     _uiState.update { it.copy(terminalInput = nextText, terminalHistoryCursor = nextCursor) }
   }
 
   fun clearTerminal() {
+    val activeId = _uiState.value.activeTerminalSessionId
+    terminalBuffersBySession[activeId] = emptyList()
     _uiState.update { it.copy(terminalEntries = emptyList()) }
+  }
+
+  fun createTerminalSession() {
+    val ws = _uiState.value.workspace
+    val prevId = _uiState.value.activeTerminalSessionId
+    terminalBuffersBySession[prevId] = _uiState.value.terminalEntries
+    terminalInputBySession[prevId] = _uiState.value.terminalInput
+    terminalHistoryBySession[prevId] = _uiState.value.terminalHistory
+    terminalCursorBySession[prevId] = _uiState.value.terminalHistoryCursor
+
+    val created = terminalEngine.createSession(ws)
+    val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+    val banner =
+      TerminalEntry(
+        id = terminalIdGen.getAndIncrement(),
+        timestamp = ts,
+        promptPrefix = "dev@edgecode:${created.promptPath}$",
+        command = "pwd",
+        output = "New Linux shell session '${created.title}' started in ${terminalEngine.currentDirPath(created.id)}",
+        kind = TerminalEntryKind.SYSTEM,
+      )
+    terminalBuffersBySession[created.id] = listOf(banner)
+    terminalInputBySession[created.id] = ""
+    terminalHistoryBySession[created.id] = emptyList()
+    terminalCursorBySession[created.id] = -1
+
+    _uiState.update {
+      it.copy(
+        activeTerminalSessionId = created.id,
+        terminalSessions = terminalEngine.listSessionTabs(ws),
+        terminalEntries = listOf(banner),
+        terminalInput = "",
+        terminalPromptPath = created.promptPath,
+        terminalHistory = emptyList(),
+        terminalHistoryCursor = -1,
+        terminalLiveOutput = "",
+        terminalRunningCommand = null,
+        isTerminalBusy = false,
+      )
+    }
+  }
+
+  fun switchTerminalSession(sessionId: String) {
+    val currentId = _uiState.value.activeTerminalSessionId
+    if (currentId == sessionId) return
+    val ws = _uiState.value.workspace
+    terminalBuffersBySession[currentId] = _uiState.value.terminalEntries
+    terminalInputBySession[currentId] = _uiState.value.terminalInput
+    terminalHistoryBySession[currentId] = _uiState.value.terminalHistory
+    terminalCursorBySession[currentId] = _uiState.value.terminalHistoryCursor
+
+    if (!terminalEngine.switchSession(sessionId)) return
+    val tabs = terminalEngine.listSessionTabs(ws)
+    val targetTab = tabs.firstOrNull { it.id == sessionId }
+    _uiState.update {
+      it.copy(
+        activeTerminalSessionId = sessionId,
+        terminalSessions = tabs,
+        terminalEntries = terminalBuffersBySession[sessionId].orEmpty(),
+        terminalInput = terminalInputBySession[sessionId].orEmpty(),
+        terminalPromptPath = targetTab?.promptPath ?: terminalEngine.currentPromptPath(ws, sessionId),
+        terminalHistory = terminalHistoryBySession[sessionId].orEmpty(),
+        terminalHistoryCursor = terminalCursorBySession[sessionId] ?: -1,
+        isTerminalBusy = targetTab?.isBusy == true,
+        terminalLiveOutput = "",
+        terminalRunningCommand = null,
+      )
+    }
+  }
+
+  fun closeTerminalSession(sessionId: String) {
+    val ws = _uiState.value.workspace
+    val nextActive = terminalEngine.closeSession(sessionId)
+    terminalBuffersBySession.remove(sessionId)
+    terminalInputBySession.remove(sessionId)
+    terminalHistoryBySession.remove(sessionId)
+    terminalCursorBySession.remove(sessionId)
+    val tabs = terminalEngine.listSessionTabs(ws)
+    val activeTab = tabs.firstOrNull { it.id == nextActive }
+    _uiState.update {
+      it.copy(
+        activeTerminalSessionId = nextActive,
+        terminalSessions = tabs,
+        terminalEntries = terminalBuffersBySession[nextActive].orEmpty(),
+        terminalInput = terminalInputBySession[nextActive].orEmpty(),
+        terminalPromptPath = activeTab?.promptPath ?: terminalEngine.currentPromptPath(ws, nextActive),
+        terminalHistory = terminalHistoryBySession[nextActive].orEmpty(),
+        terminalHistoryCursor = terminalCursorBySession[nextActive] ?: -1,
+        isTerminalBusy = activeTab?.isBusy == true,
+        terminalLiveOutput = "",
+        terminalRunningCommand = null,
+      )
+    }
+  }
+
+  fun interruptTerminalCommand() {
+    val activeId = _uiState.value.activeTerminalSessionId
+    if (terminalEngine.interruptSession(activeId)) {
+      _uiState.update { it.copy(statusMessage = "Sent SIGINT (^C) to running process") }
+    }
+  }
+
+  fun sendTerminalStdin(inputLine: String) {
+    val activeId = _uiState.value.activeTerminalSessionId
+    if (terminalEngine.sendStdin(inputLine, activeId)) {
+      _uiState.update { state ->
+        val appended =
+          if (state.terminalLiveOutput.isBlank()) "> $inputLine"
+          else "${state.terminalLiveOutput}\n> $inputLine"
+        state.copy(terminalLiveOutput = appended)
+      }
+    }
+  }
+
+  fun dismissTerminalQuickEdit() {
+    _uiState.update { it.copy(terminalQuickEdit = null) }
+  }
+
+  fun saveTerminalQuickEditFile(
+    filePath: String,
+    newContent: String,
+  ) {
+    viewModelScope.launch {
+      val file = File(filePath)
+      runCatching {
+        withContext(Dispatchers.IO) {
+          file.parentFile?.mkdirs()
+          file.writeText(newContent, Charsets.UTF_8)
+        }
+      }.onSuccess {
+        val ws = _uiState.value.workspace
+        if (ws != null) {
+          val wsDir = File(projectDirManager.projectsDir, ws.scriptName).canonicalFile
+          if (file.canonicalPath.startsWith(wsDir.canonicalPath + "/")) {
+            val rel = file.canonicalFile.relativeTo(wsDir).path.replace('\\', '/')
+            val existing = ws.files.any { it.path == rel }
+            val nextFiles =
+              if (existing) {
+                ws.files.map { wf -> if (wf.path == rel) wf.copy(content = newContent) else wf }
+              } else {
+                ws.files +
+                  WorkerFile(
+                    path = rel,
+                    content = newContent,
+                    originalContent = "",
+                    contentType = MultipartWorkerParser.inferModuleMimeType(rel),
+                    isEntryPoint = false,
+                  )
+              }
+            val organized = ProjectDirectoryManager.organizeWorkspaceFiles(nextFiles)
+            val updatedWs = ws.copy(files = organized, hasModuleSetChanged = true)
+            _uiState.update { state ->
+              val updatedFields =
+                state.editorFieldValues.toMutableMap().apply {
+                  put(rel, TextFieldValue(newContent))
+                }
+              state.copy(
+                workspace = updatedWs,
+                editorFieldValues = updatedFields,
+                editorRevision = state.editorRevision + 1L,
+                terminalQuickEdit = null,
+                statusMessage = "Saved ${file.name}",
+              )
+            }
+            return@launch
+          }
+        }
+        _uiState.update {
+          it.copy(
+            terminalQuickEdit = null,
+            statusMessage = "Saved ${file.name}",
+          )
+        }
+      }.onFailure { err ->
+        _uiState.update {
+          it.copy(statusMessage = "Save failed: ${err.localizedMessage ?: "error"}")
+        }
+      }
+    }
   }
 
   fun runTerminalCommand(rawCommand: String = _uiState.value.terminalInput) {
     val cmd = rawCommand.trim()
     if (cmd.isEmpty()) return
     val currentState = _uiState.value
-    val promptSnapshot = "dev@edgecode:${terminalEngine.currentPromptPath(currentState.workspace)}$"
+    val sessionId = currentState.activeTerminalSessionId
+    val promptSnapshot = "dev@edgecode:${terminalEngine.currentPromptPath(currentState.workspace, sessionId)}$"
     val nextHistory =
       if (currentState.terminalHistory.lastOrNull() == cmd) currentState.terminalHistory
-      else (currentState.terminalHistory + cmd).takeLast(50)
+      else (currentState.terminalHistory + cmd).takeLast(100)
+    terminalHistoryBySession[sessionId] = nextHistory
+    terminalInputBySession[sessionId] = ""
+    terminalCursorBySession[sessionId] = -1
+    terminalDraftBySession[sessionId] = ""
 
-    _uiState.update {
-      it.copy(
+    _uiState.update { state ->
+      val keepHomeOverlay = state.workspace == null || state.showHomeTerminal
+      state.copy(
         terminalInput = "",
         terminalHistory = nextHistory,
         terminalHistoryCursor = -1,
         isTerminalBusy = true,
-        projectMode = ProjectMode.CONSOLE,
-        showBottomPanel = true,
-        activeBottomTab = BottomPanelTab.TERMINAL,
+        terminalRunningCommand = cmd,
+        terminalLiveOutput = "",
+        terminalSessions = terminalEngine.listSessionTabs(state.workspace),
+        projectMode = if (keepHomeOverlay) state.projectMode else ProjectMode.CONSOLE,
+        showBottomPanel = if (keepHomeOverlay) state.showBottomPanel else true,
+        activeBottomTab = if (keepHomeOverlay) state.activeBottomTab else BottomPanelTab.TERMINAL,
       )
     }
 
@@ -7140,6 +7413,7 @@ jobs:
                             output = raw,
                             kind = TerminalEntryKind.WRANGLER,
                           )).takeLast(120)
+                      terminalBuffersBySession[s.activeTerminalSessionId] = nextTerm
                       s.copy(tailLogs = nextTail, terminalEntries = nextTerm)
                     }
                   },
@@ -7174,9 +7448,37 @@ jobs:
             }
           },
           onGitCommand = { args -> executeTerminalGitCommand(args) },
+          sessionId = sessionId,
+          onLiveOutput = { chunk ->
+            _uiState.update { s ->
+              if (s.activeTerminalSessionId == sessionId) {
+                s.copy(terminalLiveOutput = chunk)
+              } else s
+            }
+          },
         )
 
       val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+      val existingEntries = terminalBuffersBySession[sessionId] ?: _uiState.value.terminalEntries
+      val updatedEntries =
+        if (result.clearedScreen) emptyList()
+        else {
+          val newEntry =
+            TerminalEntry(
+              id = terminalIdGen.getAndIncrement(),
+              timestamp = ts,
+              promptPrefix = promptSnapshot,
+              command = cmd,
+              output = result.output,
+              isError = result.isError,
+              exitCode = result.exitCode,
+              kind = result.kind,
+              httpMeta = result.httpMeta,
+            )
+          (existingEntries + newEntry).takeLast(150)
+        }
+      terminalBuffersBySession[sessionId] = updatedEntries
+
       _uiState.update { state ->
         var nextWs = state.workspace
         var nextFields = state.editorFieldValues
@@ -7191,38 +7493,75 @@ jobs:
               f.path to (nextFields[f.path]?.takeIf { it.text == f.content } ?: TextFieldValue(f.content))
             }
         }
-        val entries =
-          if (result.clearedScreen) emptyList()
-          else {
-            val newEntry =
-              TerminalEntry(
-                id = terminalIdGen.getAndIncrement(),
-                timestamp = ts,
-                promptPrefix = promptSnapshot,
-                command = cmd,
-                output = result.output,
-                isError = result.isError,
-                exitCode = result.exitCode,
-                kind = result.kind,
-                httpMeta = result.httpMeta,
-              )
-            (state.terminalEntries + newEntry).takeLast(120)
-          }
+        val isActiveSession = state.activeTerminalSessionId == sessionId
         state.copy(
           workspace = nextWs,
           editorFieldValues = nextFields,
           editorRevision = state.editorRevision + 1L,
           diagnostics = nextWs?.files?.flatMap { CodeAnalyzer.analyzeFile(it) } ?: state.diagnostics,
-          terminalEntries = entries,
-          terminalPromptPath = terminalEngine.currentPromptPath(nextWs),
-          isTerminalBusy = false,
+          terminalEntries = if (isActiveSession) updatedEntries else state.terminalEntries,
+          terminalPromptPath =
+            if (isActiveSession) terminalEngine.currentPromptPath(nextWs, sessionId)
+            else state.terminalPromptPath,
+          terminalSessions = terminalEngine.listSessionTabs(nextWs),
+          isTerminalBusy = if (isActiveSession) false else state.isTerminalBusy,
+          terminalLiveOutput = if (isActiveSession) "" else state.terminalLiveOutput,
+          terminalRunningCommand = if (isActiveSession) null else state.terminalRunningCommand,
         )
       }
+
       if (!result.openTabRequest.isNullOrBlank()) {
         val target = result.openTabRequest
         val match = _uiState.value.workspace?.files?.firstOrNull { it.path == target || it.fileName == target }
         if (match != null) openFileTab(match.path)
       }
+
+      result.editFileRequest?.let { file ->
+        val content =
+          withContext(Dispatchers.IO) {
+            if (file.exists() && file.isFile) runCatching { file.readText(Charsets.UTF_8) }.getOrDefault("")
+            else ""
+          }
+        _uiState.update {
+          it.copy(
+            terminalQuickEdit =
+              TerminalQuickEditTarget(
+                filePath = file.absolutePath,
+                displayName = file.name,
+                content = content,
+              ),
+          )
+        }
+      }
+
+      if (!result.openProjectRequest.isNullOrBlank()) {
+        val reqName = result.openProjectRequest
+        val ramMatch =
+          _uiState.value.ramWorkspaces.firstOrNull {
+            it.workingWorkspace.scriptName.equals(reqName, ignoreCase = true)
+          }
+        if (ramMatch != null) {
+          _uiState.update { it.copy(showHomeTerminal = false) }
+          openRamWorkspace(ramMatch.key)
+        } else {
+          val dir = File(projectDirManager.projectsDir, reqName)
+          if (dir.exists() && dir.isDirectory) {
+            _uiState.update { it.copy(showHomeTerminal = false) }
+            createNewWorker(reqName, WorkerTemplate.HELLO_FETCH)
+          } else {
+            _uiState.update { it.copy(statusMessage = "Project '$reqName' not found") }
+          }
+        }
+      }
+
+      if (!result.importZipPathRequest.isNullOrBlank()) {
+        val zipFile = File(result.importZipPathRequest)
+        if (zipFile.exists()) {
+          _uiState.update { it.copy(showHomeTerminal = false) }
+          inspectZipForImport(Uri.fromFile(zipFile), ZipImportTargetMode.NEW_PROJECT)
+        }
+      }
+
       if (result.httpMeta != null) {
         appendLog(
           if (result.httpMeta.statusCode in 200..399) "HTTP" else "WARN",
@@ -7242,12 +7581,18 @@ jobs:
         promptPrefix = "dev@edgecode:~/${ws.scriptName}$",
         command = "echo \$BASE_URL && help --quick",
         output =
-          "Worker: ${ws.scriptName}\nBASE_URL: $urlHint\nShell: Android Linux /system/bin/sh + curl + jq + wrangler\nTip: Long-press any text, or use Copy Out / Copy Headers / Select / Paste buttons.",
+          "Worker: ${ws.scriptName}\nBASE_URL: $urlHint\nShell: Lightweight Linux (/system/bin/sh + Toybox + zip/unzip + curl/wget + jq + wrangler + git)\nTip: Run 'sysinfo' or 'pkg' to inspect installed Linux tools, or 'nano <file>' to edit.",
         kind = TerminalEntryKind.SYSTEM,
       )
+    val activeId = terminalEngine.getActiveSessionId()
     _uiState.update { state ->
-      if (state.terminalEntries.isEmpty()) state.copy(terminalEntries = listOf(welcome))
-      else state
+      if (state.terminalEntries.isEmpty()) {
+        terminalBuffersBySession[activeId] = listOf(welcome)
+        state.copy(
+          terminalEntries = listOf(welcome),
+          terminalSessions = terminalEngine.listSessionTabs(ws),
+        )
+      } else state
     }
   }
 

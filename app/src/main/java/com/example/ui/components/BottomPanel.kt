@@ -94,6 +94,14 @@ fun BottomPanel(
   onImportApiCollection: (String, Boolean, Boolean) -> Result<ApiImportResult> = { _, _, _ ->
     Result.failure(UnsupportedOperationException("Collection import not wired"))
   },
+  onInsertTerminalToken: (String) -> Unit = { token -> onTerminalInputChange(uiState.terminalInput + token) },
+  onCreateTerminalSession: () -> Unit = {},
+  onSwitchTerminalSession: (String) -> Unit = {},
+  onCloseTerminalSession: (String) -> Unit = {},
+  onInterruptTerminalCommand: () -> Unit = {},
+  onSendTerminalStdin: (String) -> Unit = {},
+  onSaveTerminalQuickEdit: (String, String) -> Unit = { _, _ -> },
+  onDismissTerminalQuickEdit: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
@@ -256,6 +264,14 @@ fun BottomPanel(
             onClearTerminal = onClearTerminal,
             onSaveEntryToFile = onSaveTerminalOutputToFile,
             onNotifyCopied = onNotifyStatus,
+            onInsertToken = onInsertTerminalToken,
+            onCreateSession = onCreateTerminalSession,
+            onSwitchSession = onSwitchTerminalSession,
+            onCloseSession = onCloseTerminalSession,
+            onInterruptCommand = onInterruptTerminalCommand,
+            onSendStdin = onSendTerminalStdin,
+            onSaveQuickEdit = onSaveTerminalQuickEdit,
+            onDismissQuickEdit = onDismissTerminalQuickEdit,
             modifier = Modifier.weight(1f),
           )
         BottomPanelTab.PROBLEMS ->

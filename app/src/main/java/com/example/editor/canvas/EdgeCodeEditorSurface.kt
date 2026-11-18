@@ -63,7 +63,9 @@ import com.example.editor.BracketMatch
 import com.example.editor.CodeAnalyzer
 import com.example.editor.CodeSymbol
 import com.example.editor.EditorCursorTelemetry
+import com.example.editor.EmmetExpander
 import com.example.editor.engine.ClipboardHistoryStore
+import com.example.idecore.completion.EdgeMacroResolver
 import com.example.editor.engine.EdgeEditorSession
 import com.example.editor.engine.EdgeFoldDetector
 import com.example.editor.engine.IncrementalLineStyles
@@ -167,6 +169,42 @@ class EdgeEditorController {
     val g = geometry ?: return
     val c = cache ?: return
     g.scaleScrollBy(ratio, s, c)
+  }
+
+  fun moveCursorLeft() {
+    val s = session ?: return
+    moveCaretHorizontal(s, -1, false)
+  }
+
+  fun moveCursorRight() {
+    val s = session ?: return
+    moveCaretHorizontal(s, 1, false)
+  }
+
+  fun moveCursorToLineStart() {
+    val s = session ?: return
+    val line = s.doc.lineForOffset(s.selection.end)
+    s.setSelection(TextRange(s.doc.lineStart(line)))
+  }
+
+  fun moveCursorToLineEnd() {
+    val s = session ?: return
+    val line = s.doc.lineForOffset(s.selection.end)
+    s.setSelection(TextRange(s.doc.lineEnd(line)))
+  }
+
+  fun selectAll() {
+    session?.selectAll()
+  }
+
+  fun expandEmmetAtCursor(filePath: String): Boolean {
+    val s = session ?: return false
+    val cursor = s.selection.end.coerceIn(0, s.doc.length)
+    val indent = EdgeMacroResolver.leadingIndent(s.doc.chars, cursor)
+    val expansion = EmmetExpander.expandAtCursor(s.doc.chars, cursor, filePath, indent) ?: return false
+    val replaceStart = (cursor - expansion.replaceLength).coerceIn(0, cursor)
+    s.applyCompletionEdit(replaceStart, cursor, expansion.expandedText, expansion.cursorBackOffset)
+    return true
   }
 }
 

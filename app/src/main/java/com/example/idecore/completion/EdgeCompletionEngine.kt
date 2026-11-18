@@ -2,6 +2,7 @@ package com.example.idecore.completion
 
 import com.example.data.remote.WorkerLanguage
 import com.example.data.remote.WorkerWorkspace
+import com.example.editor.EmmetExpander
 import com.example.editor.WranglerSyncParser
 import java.io.File
 import java.text.SimpleDateFormat
@@ -470,11 +471,13 @@ class EdgeCompletionEngine(
     language: WorkerLanguage,
     maxItems: Int = 18,
   ): List<EdgeCompletionItem> {
-    if (language == WorkerLanguage.TEXT || documentText.isEmpty()) return emptyList()
+    val isEmmetPath = EmmetExpander.isSupportedPath(filePath)
+    if ((language == WorkerLanguage.TEXT && !isEmmetPath) || documentText.isEmpty()) return emptyList()
     val safeCursor = cursor.coerceIn(0, documentText.length)
     val wordBounds = extractWordBounds(documentText, safeCursor)
     val fullToken = documentText.subSequence(wordBounds.first, safeCursor).toString()
-    if (fullToken.isEmpty()) return emptyList()
+    val emmetAbbrev = if (isEmmetPath) EmmetExpander.extractAbbreviationAtCursor(documentText, safeCursor) else ""
+    if (fullToken.isEmpty() && emmetAbbrev.isEmpty()) return emptyList()
 
     val isMemberAccess = fullToken.contains('.')
     val memberPrefix = if (isMemberAccess) fullToken.substringAfterLast('.') else fullToken
@@ -584,9 +587,48 @@ class EdgeCompletionEngine(
       }
     }
 
+    if (isEmmetPath && emmetAbbrev.isNotEmpty()) {
+      val lineIndent = EdgeMacroResolver.leadingIndent(documentText, safeCursor)
+      EmmetExpander.expand(emmetAbbrev, filePath, lineIndent)?.let { em ->
+        raw.add(
+          EdgeCompletionItem(
+            label = em.abbreviation,
+            insertText = em.expandedText,
+            kind = EdgeCompletionKind.TEMPLATE,
+            detail = "Emmet",
+            cursorBackOffset = em.cursorBackOffset,
+            replaceStart = (safeCursor - em.replaceLength).coerceAtLeast(0),
+            replaceEnd = safeCursor,
+            sortPriority = -45,
+          ),
+        )
+      }
+      if (EmmetExpander.isCssLikePath(filePath) && !isMemberAccess) {
+        EmmetExpander.suggestCssCompletions(emmetAbbrev).take(8).forEach { (abbr, css) ->
+          if (!abbr.equals(emmetAbbrev, ignoreCase = true)) {
+            raw.add(
+              EdgeCompletionItem(
+                label = abbr,
+                insertText = css,
+                kind = EdgeCompletionKind.TEMPLATE,
+                detail = css,
+                cursorBackOffset = if (css.endsWith("#;")) 1 else 0,
+                replaceStart = (safeCursor - emmetAbbrev.length).coerceAtLeast(0),
+                replaceEnd = safeCursor,
+                sortPriority = 40,
+              ),
+            )
+          }
+        }
+      }
+    }
+
     if (raw.isEmpty()) return emptyList()
 
-    val queryForRank = if (isMemberAccess) memberPrefix else fullToken
+    val queryForRank =
+      if (isEmmetPath && emmetAbbrev.isNotEmpty() && fullToken.isEmpty()) emmetAbbrev
+      else if (isMemberAccess) memberPrefix
+      else fullToken
     return rankItems(raw, queryForRank)
       .distinctBy { "${it.kind}:${it.label}:${it.insertText}" }
       .take(maxItems)

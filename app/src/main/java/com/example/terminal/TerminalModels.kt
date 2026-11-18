@@ -32,3 +32,16 @@ data class TerminalEntry(
   val kind: TerminalEntryKind = TerminalEntryKind.SHELL,
   val httpMeta: HttpTraceMeta? = null,
 )
+
+data class TerminalSessionTab(
+  val id: String,
+  val title: String,
+  val promptPath: String,
+  val isBusy: Boolean = false,
+)
+
+data class TerminalQuickEditTarget(
+  val filePath: String,
+  val displayName: String,
+  val content: String,
+)
