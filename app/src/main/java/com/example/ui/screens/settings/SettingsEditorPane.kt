@@ -7,6 +7,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,8 +23,13 @@ import androidx.compose.material.icons.automirrored.outlined.WrapText
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.DataObject
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Difference
+import androidx.compose.material.icons.outlined.FormatIndentIncrease
 import androidx.compose.material.icons.outlined.FormatListNumbered
+import androidx.compose.material.icons.outlined.Keyboard
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.UnfoldLess
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
@@ -33,6 +39,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -40,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.remote.WorkerLanguage
 import com.example.data.security.EditorSettings
 import com.example.editor.SyntaxHighlighter
+import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 
@@ -72,13 +82,15 @@ fun SettingsEditorPane(
             "};",
           )
         }
-      val highlightedCode =
+      val highlightedLines =
         remember(sampleLines, palette) {
-          SyntaxHighlighter.highlight(
-            code = sampleLines.joinToString("\n"),
-            language = WorkerLanguage.TYPESCRIPT,
-            palette = palette,
-          )
+          sampleLines.map { line ->
+            SyntaxHighlighter.highlight(
+              code = line,
+              language = WorkerLanguage.TYPESCRIPT,
+              palette = palette,
+            )
+          }
         }
 
       Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -105,46 +117,112 @@ fun SettingsEditorPane(
                 fontWeight = FontWeight.Medium,
                 color = palette.textSecondary,
               )
-              if (settings.wordWrap) {
-                Text(
-                  text = "WRAP",
-                  fontFamily = JetBrainsMono,
-                  fontSize = 9.sp,
-                  fontWeight = FontWeight.Bold,
-                  color = palette.activePillFg,
-                )
+              Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (settings.stickyHeaders) {
+                  Text(
+                    text = "STICKY",
+                    fontFamily = JetBrainsMono,
+                    fontSize = 8.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = palette.syntaxFunction,
+                  )
+                }
+                if (settings.wordWrap) {
+                  Text(
+                    text = "WRAP",
+                    fontFamily = JetBrainsMono,
+                    fontSize = 8.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = palette.activePillFg,
+                  )
+                }
               }
             }
             SettingsHairlineDivider()
-            Row(
+            Column(
               modifier =
                 Modifier
                   .fillMaxWidth()
                   .then(if (!settings.wordWrap) Modifier.horizontalScroll(rememberScrollState()) else Modifier)
-                  .padding(horizontal = 10.dp, vertical = 9.dp),
-              horizontalArrangement = Arrangement.spacedBy(10.dp),
+                  .padding(vertical = 8.dp),
             ) {
-              if (settings.showLineNumbers) {
-                Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(end = 4.dp)) {
-                  sampleLines.indices.forEach { idx ->
+              val guideColor = palette.border.copy(alpha = 0.5f)
+              highlightedLines.forEachIndexed { idx, annotatedLine ->
+                val isModifiedPreview = idx == 2
+                val isFoldHeader = idx == 0 || idx == 1
+                Row(
+                  modifier =
+                    Modifier
+                      .fillMaxWidth()
+                      .background(if (idx == 2) palette.editorActiveLineBg else palette.editorBg)
+                      .padding(horizontal = 10.dp, vertical = 1.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  if (settings.showLineNumbers) {
                     Text(
                       text = "${idx + 1}",
                       fontFamily = JetBrainsMono,
+                      fontSize = (settings.fontSizeSp - 1).coerceAtLeast(9).sp,
+                      lineHeight = (settings.fontSizeSp + 6).sp,
+                      color = if (idx == 2) palette.activePillFg else palette.textMuted.copy(alpha = 0.6f),
+                      modifier = Modifier.width(18.dp),
+                    )
+                    if (settings.codeFolding) {
+                      Text(
+                        text = if (isFoldHeader) "▾" else " ",
+                        fontFamily = JetBrainsMono,
+                        fontSize = 10.sp,
+                        color = palette.textMuted.copy(alpha = 0.7f),
+                        modifier = Modifier.width(12.dp),
+                      )
+                    }
+                    if (settings.gutterDiffMarkers) {
+                      Box(
+                        modifier =
+                          Modifier
+                            .padding(end = 6.dp)
+                            .width(2.5.dp)
+                            .height((settings.fontSizeSp + 4).dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(if (isModifiedPreview) EmeraldLive else palette.editorBg),
+                      )
+                    } else {
+                      Spacer(Modifier.width(6.dp))
+                    }
+                  }
+                  Box(
+                    modifier =
+                      Modifier.drawBehind {
+                        if (settings.indentGuides && idx in 1..3) {
+                          drawLine(
+                            color = guideColor,
+                            start = Offset(1f, 0f),
+                            end = Offset(1f, size.height),
+                            strokeWidth = 1.dp.toPx(),
+                          )
+                          if (idx == 2) {
+                            val secondX = (settings.tabSize * (settings.fontSizeSp * 0.6f)).dp.toPx()
+                            drawLine(
+                              color = guideColor,
+                              start = Offset(secondX, 0f),
+                              end = Offset(secondX, size.height),
+                              strokeWidth = 1.dp.toPx(),
+                            )
+                          }
+                        }
+                      },
+                  ) {
+                    Text(
+                      text = annotatedLine,
+                      fontFamily = JetBrainsMono,
                       fontSize = settings.fontSizeSp.sp,
                       lineHeight = (settings.fontSizeSp + 6).sp,
-                      color = palette.textMuted.copy(alpha = 0.6f),
+                      softWrap = settings.wordWrap,
+                      color = palette.textPrimary,
                     )
                   }
                 }
               }
-              Text(
-                text = highlightedCode,
-                fontFamily = JetBrainsMono,
-                fontSize = settings.fontSizeSp.sp,
-                lineHeight = (settings.fontSizeSp + 6).sp,
-                softWrap = settings.wordWrap,
-                color = palette.textPrimary,
-              )
             }
           }
         }
@@ -203,7 +281,7 @@ fun SettingsEditorPane(
       }
     }
 
-    SettingsGroup(label = "Behavior") {
+    SettingsGroup(label = "Editor") {
       SettingsToggleRow(
         title = "Word Wrap",
         leadingIcon = Icons.AutoMirrored.Outlined.WrapText,
@@ -219,10 +297,45 @@ fun SettingsEditorPane(
       )
       SettingsHairlineDivider(startIndent = 54.dp)
       SettingsToggleRow(
+        title = "Code Folding",
+        leadingIcon = Icons.Outlined.UnfoldLess,
+        checked = settings.codeFolding,
+        onCheckedChange = { fold -> onUpdateSettings { it.copy(codeFolding = fold) } },
+      )
+      SettingsHairlineDivider(startIndent = 54.dp)
+      SettingsToggleRow(
+        title = "Sticky Headers",
+        leadingIcon = Icons.Outlined.PushPin,
+        checked = settings.stickyHeaders,
+        onCheckedChange = { sticky -> onUpdateSettings { it.copy(stickyHeaders = sticky) } },
+      )
+      SettingsHairlineDivider(startIndent = 54.dp)
+      SettingsToggleRow(
+        title = "Indent Guides",
+        leadingIcon = Icons.Outlined.FormatIndentIncrease,
+        checked = settings.indentGuides,
+        onCheckedChange = { guides -> onUpdateSettings { it.copy(indentGuides = guides) } },
+      )
+      SettingsHairlineDivider(startIndent = 54.dp)
+      SettingsToggleRow(
+        title = "Gutter Diff Markers",
+        leadingIcon = Icons.Outlined.Difference,
+        checked = settings.gutterDiffMarkers,
+        onCheckedChange = { diff -> onUpdateSettings { it.copy(gutterDiffMarkers = diff) } },
+      )
+      SettingsHairlineDivider(startIndent = 54.dp)
+      SettingsToggleRow(
         title = "Auto-Close Brackets",
         leadingIcon = Icons.Outlined.DataObject,
         checked = settings.autoCloseBrackets,
         onCheckedChange = { auto -> onUpdateSettings { it.copy(autoCloseBrackets = auto) } },
+      )
+      SettingsHairlineDivider(startIndent = 54.dp)
+      SettingsToggleRow(
+        title = "Keyboard Suggestions",
+        leadingIcon = Icons.Outlined.Keyboard,
+        checked = settings.softKeyboardSuggestions,
+        onCheckedChange = { sug -> onUpdateSettings { it.copy(softKeyboardSuggestions = sug) } },
       )
     }
 

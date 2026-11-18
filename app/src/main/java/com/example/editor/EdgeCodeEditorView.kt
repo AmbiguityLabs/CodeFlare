@@ -18,6 +18,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
+import android.view.ViewGroup
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
@@ -30,6 +31,7 @@ import com.example.R
 import com.example.data.remote.DiagnosticItem
 import com.example.data.remote.DiagnosticSeverity
 import com.example.data.remote.WorkerLanguage
+import com.example.idecore.search.WorkspaceSearchAndRefactor
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.DarkIdePalette
 import com.example.ui.theme.IdePalette
@@ -50,6 +52,7 @@ data class EditorCursorTelemetry(
   val col: Int = 1,
   val lineCount: Int = 1,
   val wordBeforeCursor: String = "",
+  val cursorOffset: Int = 0,
 )
 
 @Stable
@@ -65,6 +68,12 @@ class CodeEditorController {
   }
 
   fun currentText(): String = view?.text?.toString().orEmpty()
+
+  fun currentCharSequence(): CharSequence = view?.text ?: ""
+
+  fun currentCursorOffset(): Int = view?.selectionStart?.coerceAtLeast(0) ?: 0
+
+  fun currentIdentifierAtCursor(): String? = view?.currentIdentifierAtCursor()
 
   fun snapshotValue(): TextFieldValue? = view?.snapshotTextFieldValue()
 
@@ -86,6 +95,22 @@ class CodeEditorController {
 
   fun replaceBeforeCursor(replaceLen: Int, insertText: String, cursorBack: Int = 0) {
     view?.replaceBeforeCursorInPlace(replaceLen, insertText, cursorBack)
+  }
+
+  fun applyCompletionEdit(replaceStart: Int, replaceEnd: Int, insertText: String, cursorBack: Int = 0) {
+    view?.applyCompletionEditInPlace(replaceStart, replaceEnd, insertText, cursorBack)
+  }
+
+  fun moveLineUp() {
+    view?.moveCurrentLineUpInPlace()
+  }
+
+  fun moveLineDown() {
+    view?.moveCurrentLineDownInPlace()
+  }
+
+  fun duplicateLine() {
+    view?.duplicateCurrentLineInPlace()
   }
 
   fun scaleScrollBy(ratio: Float) {
@@ -125,6 +150,12 @@ class EdgeCodeEditorView(context: Context) : EditText(context) {
   private val bracketLinePaint = Paint().apply { strokeWidth = density * 1.5f }
   private val searchMatchPaint = Paint()
   private val searchActiveMatchPaint = Paint()
+  private val usageHighlightPaint = Paint()
+  private val usageHighlightBorderPaint =
+    Paint().apply {
+      style = Paint.Style.STROKE
+      strokeWidth = max(1f, density * 0.9f)
+    }
 
   private val defaultKeyListener: KeyListener? = keyListener
   private val monoTypeface: Typeface =
@@ -159,6 +190,7 @@ class EdgeCodeEditorView(context: Context) : EditText(context) {
   private var findMatches: List<IntRange> = emptyList()
   private var activeFindMatchIndex: Int = -1
   private var bracketMatch: BracketMatch? = null
+  private var usageHighlights: List<IntRange> = emptyList()
 
   // Guards & coalesced Runnables (zero per-keystroke allocations)
   private var isInternalEdit: Boolean = false
@@ -188,6 +220,7 @@ class EdgeCodeEditorView(context: Context) : EditText(context) {
   private val telemetryRunnable = Runnable { dispatchTelemetryNow() }
   private val vmSyncRunnable = Runnable { flushPendingSyncNow() }
   private val bracketRunnable = Runnable { updateBracketMatchNow() }
+  private val usageRunnable = Runnable { updateUsageHighlightsNow() }
 
   private val scaleGestureDetector =
     ScaleGestureDetector(
@@ -233,6 +266,11 @@ class EdgeCodeEditorView(context: Context) : EditText(context) {
     )
 
   init {
+    layoutParams =
+      ViewGroup.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.MATCH_PARENT,
+      )
     setBackgroundColor(Color.TRANSPARENT)
     background = null
     gravity = Gravity.TOP or Gravity.START
@@ -291,6 +329,7 @@ class EdgeCodeEditorView(context: Context) : EditText(context) {
           scheduleHighlight(70L)
           scheduleTelemetry(65L)
           scheduleBracketCheck(45L)
+          scheduleUsageCheck(110L)
           scheduleVmSync(500L)
         }
       },
@@ -444,6 +483,7 @@ class EdgeCodeEditorView(context: Context) : EditText(context) {
     }
     dispatchTelemetryNow()
     updateBracketMatchNow()
+    updateUsageHighlightsNow()
   }
 
   private fun applyReadOnlyMode(readOnly: Boolean) {
@@ -465,6 +505,8 @@ class EdgeCodeEditorView(context: Context) : EditText(context) {
     gutterTextPaint.color = palette.textMuted.toArgb()
     searchMatchPaint.color = palette.searchMatchBg.toArgb()
     searchActiveMatchPaint.color = palette.searchActiveMatchBg.toArgb()
+    usageHighlightPaint.color = palette.activePillFg.copy(alpha = 0.14f).toArgb()
+    usageHighlightBorderPaint.color = palette.activePillFg.copy(alpha = 0.34f).toArgb()
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
       val cursorDrawable =
@@ -761,8 +803,144 @@ class EdgeCodeEditorView(context: Context) : EditText(context) {
     highlightEditedLineFast(editable, selectionStart.coerceIn(0, editable.length))
     scheduleHighlight(50L)
     scheduleTelemetry(16L)
+    scheduleUsageCheck(90L)
     scheduleVmSync(400L)
     requestFocus()
+  }
+
+  fun currentIdentifierAtCursor(): String? {
+    val editable = text ?: return null
+    val cursor = selectionStart.coerceIn(0, editable.length)
+    return WorkspaceSearchAndRefactor.identifierAtOffset(editable, cursor)
+  }
+
+  fun applyCompletionEditInPlace(
+    replaceStart: Int,
+    replaceEnd: Int,
+    insertText: String,
+    cursorBack: Int = 0,
+  ) {
+    if (isReadOnlyMode) return
+    val editable = text ?: return
+    val safeStart = replaceStart.coerceIn(0, editable.length)
+    val safeEnd = replaceEnd.coerceIn(safeStart, editable.length)
+    isInternalEdit = true
+    try {
+      editable.replace(safeStart, safeEnd, insertText)
+      val nextCursor = (safeStart + insertText.length - cursorBack).coerceIn(0, editable.length)
+      setSelection(nextCursor)
+    } finally {
+      isInternalEdit = false
+    }
+    rebuildLineStartsFast(editable)
+    updateGutterWidthIfNeeded()
+    hasDirtyTextForVm = true
+    highlightEditedLineFast(editable, selectionStart.coerceIn(0, editable.length))
+    scheduleHighlight(36L)
+    scheduleTelemetry(16L)
+    scheduleBracketCheck(30L)
+    scheduleUsageCheck(90L)
+    scheduleVmSync(350L)
+    requestFocus()
+  }
+
+  fun moveCurrentLineUpInPlace() {
+    if (isReadOnlyMode) return
+    val editable = text ?: return
+    if (lineStarts.size <= 1) return
+    val pos = selectionStart.coerceIn(0, editable.length)
+    val lineIdx = logicalLineIndexForOffset(pos)
+    if (lineIdx <= 0) return
+
+    val prevStart = lineStarts[lineIdx - 1]
+    val currStart = lineStarts[lineIdx]
+    val nextStart = if (lineIdx + 1 < lineStarts.size) lineStarts[lineIdx + 1] else editable.length
+    val prevLineEnd = (currStart - 1).coerceAtLeast(prevStart)
+    val currLineEnd = if (nextStart > currStart && editable[nextStart - 1] == '\n') nextStart - 1 else nextStart
+    val prevLine = editable.subSequence(prevStart, prevLineEnd).toString()
+    val currLine = editable.subSequence(currStart, currLineEnd).toString()
+    val colInCurr = (pos - currStart).coerceIn(0, currLine.length)
+
+    isInternalEdit = true
+    try {
+      editable.replace(prevStart, currLineEnd, "$currLine\n$prevLine")
+      setSelection((prevStart + colInCurr).coerceIn(0, editable.length))
+    } finally {
+      isInternalEdit = false
+    }
+    rebuildLineStartsFast(editable)
+    hasDirtyTextForVm = true
+    scheduleHighlight(32L)
+    scheduleTelemetry(16L)
+    scheduleUsageCheck(90L)
+    scheduleVmSync(350L)
+    requestFocus()
+  }
+
+  fun moveCurrentLineDownInPlace() {
+    if (isReadOnlyMode) return
+    val editable = text ?: return
+    if (lineStarts.size <= 1) return
+    val pos = selectionStart.coerceIn(0, editable.length)
+    val lineIdx = logicalLineIndexForOffset(pos)
+    if (lineIdx >= lineStarts.lastIndex) return
+
+    val currStart = lineStarts[lineIdx]
+    val nextStart = lineStarts[lineIdx + 1]
+    val afterNext = if (lineIdx + 2 < lineStarts.size) lineStarts[lineIdx + 2] else editable.length
+    val currLineEnd = (nextStart - 1).coerceAtLeast(currStart)
+    val nextLineEnd = if (afterNext > nextStart && editable[afterNext - 1] == '\n') afterNext - 1 else afterNext
+    val currLine = editable.subSequence(currStart, currLineEnd).toString()
+    val nextLine = editable.subSequence(nextStart, nextLineEnd).toString()
+    val colInCurr = (pos - currStart).coerceIn(0, currLine.length)
+
+    isInternalEdit = true
+    try {
+      editable.replace(currStart, nextLineEnd, "$nextLine\n$currLine")
+      setSelection((currStart + nextLine.length + 1 + colInCurr).coerceIn(0, editable.length))
+    } finally {
+      isInternalEdit = false
+    }
+    rebuildLineStartsFast(editable)
+    hasDirtyTextForVm = true
+    scheduleHighlight(32L)
+    scheduleTelemetry(16L)
+    scheduleUsageCheck(90L)
+    scheduleVmSync(350L)
+    requestFocus()
+  }
+
+  fun duplicateCurrentLineInPlace() {
+    if (isReadOnlyMode) return
+    val editable = text ?: return
+    val pos = selectionStart.coerceIn(0, editable.length)
+    val lineIdx = logicalLineIndexForOffset(pos)
+    val lineStart = lineStarts[lineIdx]
+    val nextStart = if (lineIdx + 1 < lineStarts.size) lineStarts[lineIdx + 1] else editable.length
+    val lineEnd = if (nextStart > lineStart && editable[nextStart - 1] == '\n') nextStart - 1 else nextStart
+    val lineText = editable.subSequence(lineStart, lineEnd).toString()
+    val col = (pos - lineStart).coerceIn(0, lineText.length)
+
+    isInternalEdit = true
+    try {
+      editable.insert(lineEnd, "\n$lineText")
+      setSelection((lineEnd + 1 + col).coerceIn(0, editable.length))
+    } finally {
+      isInternalEdit = false
+    }
+    rebuildLineStartsFast(editable)
+    updateGutterWidthIfNeeded()
+    hasDirtyTextForVm = true
+    scheduleHighlight(32L)
+    scheduleTelemetry(16L)
+    scheduleUsageCheck(90L)
+    scheduleVmSync(350L)
+    requestFocus()
+  }
+
+  fun refreshUsageHighlightsNow(): List<IntRange> {
+    updateUsageHighlightsNow()
+    return usageHighlights
   }
 
   fun scaleScrollByRatio(ratio: Float) {
@@ -824,6 +1002,11 @@ class EdgeCodeEditorView(context: Context) : EditText(context) {
   private fun scheduleBracketCheck(delayMs: Long) {
     removeCallbacks(bracketRunnable)
     postDelayed(bracketRunnable, delayMs)
+  }
+
+  private fun scheduleUsageCheck(delayMs: Long) {
+    removeCallbacks(usageRunnable)
+    postDelayed(usageRunnable, delayMs)
   }
 
   private fun highlightEditedLineFast(editable: Editable, cursor: Int) {
@@ -946,8 +1129,40 @@ class EdgeCodeEditorView(context: Context) : EditText(context) {
         col = col,
         lineCount = cachedLineCount,
         wordBeforeCursor = word,
+        cursorOffset = cursor,
       ),
     )
+  }
+
+  private fun updateUsageHighlightsNow() {
+    val editable = text
+    if (editable == null ||
+      editable.isEmpty() ||
+      editable.length > 60_000 ||
+      language == WorkerLanguage.TEXT ||
+      selectionStart != selectionEnd
+    ) {
+      if (usageHighlights.isNotEmpty()) {
+        usageHighlights = emptyList()
+        invalidate()
+      }
+      return
+    }
+    val cursor = selectionStart.coerceIn(0, editable.length)
+    val ident = WorkspaceSearchAndRefactor.identifierAtOffset(editable, cursor)
+    if (ident == null) {
+      if (usageHighlights.isNotEmpty()) {
+        usageHighlights = emptyList()
+        invalidate()
+      }
+      return
+    }
+    val hits = WorkspaceSearchAndRefactor.findLexicalIdentifierRanges(editable, ident, language, maxHits = 250)
+    val next = if (hits.size >= 2) hits else emptyList()
+    if (next != usageHighlights) {
+      usageHighlights = next
+      invalidate()
+    }
   }
 
   private fun updateBracketMatchNow() {
@@ -1059,7 +1274,7 @@ class EdgeCodeEditorView(context: Context) : EditText(context) {
     super.onLayout(changed, left, top, right, bottom)
     if (needsInitialHighlight && layout != null && height > 0) {
       needsInitialHighlight = false
-      highlightVisibleViewportNow()
+      scheduleHighlight(0L)
     }
   }
 
@@ -1070,6 +1285,7 @@ class EdgeCodeEditorView(context: Context) : EditText(context) {
       invalidate()
       scheduleTelemetry(50L)
       scheduleBracketCheck(35L)
+      scheduleUsageCheck(95L)
     }
   }
 
@@ -1092,6 +1308,7 @@ class EdgeCodeEditorView(context: Context) : EditText(context) {
     removeCallbacks(telemetryRunnable)
     removeCallbacks(vmSyncRunnable)
     removeCallbacks(bracketRunnable)
+    removeCallbacks(usageRunnable)
     super.onDetachedFromWindow()
   }
 
@@ -1171,6 +1388,34 @@ class EdgeCodeEditorView(context: Context) : EditText(context) {
           val bottom = padTop + textLayout.getLineBottom(ln)
           canvas.drawRect(left, top, max(right, left + 4f * density), bottom, paint)
         }
+      }
+    }
+
+    // 2b. Visible caret symbol usage highlights (only when Find bar matches are inactive)
+    val usages = usageHighlights
+    if (matches.isEmpty() && usages.size >= 2 && docLen > 0) {
+      val radius = 3f * density
+      for (i in usages.indices) {
+        val range = usages[i]
+        if (range.last < visCharStart) continue
+        if (range.first > visCharEnd) break
+        val sOff = range.first.coerceIn(0, docLen - 1)
+        val eOff = (range.last + 1).coerceIn(sOff + 1, docLen)
+        val ln = textLayout.getLineForOffset(sOff)
+        if (ln !in firstVisLine..lastVisLine) continue
+        val left = padLeft + textLayout.getPrimaryHorizontal(sOff)
+        val right =
+          padLeft +
+            if (eOff <= textLayout.getLineEnd(ln)) {
+              textLayout.getPrimaryHorizontal(eOff)
+            } else {
+              textLayout.getLineRight(ln)
+            }
+        val top = padTop + textLayout.getLineTop(ln) + density
+        val bottom = padTop + textLayout.getLineBottom(ln) - density
+        val safeRight = max(right, left + 5f * density)
+        canvas.drawRoundRect(left, top, safeRight, bottom, radius, radius, usageHighlightPaint)
+        canvas.drawRoundRect(left, top, safeRight, bottom, radius, radius, usageHighlightBorderPaint)
       }
     }
 

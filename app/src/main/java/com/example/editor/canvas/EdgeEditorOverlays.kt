@@ -1,0 +1,852 @@
+package com.example.editor.canvas
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Redo
+import androidx.compose.material.icons.automirrored.outlined.Undo
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ContentPaste
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Restore
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.editor.CodeSymbol
+import com.example.editor.engine.ClipboardHistoryStore
+import com.example.editor.engine.EdgeEditorSession
+import com.example.editor.engine.LineChange
+import com.example.idecore.completion.EdgeCompletionItem
+import com.example.idecore.completion.EdgeCompletionKind
+import com.example.ui.theme.AmberWarn
+import com.example.ui.theme.EmeraldLive
+import com.example.ui.theme.JetBrainsMono
+import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.RoseError
+import kotlinx.coroutines.delay
+import kotlin.math.abs
+import kotlin.math.roundToInt
+
+// ---- 1. Selection Loupe (1.5x GraphicsLayer Glass Magnifier) ----
+
+@Composable
+fun Modifier.edgeEditorLoupe(
+  loupeSourceProvider: () -> Offset?,
+  lineHeight: Float,
+  background: Color,
+  outline: Color,
+): Modifier {
+  val layer = rememberGraphicsLayer()
+  val appear = remember { Animatable(0f) }
+  val lastSource = remember { arrayOf(Offset.Zero) }
+
+  LaunchedEffect(loupeSourceProvider) {
+    snapshotFlow { loupeSourceProvider() != null }.collect { active ->
+      appear.animateTo(if (active) 1f else 0f, tween(if (active) 140 else 110))
+    }
+  }
+
+  return drawWithContent {
+    loupeSourceProvider()?.let { lastSource[0] = it }
+    val shown = appear.value
+    if (shown <= 0f) {
+      drawContent()
+      return@drawWithContent
+    }
+    layer.record { this@drawWithContent.drawContent() }
+    drawLayer(layer)
+
+    val source = lastSource[0]
+    val w = 120.dp.toPx()
+    val h = 46.dp.toPx()
+    val edge = 4.dp.toPx()
+    val cx = source.x.coerceIn(w / 2f + edge, (size.width - w / 2f - edge).coerceAtLeast(w / 2f + edge))
+    val cy = (source.y - lineHeight / 2f - 12.dp.toPx() - h / 2f).coerceAtLeast(h / 2f - 44.dp.toPx())
+    val rect = Rect(Offset(cx - w / 2f, cy - h / 2f), Size(w, h))
+    val radius = CornerRadius(15.dp.toPx())
+    val handleClearance = 2.dp.toPx()
+    val grow = 0.75f + 0.25f * shown
+
+    withTransform({ scale(grow, grow, pivot = Offset(cx, rect.bottom)) }) {
+      drawIntoCanvas { it.saveLayer(rect.inflate(8.dp.toPx()), Paint().apply { alpha = shown }) }
+      for (i in 1..2) {
+        drawRoundRect(
+          Color.Black.copy(alpha = 0.16f),
+          rect.topLeft + Offset(0f, i * 1.5.dp.toPx()),
+          rect.size,
+          radius,
+        )
+      }
+      clipPath(Path().apply { addRoundRect(RoundRect(rect, radius)) }) {
+        drawRect(background, rect.topLeft, rect.size)
+        withTransform({
+          translate(rect.center.x, rect.center.y)
+          scale(1.5f, 1.5f, pivot = Offset.Zero)
+          translate(-source.x, -source.y)
+          clipRect(top = source.y - lineHeight * 2f, bottom = source.y + lineHeight / 2f - handleClearance)
+        }) {
+          drawLayer(layer)
+        }
+      }
+      drawRoundRect(outline, rect.topLeft, rect.size, radius, style = Stroke(1.dp.toPx()))
+      drawIntoCanvas { it.restore() }
+    }
+  }
+}
+
+// ---- 2. Three-Finger Sideways Swipe Undo / Redo ----
+
+class EdgeUndoFeedback {
+  enum class Kind {
+    UNDO,
+    REDO,
+    NOTHING_TO_UNDO,
+    NOTHING_TO_REDO,
+  }
+
+  var kind by mutableStateOf<Kind?>(null)
+    private set
+  var serial by mutableIntStateOf(0)
+    private set
+
+  fun show(next: Kind) {
+    kind = next
+    serial++
+  }
+
+  fun hide() {
+    kind = null
+  }
+}
+
+fun Modifier.edgeUndoSwipe(
+  session: EdgeEditorSession,
+  feedback: EdgeUndoFeedback,
+): Modifier =
+  pointerInput(session) {
+    awaitEachGesture {
+      var claimed = false
+      var travel = 0f
+      val step = 72.dp.toPx()
+      while (true) {
+        val event = awaitPointerEvent(PointerEventPass.Initial)
+        val touching = event.changes.filter { it.pressed && it.type == PointerType.Touch }
+        if (touching.isEmpty()) break
+        if (touching.size < 3) {
+          if (claimed) event.changes.forEach { it.consume() }
+          continue
+        }
+        val dx = touching.sumOf { (it.position.x - it.previousPosition.x).toDouble() }.toFloat() / touching.size
+        val dy = touching.sumOf { (it.position.y - it.previousPosition.y).toDouble() }.toFloat() / touching.size
+        if (!claimed && abs(dx) > abs(dy) && abs(travel + dx) > viewConfiguration.touchSlop) claimed = true
+        travel += dx
+        if (claimed) {
+          event.changes.forEach { it.consume() }
+          while (travel <= -step) {
+            travel += step
+            feedback.show(if (session.undo()) EdgeUndoFeedback.Kind.UNDO else EdgeUndoFeedback.Kind.NOTHING_TO_UNDO)
+          }
+          while (travel >= step) {
+            travel -= step
+            feedback.show(if (session.redo()) EdgeUndoFeedback.Kind.REDO else EdgeUndoFeedback.Kind.NOTHING_TO_REDO)
+          }
+        }
+      }
+    }
+  }
+
+@Composable
+fun BoxScope.EdgeUndoGestureToast(feedback: EdgeUndoFeedback) {
+  val palette = LocalIdePalette.current
+  var shown by remember { mutableStateOf<EdgeUndoFeedback.Kind?>(null) }
+  LaunchedEffect(feedback.serial) {
+    val k = feedback.kind ?: return@LaunchedEffect
+    shown = k
+    delay(750L)
+    shown = null
+    feedback.hide()
+  }
+  AnimatedVisibility(
+    visible = shown != null,
+    modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
+    enter = fadeIn(tween(120)) + scaleIn(tween(120), initialScale = 0.88f),
+    exit = fadeOut(tween(100)) + scaleOut(tween(100), targetScale = 0.92f),
+  ) {
+    val kind = shown ?: EdgeUndoFeedback.Kind.UNDO
+    val (icon, label, dim) =
+      when (kind) {
+        EdgeUndoFeedback.Kind.UNDO -> Triple(Icons.AutoMirrored.Outlined.Undo, "Undo", false)
+        EdgeUndoFeedback.Kind.REDO -> Triple(Icons.AutoMirrored.Outlined.Redo, "Redo", false)
+        EdgeUndoFeedback.Kind.NOTHING_TO_UNDO -> Triple(Icons.AutoMirrored.Outlined.Undo, "No Undo", true)
+        EdgeUndoFeedback.Kind.NOTHING_TO_REDO -> Triple(Icons.AutoMirrored.Outlined.Redo, "No Redo", true)
+      }
+    Surface(
+      color = palette.glassElevated.copy(alpha = 0.95f),
+      shape = RoundedCornerShape(999.dp),
+      border = BorderStroke(0.75.dp, palette.glassBorderHighlight),
+      shadowElevation = 4.dp,
+    ) {
+      Row(
+        modifier = Modifier.padding(horizontal = 13.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        val ink = if (dim) palette.textMuted else palette.activePillFg
+        Icon(icon, contentDescription = null, tint = ink, modifier = Modifier.size(15.dp))
+        Text(label, fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = ink)
+      }
+    }
+  }
+}
+
+// ---- 3. Sticky Scroll Header (Pinned Enclosing Scope) ----
+
+@Composable
+fun BoxScope.EdgeStickyScrollHeader(
+  visible: Boolean,
+  symbol: CodeSymbol?,
+  lineText: String,
+  onClick: () -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  AnimatedVisibility(
+    visible = visible && symbol != null,
+    enter = fadeIn(tween(110)),
+    exit = fadeOut(tween(90)),
+    modifier = Modifier.align(Alignment.TopStart).fillMaxWidth(),
+  ) {
+    val sym = symbol ?: return@AnimatedVisibility
+    Column(modifier = Modifier.fillMaxWidth()) {
+      Row(
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .background(palette.editorGutterBg.copy(alpha = 0.95f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .testTag("editor_sticky_header"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        Text(
+          text = "${sym.line}",
+          fontFamily = JetBrainsMono,
+          fontSize = 10.sp,
+          color = palette.textMuted,
+          modifier = Modifier.widthIn(min = 24.dp),
+        )
+        Box(
+          modifier =
+            Modifier
+              .clip(RoundedCornerShape(4.dp))
+              .background(palette.activePillBg)
+              .padding(horizontal = 5.dp, vertical = 1.dp),
+        ) {
+          Text(
+            text = sym.kind,
+            fontFamily = JetBrainsMono,
+            fontSize = 8.5.sp,
+            fontWeight = FontWeight.Bold,
+            color = palette.activePillFg,
+          )
+        }
+        Text(
+          text = lineText.trim().ifEmpty { sym.name },
+          fontFamily = JetBrainsMono,
+          fontSize = 11.sp,
+          color = palette.textPrimary,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+          modifier = Modifier.weight(1f),
+        )
+      }
+      HorizontalDivider(color = palette.border.copy(alpha = 0.6f), thickness = 0.75.dp)
+    }
+  }
+}
+
+// ---- 4. Fast-Scroll Outline Scrubber with Symbol Ticks ----
+
+@Composable
+fun BoxScope.EdgeFastScrollLayer(
+  geometry: EdgeEditorGeometry,
+  session: EdgeEditorSession,
+  symbols: List<CodeSymbol>,
+  onScrubToFraction: (Float) -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  val maxV = geometry.maxVerticalScroll(session.foldModel)
+  if (maxV <= geometry.lineHeightPx * 6f) return
+
+  var dragging by remember { mutableStateOf(false) }
+  var dragFraction by remember { mutableFloatStateOf(0f) }
+  val scrollFraction = if (maxV > 0f) (geometry.vOffset / maxV).coerceIn(0f, 1f) else 0f
+  val activeFraction = if (dragging) dragFraction else scrollFraction
+  val lineCount = session.doc.lineCount.coerceAtLeast(1)
+  val currentLine1 = ((activeFraction * (lineCount - 1)).roundToInt() + 1).coerceIn(1, lineCount)
+  val nearestSymbol =
+    remember(symbols, currentLine1, dragging) {
+      if (!dragging || symbols.isEmpty()) null
+      else symbols.lastOrNull { it.line <= currentLine1 } ?: symbols.firstOrNull()
+    }
+
+  Box(
+    modifier =
+      Modifier
+        .align(Alignment.CenterEnd)
+        .fillMaxHeight()
+        .padding(vertical = 8.dp)
+        .width(24.dp)
+        .pointerInput(maxV) {
+          detectVerticalDragGestures(
+            onDragStart = { pos ->
+              dragging = true
+              val frac = (pos.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f)
+              dragFraction = frac
+              onScrubToFraction(frac)
+            },
+            onDragEnd = { dragging = false },
+            onDragCancel = { dragging = false },
+            onVerticalDrag = { change, _ ->
+              change.consume()
+              val frac = (change.position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f)
+              dragFraction = frac
+              onScrubToFraction(frac)
+            },
+          )
+        }
+        .testTag("editor_fast_scrubber"),
+  ) {
+    Canvas(modifier = Modifier.fillMaxHeight().width(24.dp)) {
+      val trackX = size.width - 7.dp.toPx()
+      val trackW = 4.dp.toPx()
+      // Symbol tick marks along track
+      for (sym in symbols) {
+        val f = ((sym.line - 1).toFloat() / lineCount.toFloat()).coerceIn(0f, 1f)
+        val ty = f * size.height
+        drawRoundRect(
+          color = palette.syntaxFunction.copy(alpha = 0.55f),
+          topLeft = Offset(trackX - 3.dp.toPx(), ty),
+          size = Size(trackW + 3.dp.toPx(), 2.dp.toPx()),
+          cornerRadius = CornerRadius(1.dp.toPx()),
+        )
+      }
+      // Thumb
+      val thumbH = (size.height * 0.14f).coerceIn(28.dp.toPx(), 72.dp.toPx())
+      val thumbY = activeFraction * (size.height - thumbH)
+      drawRoundRect(
+        color = if (dragging) palette.ctaBg else palette.textMuted.copy(alpha = 0.42f),
+        topLeft = Offset(trackX, thumbY),
+        size = Size(if (dragging) 5.dp.toPx() else trackW, thumbH),
+        cornerRadius = CornerRadius(3.dp.toPx()),
+      )
+    }
+  }
+
+  AnimatedVisibility(
+    visible = dragging,
+    enter = fadeIn(tween(80)),
+    exit = fadeOut(tween(120)),
+    modifier = Modifier.align(Alignment.TopEnd).padding(end = 30.dp, top = 16.dp),
+  ) {
+    Surface(
+      color = palette.glassElevated.copy(alpha = 0.96f),
+      shape = RoundedCornerShape(10.dp),
+      border = BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.4f)),
+      shadowElevation = 4.dp,
+    ) {
+      Row(
+        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        Text(
+          text = "Ln $currentLine1",
+          fontFamily = JetBrainsMono,
+          fontSize = 11.sp,
+          fontWeight = FontWeight.Bold,
+          color = palette.activePillFg,
+        )
+        nearestSymbol?.let { sym ->
+          Text(
+            text = sym.name,
+            fontFamily = JetBrainsMono,
+            fontSize = 10.5.sp,
+            color = palette.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 140.dp),
+          )
+        }
+      }
+    }
+  }
+}
+
+// ---- 5. Gutter Diff Hunk Preview + One-Tap Revert ----
+
+@Composable
+fun BoxScope.EdgeDiffHunkPreviewCard(
+  change: LineChange?,
+  baseText: String,
+  readOnly: Boolean,
+  onRevertHunk: (LineChange) -> Unit,
+  onDismiss: () -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  AnimatedVisibility(
+    visible = change != null,
+    enter = fadeIn(tween(110)) + scaleIn(tween(110), initialScale = 0.95f),
+    exit = fadeOut(tween(90)),
+    modifier = Modifier.align(Alignment.TopCenter).padding(horizontal = 12.dp, vertical = 12.dp),
+  ) {
+    val active = change ?: return@AnimatedVisibility
+    val oldLines =
+      remember(active, baseText) {
+        val split = baseText.replace("\r\n", "\n").split('\n')
+        val s = active.oldStart.coerceIn(0, split.size)
+        val e = active.oldEnd.coerceIn(s, split.size)
+        split.subList(s, e)
+      }
+    val badgeColor =
+      when (active.kind) {
+        LineChange.Kind.ADDED -> EmeraldLive
+        LineChange.Kind.MODIFIED -> palette.syntaxFunction
+        LineChange.Kind.DELETED -> RoseError
+      }
+    val badgeLabel =
+      when (active.kind) {
+        LineChange.Kind.ADDED -> "ADDED"
+        LineChange.Kind.MODIFIED -> "MODIFIED"
+        LineChange.Kind.DELETED -> "DELETED"
+      }
+
+    Surface(
+      color = palette.glassElevated.copy(alpha = 0.97f),
+      shape = RoundedCornerShape(12.dp),
+      border = BorderStroke(0.75.dp, badgeColor.copy(alpha = 0.45f)),
+      shadowElevation = 6.dp,
+      modifier = Modifier.fillMaxWidth().widthIn(max = 420.dp).testTag("editor_diff_hunk_card"),
+    ) {
+      Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          Box(
+            modifier =
+              Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(badgeColor.copy(alpha = 0.16f))
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+          ) {
+            Text(badgeLabel, fontFamily = JetBrainsMono, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = badgeColor)
+          }
+          Text(
+            text = "Ln ${active.newStart + 1}–${maxOf(active.newStart + 1, active.newEnd)}",
+            fontFamily = JetBrainsMono,
+            fontSize = 10.5.sp,
+            color = palette.textSecondary,
+            modifier = Modifier.weight(1f),
+          )
+          if (!readOnly) {
+            Surface(
+              onClick = { onRevertHunk(active) },
+              shape = RoundedCornerShape(7.dp),
+              color = RoseError.copy(alpha = 0.16f),
+              modifier = Modifier.testTag("editor_revert_hunk_button"),
+            ) {
+              Row(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+              ) {
+                Icon(Icons.Outlined.Restore, contentDescription = "Revert", tint = RoseError, modifier = Modifier.size(13.dp))
+                Text("Revert", fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = RoseError)
+              }
+            }
+          }
+          IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+            Icon(Icons.Outlined.Close, contentDescription = "Close", tint = palette.textMuted, modifier = Modifier.size(15.dp))
+          }
+        }
+        if (oldLines.isNotEmpty()) {
+          HorizontalDivider(color = palette.border.copy(alpha = 0.5f), thickness = 0.75.dp)
+          Box(
+            modifier =
+              Modifier
+                .fillMaxWidth()
+                .heightIn(max = 128.dp)
+                .background(RoseError.copy(alpha = 0.08f))
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 10.dp, vertical = 7.dp),
+          ) {
+            Text(
+              text = oldLines.joinToString("\n") { "- $it" },
+              fontFamily = JetBrainsMono,
+              fontSize = 11.sp,
+              color = palette.textPrimary,
+            )
+          }
+        }
+      }
+    }
+  }
+}
+
+// ---- 6. Frosted Floating Selection Action Toolbar ----
+
+@Composable
+fun BoxScope.EdgeSelectionToolbar(
+  visible: Boolean,
+  anchorY: Float,
+  readOnly: Boolean,
+  hasClipboardHistory: Boolean,
+  onCopy: () -> Unit,
+  onCut: () -> Unit,
+  onPaste: () -> Unit,
+  onOpenPasteHistory: () -> Unit,
+  onSelectAll: () -> Unit,
+  onComment: () -> Unit,
+  onRename: () -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  val density = LocalDensity.current
+  val topOffsetPx =
+    with(density) {
+      val desired = anchorY - 52.dp.toPx()
+      if (desired < 8.dp.toPx()) (anchorY + 32.dp.toPx()).roundToInt() else desired.roundToInt()
+    }
+
+  AnimatedVisibility(
+    visible = visible,
+    enter = fadeIn(tween(100)) + scaleIn(tween(100), initialScale = 0.94f),
+    exit = fadeOut(tween(80)),
+    modifier =
+      Modifier
+        .align(Alignment.TopCenter)
+        .offset { IntOffset(0, topOffsetPx.coerceAtLeast(8)) },
+  ) {
+    Surface(
+      color = palette.glassElevated.copy(alpha = 0.97f),
+      shape = RoundedCornerShape(12.dp),
+      border = BorderStroke(0.75.dp, palette.glassBorderHighlight),
+      shadowElevation = 6.dp,
+      modifier = Modifier.testTag("editor_selection_toolbar"),
+    ) {
+      Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+      ) {
+        ToolbarPillButton("Copy", onCopy, "sel_copy")
+        if (!readOnly) ToolbarPillButton("Cut", onCut, "sel_cut")
+        if (!readOnly) ToolbarPillButton("Paste", onPaste, "sel_paste")
+        if (!readOnly && hasClipboardHistory) {
+          IconButton(
+            onClick = onOpenPasteHistory,
+            modifier = Modifier.size(30.dp).testTag("sel_paste_history"),
+          ) {
+            Icon(Icons.Outlined.History, contentDescription = "Paste History", tint = palette.activePillFg, modifier = Modifier.size(15.dp))
+          }
+        }
+        ToolbarPillButton("All", onSelectAll, "sel_all")
+        if (!readOnly) ToolbarPillButton("//", onComment, "sel_comment")
+        if (!readOnly) ToolbarPillButton("Rename", onRename, "sel_rename")
+      }
+    }
+  }
+}
+
+@Composable
+private fun ToolbarPillButton(label: String, onClick: () -> Unit, tag: String) {
+  val palette = LocalIdePalette.current
+  Surface(
+    onClick = onClick,
+    shape = RoundedCornerShape(8.dp),
+    color = Color.Transparent,
+    modifier = Modifier.testTag(tag),
+  ) {
+    Text(
+      text = label,
+      fontSize = 11.5.sp,
+      fontWeight = FontWeight.SemiBold,
+      color = palette.textPrimary,
+      modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+    )
+  }
+}
+
+// ---- 7. Paste History Picker Popup ----
+
+@Composable
+fun BoxScope.EdgePasteHistoryPopup(
+  visible: Boolean,
+  onSelectClip: (String) -> Unit,
+  onDismiss: () -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  val entries = ClipboardHistoryStore.entries
+  AnimatedVisibility(
+    visible = visible,
+    enter = fadeIn(tween(110)) + scaleIn(tween(110), initialScale = 0.95f),
+    exit = fadeOut(tween(90)),
+    modifier = Modifier.align(Alignment.Center).padding(horizontal = 16.dp),
+  ) {
+    Surface(
+      color = palette.glassElevated.copy(alpha = 0.98f),
+      shape = RoundedCornerShape(14.dp),
+      border = BorderStroke(0.75.dp, palette.glassBorderHighlight),
+      shadowElevation = 8.dp,
+      modifier = Modifier.fillMaxWidth().widthIn(max = 360.dp).testTag("editor_paste_history_popup"),
+    ) {
+      Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          Icon(Icons.Outlined.ContentPaste, contentDescription = null, tint = palette.activePillFg, modifier = Modifier.size(15.dp))
+          Text(
+            text = "Clipboard",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = palette.textPrimary,
+            modifier = Modifier.weight(1f),
+          )
+          Text(
+            text = "${entries.size}",
+            fontFamily = JetBrainsMono,
+            fontSize = 10.sp,
+            color = palette.textMuted,
+          )
+          IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+            Icon(Icons.Outlined.Close, contentDescription = "Close", tint = palette.textMuted, modifier = Modifier.size(15.dp))
+          }
+        }
+        HorizontalDivider(color = palette.border.copy(alpha = 0.5f), thickness = 0.75.dp)
+        if (entries.isEmpty()) {
+          Box(modifier = Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
+            Text("Empty", fontFamily = JetBrainsMono, fontSize = 11.sp, color = palette.textMuted)
+          }
+        } else {
+          LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)) {
+            itemsIndexed(entries) { idx, clip ->
+              val preview = clip.replace('\n', '↵').take(120)
+              Row(
+                modifier =
+                  Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                      onSelectClip(clip)
+                      onDismiss()
+                    }
+                    .padding(horizontal = 12.dp, vertical = 9.dp)
+                    .testTag("paste_history_item_$idx"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+              ) {
+                Text(
+                  text = "${idx + 1}",
+                  fontFamily = JetBrainsMono,
+                  fontSize = 9.5.sp,
+                  color = palette.textMuted,
+                  modifier = Modifier.width(18.dp),
+                )
+                Text(
+                  text = preview,
+                  fontFamily = JetBrainsMono,
+                  fontSize = 11.sp,
+                  color = palette.textPrimary,
+                  maxLines = 2,
+                  overflow = TextOverflow.Ellipsis,
+                  modifier = Modifier.weight(1f),
+                )
+              }
+              if (idx < entries.lastIndex) {
+                HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.5.dp)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// ---- 8. CodeAssist-Style Glass Completion Bar with Bolded Prefix Match ----
+
+@Composable
+fun EdgeGlassCompletionBar(
+  items: List<EdgeCompletionItem>,
+  queryPrefix: String,
+  onSelect: (EdgeCompletionItem) -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val palette = LocalIdePalette.current
+  val needle = queryPrefix.substringAfterLast('.')
+  Surface(
+    color = palette.glassElevated.copy(alpha = 0.96f),
+    shape = RoundedCornerShape(11.dp),
+    border = BorderStroke(0.75.dp, palette.glassBorderHighlight),
+    shadowElevation = 4.dp,
+    modifier = modifier.testTag("editor_completion_bar"),
+  ) {
+    Row(
+      modifier =
+        Modifier
+          .fillMaxWidth()
+          .horizontalScroll(rememberScrollState())
+          .padding(horizontal = 6.dp, vertical = 5.dp),
+      horizontalArrangement = Arrangement.spacedBy(5.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      items.forEachIndexed { idx, item ->
+        val badgeColor =
+          when (item.kind) {
+            EdgeCompletionKind.POSTFIX -> AmberWarn
+            EdgeCompletionKind.TEMPLATE -> EmeraldLive
+            EdgeCompletionKind.BINDING, EdgeCompletionKind.API -> palette.activePillFg
+            EdgeCompletionKind.FUNCTION, EdgeCompletionKind.SYMBOL -> palette.syntaxFunction
+            else -> palette.syntaxProperty
+          }
+        val highlightedLabel =
+          remember(item.label, needle, palette) {
+            buildAnnotatedString {
+              val matchIdx =
+                if (needle.isNotEmpty()) item.label.indexOf(needle, ignoreCase = true) else -1
+              if (matchIdx >= 0) {
+                if (matchIdx > 0) append(item.label.substring(0, matchIdx))
+                withStyle(SpanStyle(color = palette.activePillFg, fontWeight = FontWeight.ExtraBold)) {
+                  append(item.label.substring(matchIdx, matchIdx + needle.length))
+                }
+                append(item.label.substring(matchIdx + needle.length))
+              } else {
+                append(item.label)
+              }
+            }
+          }
+        Surface(
+          onClick = { onSelect(item) },
+          shape = RoundedCornerShape(8.dp),
+          color = if (idx == 0) palette.activePillBg.copy(alpha = 0.55f) else palette.editorBg,
+          border =
+            BorderStroke(
+              0.75.dp,
+              if (idx == 0) palette.activePillFg.copy(alpha = 0.45f) else palette.border.copy(alpha = 0.55f),
+            ),
+          modifier = Modifier.testTag("completion_item_$idx"),
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+          ) {
+            Text(
+              text = item.kind.badge,
+              style = TextStyle(fontFamily = JetBrainsMono, fontSize = 8.5.sp, fontWeight = FontWeight.Bold),
+              color = badgeColor,
+              modifier =
+                Modifier
+                  .clip(RoundedCornerShape(4.dp))
+                  .background(badgeColor.copy(alpha = 0.16f))
+                  .padding(horizontal = 4.dp, vertical = 1.dp),
+              maxLines = 1,
+            )
+            Text(
+              text = highlightedLabel,
+              style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, fontWeight = FontWeight.Medium),
+              color = palette.textPrimary,
+              maxLines = 1,
+            )
+            if (item.detail.isNotBlank()) {
+              Text(
+                text = item.detail,
+                fontFamily = JetBrainsMono,
+                fontSize = 9.5.sp,
+                color = palette.textMuted,
+                maxLines = 1,
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+}

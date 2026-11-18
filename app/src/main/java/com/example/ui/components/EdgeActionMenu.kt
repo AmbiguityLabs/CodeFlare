@@ -482,14 +482,16 @@ fun EdgeMenuUiLayersPanel(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
           )
-          Text(
-            text = layer.subtitle,
-            fontFamily = JetBrainsMono,
-            fontSize = 8.5.sp,
-            color = palette.textMuted,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-          )
+          if (layer.subtitle.isNotBlank()) {
+            Text(
+              text = layer.subtitle,
+              fontFamily = JetBrainsMono,
+              fontSize = 8.5.sp,
+              color = palette.textMuted,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
         }
 
         Row(

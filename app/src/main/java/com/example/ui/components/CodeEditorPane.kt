@@ -44,8 +44,10 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CheckCircleOutline
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowLeft
 import androidx.compose.material.icons.outlined.KeyboardArrowRight
@@ -99,7 +101,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -108,12 +109,15 @@ import com.example.data.remote.DiagnosticItem
 import com.example.data.remote.DiagnosticSeverity
 import com.example.data.remote.WorkerLanguage
 import com.example.data.remote.WorkerWorkspace
-import com.example.editor.CodeEditorController
 import com.example.editor.CodeSymbol
-import com.example.editor.EdgeCodeEditorView
 import com.example.editor.EditorCursorTelemetry
 import com.example.editor.MergeConflictResolver
 import com.example.editor.WranglerSyncParser
+import com.example.editor.canvas.EdgeCodeEditorSurface
+import com.example.editor.canvas.EdgeEditorController
+import com.example.editor.canvas.EdgeGlassCompletionBar
+import com.example.idecore.completion.EdgeCompletionItem
+import com.example.idecore.completion.EdgeCompletionKind
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
@@ -182,14 +186,32 @@ fun CodeEditorPane(
   onHideEditorBottomBars: () -> Unit = {},
   onOpenConflictResolver: (() -> Unit)? = null,
   onRegisterFlushHook: ((() -> Unit)?) -> Unit = {},
+  onComputeCompletions: (filePath: String, text: CharSequence, cursor: Int, language: WorkerLanguage) -> List<EdgeCompletionItem> = { _, _, _, _ -> emptyList() },
+  onAcceptCompletion: (EdgeCompletionItem) -> Unit = {},
+  onRequestSmartRename: (initialSymbol: String?) -> Unit = {},
+  onOpenLocalHistory: () -> Unit = {},
+  onOpenProjectSearch: () -> Unit = {},
+  editorCommandRequest: Pair<Long, String>? = null,
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
   val activeFile = uiState.activeFile
 
-  val editorController = remember { CodeEditorController() }
+  val editorController = remember { EdgeEditorController() }
   val hudHolder = remember { EditorLiveHudHolder(uiState.editorSettings.zoomPercent) }
   val latestOnCodeChange by rememberUpdatedState(onCodeChange)
+
+  LaunchedEffect(editorCommandRequest) {
+    val cmd = editorCommandRequest?.second ?: return@LaunchedEffect
+    when (cmd) {
+      "fold_all" -> editorController.foldAll()
+      "unfold_all" -> editorController.unfoldAll()
+      "toggle_fold" -> editorController.toggleFoldAtCurrentLine()
+      "toggle_bookmark" -> editorController.toggleBookmark()
+      "next_bookmark" -> editorController.nextBookmark()
+      "paste_history" -> editorController.openPasteHistory()
+    }
+  }
 
   fun flushThen(action: () -> Unit) {
     editorController.flushNow()
@@ -517,6 +539,36 @@ fun CodeEditorPane(
               )
             }
           }
+        }
+      }
+
+      IconButton(
+        onClick = { flushThen(onOpenLocalHistory) },
+        modifier = Modifier.size(32.dp).testTag("local_history_button"),
+      ) {
+        Icon(
+          Icons.Outlined.History,
+          contentDescription = "Local History",
+          tint = palette.textSecondary,
+          modifier = Modifier.size(16.dp),
+        )
+      }
+      if (!activeFile.isVirtualReadOnly &&
+        activeFile.language in setOf(WorkerLanguage.JAVASCRIPT, WorkerLanguage.TYPESCRIPT)
+      ) {
+        IconButton(
+          onClick = {
+            val ident = editorController.currentIdentifierAtCursor()
+            flushThen { onRequestSmartRename(ident) }
+          },
+          modifier = Modifier.size(32.dp).testTag("rename_symbol_button"),
+        ) {
+          Icon(
+            Icons.Outlined.DriveFileRenameOutline,
+            contentDescription = "Rename Symbol",
+            tint = palette.textSecondary,
+            modifier = Modifier.size(16.dp),
+          )
         }
       }
 
@@ -925,54 +977,40 @@ fun CodeEditorPane(
         )
       }
 
-      AndroidView(
-        factory = { context ->
-          EdgeCodeEditorView(context).apply {
-            editorController.attach(this)
-            onDebouncedSync = { synced -> latestOnCodeChange(synced) }
-            onTelemetryUpdate = { telemetry -> hudHolder.telemetry = telemetry }
-            onPinchZoomChanged = { zoom, pinching ->
-              hudHolder.liveZoomPercent = zoom
-              hudHolder.isPinching = pinching
-            }
-            onPinchZoomCommitted = { finalZoom ->
-              hudHolder.liveZoomPercent = finalZoom
-              hudHolder.isPinching = false
-              val prev = committedZoomPercent
-              committedZoomPercent = finalZoom
-              zoomHudBump++
-              if (finalZoom != prev) {
-                latestOnZoomPercentChange(finalZoom)
-              }
-            }
+      EdgeCodeEditorSurface(
+        filePath = activeFile.path,
+        externalTfv = syncedTfv,
+        editorRevision = uiState.editorRevision,
+        originalContent = activeFile.originalContent,
+        language = activeFile.language,
+        editorSettings = uiState.editorSettings,
+        zoomPercent = committedZoomPercent,
+        hasCustomBg = hasCustomBg,
+        readOnly = activeFile.isVirtualReadOnly,
+        diagnostics = fileDiagnostics,
+        symbols = symbols,
+        findMatches = activeFindMatches,
+        activeFindMatchIndex = activeFindMatchIndex,
+        controller = editorController,
+        onDebouncedSync = { synced -> latestOnCodeChange(synced) },
+        onTelemetryUpdate = { telemetry -> hudHolder.telemetry = telemetry },
+        onPinchZoomChanged = { zoom, pinching ->
+          hudHolder.liveZoomPercent = zoom
+          hudHolder.isPinching = pinching
+        },
+        onPinchZoomCommitted = { finalZoom ->
+          hudHolder.liveZoomPercent = finalZoom
+          hudHolder.isPinching = false
+          val prev = committedZoomPercent
+          committedZoomPercent = finalZoom
+          zoomHudBump++
+          if (finalZoom != prev) {
+            latestOnZoomPercentChange(finalZoom)
           }
         },
-        update = { view ->
-          editorController.attach(view)
-          view.configureDocumentAndSettings(
-            filePath = activeFile.path,
-            externalTfv = syncedTfv,
-            editorRevision = uiState.editorRevision,
-            language = activeFile.language,
-            palette = palette,
-            hasCustomBg = hasCustomBg,
-            showLineNumbers = uiState.editorSettings.showLineNumbers,
-            wordWrap = uiState.editorSettings.wordWrap,
-            autoCloseBrackets = uiState.editorSettings.autoCloseBrackets,
-            tabSize = uiState.editorSettings.tabSize,
-            fontSizeSp = uiState.editorSettings.fontSizeSp,
-            zoomPercent = committedZoomPercent,
-            readOnly = activeFile.isVirtualReadOnly,
-            diagnostics = fileDiagnostics,
-            findMatches = activeFindMatches,
-            activeFindMatchIndex = activeFindMatchIndex,
-          )
-        },
-        onRelease = { view ->
-          view.flushPendingSyncNow()
-          editorController.detach(view)
-        },
-        modifier = Modifier.fillMaxSize().testTag("code_editor_input"),
+        onRequestSmartRename = { ident -> flushThen { onRequestSmartRename(ident) } },
+        onToggleFindBar = { flushThen(onToggleFindBar) },
+        modifier = Modifier.fillMaxSize(),
       )
 
       // Non-shifting floating inline diagnostic pill (overlays top-end, NEVER pushes editor vertically)
@@ -1000,10 +1038,13 @@ fun CodeEditorPane(
         activeFile.language in setOf(WorkerLanguage.JAVASCRIPT, WorkerLanguage.TYPESCRIPT, WorkerLanguage.JSON)
       ) {
         FloatingAutocompleteOverlay(
+          filePath = activeFile.path,
           workspace = uiState.workspace,
           language = activeFile.language,
           hudHolder = hudHolder,
           editorController = editorController,
+          onComputeCompletions = onComputeCompletions,
+          onAcceptCompletion = onAcceptCompletion,
           modifier =
             Modifier
               .align(Alignment.BottomCenter)
@@ -1136,10 +1177,16 @@ fun CodeEditorPane(
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-              IconButton(onClick = { flushThen(onUndo) }, modifier = Modifier.size(34.dp).testTag("editor_undo")) {
+              IconButton(
+                onClick = { if (!editorController.undo()) flushThen(onUndo) },
+                modifier = Modifier.size(34.dp).testTag("editor_undo"),
+              ) {
                 Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = "Undo", tint = palette.textSecondary, modifier = Modifier.size(17.dp))
               }
-              IconButton(onClick = { flushThen(onRedo) }, modifier = Modifier.size(34.dp).testTag("editor_redo")) {
+              IconButton(
+                onClick = { if (!editorController.redo()) flushThen(onRedo) },
+                modifier = Modifier.size(34.dp).testTag("editor_redo"),
+              ) {
                 Icon(Icons.AutoMirrored.Outlined.Redo, contentDescription = "Redo", tint = palette.textSecondary, modifier = Modifier.size(17.dp))
               }
             }
@@ -1157,6 +1204,12 @@ fun CodeEditorPane(
             ) {
               AccessoryKey("TAB") { editorController.insertTab(uiState.editorSettings.tabSize) }
               AccessoryKey("//") { editorController.toggleLineComment() }
+              AccessoryKey("↑") { editorController.moveLineUp() }
+              AccessoryKey("↓") { editorController.moveLineDown() }
+              AccessoryKey("⧉") { editorController.duplicateLine() }
+              AccessoryKey("FOLD") { editorController.toggleFoldAtCurrentLine() }
+              AccessoryKey("BM") { editorController.toggleBookmark() }
+              AccessoryKey("CLIP") { editorController.openPasteHistory() }
               AccessoryKey("{ }") { editorController.insertSnippet("{}", 1) }
               AccessoryKey("( )") { editorController.insertSnippet("()", 1) }
               AccessoryKey("[ ]") { editorController.insertSnippet("[]", 1) }
@@ -1337,18 +1390,37 @@ private fun FloatingSyntaxDiagnosticPill(
 
 @Composable
 private fun FloatingAutocompleteOverlay(
+  filePath: String,
   workspace: WorkerWorkspace?,
   language: WorkerLanguage,
   hudHolder: EditorLiveHudHolder,
-  editorController: CodeEditorController,
+  editorController: EdgeEditorController,
+  onComputeCompletions: (filePath: String, text: CharSequence, cursor: Int, language: WorkerLanguage) -> List<EdgeCompletionItem>,
+  onAcceptCompletion: (EdgeCompletionItem) -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val palette = LocalIdePalette.current
-  val word = hudHolder.telemetry.wordBeforeCursor
+  val telemetry = hudHolder.telemetry
+  val word = telemetry.wordBeforeCursor
+  val cursorOffset = telemetry.cursorOffset
   val completions =
-    remember(workspace?.bindings, language, word) {
-      if (word.isEmpty()) emptyList()
-      else WranglerSyncParser.buildWorkersCompletions(workspace, language, word)
+    remember(filePath, workspace?.bindings, language, word, cursorOffset) {
+      if (word.isEmpty()) {
+        emptyList()
+      } else {
+        val docText = editorController.currentCharSequence()
+        val engineItems = onComputeCompletions(filePath, docText, cursorOffset, language)
+        engineItems.ifEmpty {
+          WranglerSyncParser.buildWorkersCompletions(workspace, language, word).map { s ->
+            EdgeCompletionItem(
+              label = s.label,
+              insertText = s.insertText,
+              kind = if (s.label.startsWith("env.")) EdgeCompletionKind.BINDING else EdgeCompletionKind.API,
+              detail = s.detail,
+              cursorBackOffset = s.cursorBackOffset,
+            )
+          }
+        }
+      }
     }
 
   AnimatedVisibility(
@@ -1357,59 +1429,25 @@ private fun FloatingAutocompleteOverlay(
     exit = fadeOut(tween(80)),
     modifier = modifier,
   ) {
-    Surface(
-      color = palette.chromeSurface.copy(alpha = 0.94f),
-      shape = RoundedCornerShape(10.dp),
-      border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.65f)),
-      shadowElevation = 2.dp,
-    ) {
-      Row(
-        modifier =
-          Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 6.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        completions.forEach { sug ->
-          Surface(
-            onClick = {
-              if (word.isNotEmpty() && sug.label.startsWith(word, ignoreCase = true)) {
-                editorController.replaceBeforeCursor(word.length, sug.insertText, sug.cursorBackOffset)
-              } else {
-                editorController.insertSnippet(sug.insertText, sug.cursorBackOffset)
-              }
-            },
-            shape = RoundedCornerShape(7.dp),
-            color = palette.editorBg,
-            border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.55f)),
-          ) {
-            Row(
-              modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(5.dp),
-            ) {
-              Text(
-                text = sug.label,
-                style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
-                color = palette.activePillFg,
-                maxLines = 1,
-              )
-              if (sug.detail.isNotBlank()) {
-                Text(
-                  text = sug.detail,
-                  style = MaterialTheme.typography.labelSmall,
-                  fontSize = 9.5.sp,
-                  color = palette.textMuted,
-                  maxLines = 1,
-                )
-              }
-            }
-          }
+    EdgeGlassCompletionBar(
+      items = completions,
+      queryPrefix = word,
+      onSelect = { item ->
+        if (item.replaceStart >= 0 && item.replaceEnd >= item.replaceStart) {
+          editorController.applyCompletionEdit(
+            replaceStart = item.replaceStart,
+            replaceEnd = item.replaceEnd,
+            insertText = item.insertText,
+            cursorBack = item.cursorBackOffset,
+          )
+        } else if (word.isNotEmpty() && item.label.startsWith(word, ignoreCase = true)) {
+          editorController.replaceBeforeCursor(word.length, item.insertText, item.cursorBackOffset)
+        } else {
+          editorController.insertSnippet(item.insertText, item.cursorBackOffset)
         }
-      }
-    }
+        onAcceptCompletion(item)
+      },
+    )
   }
 }
 
@@ -1464,18 +1502,10 @@ private fun EmptyWorkspaceWelcome(
         modifier = Modifier.size(132.dp).clip(RoundedCornerShape(28.dp)),
       )
       Text(
-        text = "EdgeCode Workspace",
+        text = "EdgeCode",
         style = MaterialTheme.typography.headlineMedium,
         fontWeight = FontWeight.Bold,
         color = palette.textPrimary,
-      )
-      Text(
-        text =
-          if (hasWorkers) "Open a Cloudflare Worker or Pages project, deploy edits live, and inspect responses in the Worker Preview window."
-          else "Create a Cloudflare Worker, deploy to your workers.dev URL, and test it in the live Worker Preview window.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = palette.textSecondary,
-        textAlign = TextAlign.Center,
       )
       Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilledTonalButton(
@@ -2016,11 +2046,6 @@ private fun AllTabsClosedState(
         fontSize = 18.sp,
         fontWeight = FontWeight.Bold,
         color = palette.textPrimary,
-      )
-      Text(
-        text = "Select a file or jump straight into editing",
-        style = MaterialTheme.typography.bodySmall,
-        color = palette.textMuted,
       )
       Spacer(Modifier.height(4.dp))
       Surface(

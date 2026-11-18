@@ -38,6 +38,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudUpload
@@ -47,6 +48,7 @@ import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Http
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Language
@@ -58,6 +60,7 @@ import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Sync
+import androidx.compose.material.icons.outlined.Tag
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.UploadFile
@@ -72,8 +75,10 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
@@ -124,6 +129,8 @@ import com.example.ui.components.EdgeMenuUiLayersPanel
 import com.example.ui.components.EdgeBottomDock
 import com.example.ui.components.EdgeBottomDockItem
 import com.example.ui.components.GitHubAndDiffPanel
+import com.example.ui.components.IdeCoreSheetTab
+import com.example.ui.components.IdeSearchAndHistorySheet
 import com.example.ui.components.LinuxTerminalPane
 import com.example.ui.components.LiveTailView
 import com.example.ui.components.NewDirectoryDialog
@@ -134,6 +141,7 @@ import com.example.ui.components.ProblemsView
 import com.example.ui.components.ProjectFilesSidebar
 import com.example.ui.components.RenameFileDialog
 import com.example.ui.components.RenameWorkerDialog
+import com.example.ui.components.SmartRenameSymbolDialog
 import com.example.ui.components.WorkerTestWindow
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
@@ -171,6 +179,15 @@ fun IdeWorkspaceScreen(
   var showProjectSettingsModal by remember { mutableStateOf(false) }
   var showRenameWorkerDialog by remember { mutableStateOf(false) }
   var showChangeSubdomainDialog by remember { mutableStateOf(false) }
+  var activeIdeSheetTab by remember { mutableStateOf<IdeCoreSheetTab?>(null) }
+  var showRenameSymbolDialog by remember { mutableStateOf(false) }
+  var renameSymbolInitial by remember { mutableStateOf("") }
+  var editorCommandRequest by remember { mutableStateOf<Pair<Long, String>?>(null) }
+
+  fun dispatchEditorCommand(cmd: String) {
+    viewModel.setProjectMode(ProjectMode.CODE)
+    editorCommandRequest = System.nanoTime() to cmd
+  }
 
   // Zero-permission Storage Access Framework (SAF) launchers
   val singleFileUploadLauncher =
@@ -219,8 +236,19 @@ fun IdeWorkspaceScreen(
 
   LaunchedEffect(uiState.statusMessage) {
     val msg = uiState.statusMessage ?: return@LaunchedEffect
-    snackbarHostState.showSnackbar(msg)
+    val showUndo =
+      uiState.lastUndoableFileOpLabel != null &&
+        (msg.startsWith("Removed '") || msg.startsWith("Renamed '"))
+    val res =
+      snackbarHostState.showSnackbar(
+        message = msg,
+        actionLabel = if (showUndo) "Undo" else null,
+        duration = if (showUndo) SnackbarDuration.Long else SnackbarDuration.Short,
+      )
     viewModel.clearStatusMessage()
+    if (res == SnackbarResult.ActionPerformed && showUndo) {
+      viewModel.undoLastFileOperation()
+    }
   }
 
   LaunchedEffect(uiState.deployBannerMessage) {
@@ -231,6 +259,8 @@ fun IdeWorkspaceScreen(
 
   BackHandler {
     when {
+      activeIdeSheetTab != null -> activeIdeSheetTab = null
+      showRenameSymbolDialog -> showRenameSymbolDialog = false
       showProjectGitModal -> showProjectGitModal = false
       showProjectSettingsModal -> showProjectSettingsModal = false
       drawerState.isOpen -> scope.launch { drawerState.close() }
@@ -367,6 +397,30 @@ fun IdeWorkspaceScreen(
       onResolveAllInFile = viewModel::resolveAllConflictsInFile,
       onApplyResolvedToWorkspace = viewModel::applyResolvedConflictsToWorkspace,
       onDismiss = viewModel::dismissConflictResolver,
+    )
+  }
+
+  activeIdeSheetTab?.let { sheetTab ->
+    IdeSearchAndHistorySheet(
+      initialTab = sheetTab,
+      activeFilePath = uiState.activeFile?.path,
+      activeFileContent = uiState.activeTextFieldValue.text,
+      onSearchSymbols = viewModel::searchProjectSymbols,
+      onFindInFiles = viewModel::findInWorkspaceFiles,
+      onLoadHistory = viewModel::loadActiveFileHistory,
+      onReadSnapshot = viewModel::readActiveFileHistorySnapshot,
+      onRestoreSnapshot = viewModel::restoreActiveFileFromHistory,
+      onJumpToLine = { path, line, col -> viewModel.jumpToLine(path, line, col) },
+      onDismiss = { activeIdeSheetTab = null },
+    )
+  }
+
+  if (showRenameSymbolDialog) {
+    SmartRenameSymbolDialog(
+      initialSymbol = renameSymbolInitial,
+      onPreview = viewModel::previewSymbolRename,
+      onConfirmRename = viewModel::applySmartRenameSymbol,
+      onDismiss = { showRenameSymbolDialog = false },
     )
   }
 
@@ -517,8 +571,8 @@ fun IdeWorkspaceScreen(
     val fileCommands =
       uiState.workspace?.files.orEmpty().map { file ->
         PaletteCommand(
-          title = "Open ${file.path}",
-          subtitle = if (file.isEntryPoint) "Worker entry module" else "Workspace file",
+          title = file.path,
+          subtitle = if (file.isEntryPoint) "MAIN" else "FILE",
         ) {
           viewModel.openFileTab(file.path, recordHistory = true)
           viewModel.setProjectMode(ProjectMode.CODE)
@@ -526,13 +580,32 @@ fun IdeWorkspaceScreen(
       }
     val commands =
       listOf(
-        PaletteCommand("Switch to Code Mode", "Open full-screen editor for current project") {
+        PaletteCommand("Fold All", "EDITOR") { dispatchEditorCommand("fold_all") },
+        PaletteCommand("Unfold All", "EDITOR") { dispatchEditorCommand("unfold_all") },
+        PaletteCommand("Toggle Fold", "EDITOR") { dispatchEditorCommand("toggle_fold") },
+        PaletteCommand("Toggle Bookmark", "EDITOR") { dispatchEditorCommand("toggle_bookmark") },
+        PaletteCommand("Next Bookmark", "EDITOR") { dispatchEditorCommand("next_bookmark") },
+        PaletteCommand("Clipboard History", "EDITOR") { dispatchEditorCommand("paste_history") },
+        PaletteCommand("Go to Symbol", "NAV") {
+          activeIdeSheetTab = IdeCoreSheetTab.SYMBOLS
+        },
+        PaletteCommand("Find in Files", "SEARCH") {
+          activeIdeSheetTab = IdeCoreSheetTab.FIND_IN_FILES
+        },
+        PaletteCommand("Local History", "HIST") {
+          activeIdeSheetTab = IdeCoreSheetTab.LOCAL_HISTORY
+        },
+        PaletteCommand("Rename Symbol", "REF") {
+          renameSymbolInitial = ""
+          showRenameSymbolDialog = true
+        },
+        PaletteCommand("Code Mode", "MODE") {
           viewModel.setProjectMode(ProjectMode.CODE)
         },
-        PaletteCommand("Open Deployed Worker Preview", "Live WebView & HTTP preview for this Worker") {
+        PaletteCommand("Worker Preview", "TEST") {
           viewModel.openDeployedWorkerPreview(maximizeWindow = true)
         },
-        PaletteCommand("Toggle Preview Fullscreen", "Expand or restore the live Worker preview window") {
+        PaletteCommand("Preview Fullscreen", "VIEW") {
           if (uiState.projectMode != ProjectMode.TEST) {
             viewModel.openDeployedWorkerPreview(maximizeWindow = true)
             viewModel.setPreviewFullScreen(true)
@@ -540,34 +613,34 @@ fun IdeWorkspaceScreen(
             viewModel.togglePreviewFullScreen()
           }
         },
-        PaletteCommand("Open Worker HTTP Tester", "Test Worker routes with custom methods, headers & body") {
+        PaletteCommand("HTTP Tester", "TEST") {
           viewModel.openWorkerTestWindow(maximizeWindow = true)
         },
-        PaletteCommand("Open API Tester", "Postman-style API tester with collections & env vars") {
+        PaletteCommand("API Tester", "TEST") {
           viewModel.toggleBottomPanel(BottomPanelTab.API_TESTER)
         },
-        PaletteCommand("Open Project Config", "Bindings, Env Vars, Secrets, Routes, Cron & Rollback") {
+        PaletteCommand("Project Config", "CONFIG") {
           viewModel.setProjectMode(ProjectMode.CONFIG)
         },
-        PaletteCommand("Open Project Terminal", "Run curl, jq, wrangler, and Linux commands") {
+        PaletteCommand("Terminal", "SHELL") {
           viewModel.toggleBottomPanel(BottomPanelTab.TERMINAL)
         },
-        PaletteCommand("Open Problems (${uiState.diagnostics.size})", "Inspect syntax & Worker diagnostics") {
+        PaletteCommand("Problems (${uiState.diagnostics.size})", "LINT") {
           viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS)
         },
-        PaletteCommand("Zoom In Editor", "Increase editor code magnification (+15%)") {
+        PaletteCommand("Zoom In (+15%)", "ZOOM") {
           viewModel.adjustEditorZoom(15)
         },
-        PaletteCommand("Zoom Out Editor", "Decrease editor code magnification (-15%)") {
+        PaletteCommand("Zoom Out (-15%)", "ZOOM") {
           viewModel.adjustEditorZoom(-15)
         },
-        PaletteCommand("Reset Editor Zoom (100%)", "Restore default editor magnification") {
+        PaletteCommand("Reset Zoom (100%)", "ZOOM") {
           viewModel.resetEditorZoom()
         },
-        PaletteCommand("Toggle Live Tail Logs", "Stream real-time console.log() via WebSocket") {
+        PaletteCommand("Live Tail Logs", "LOGS") {
           viewModel.toggleLiveTail()
         },
-        PaletteCommand("Open IDE Log", "Inspect internal IDE deployment & API event log") {
+        PaletteCommand("IDE Log", "LOGS") {
           viewModel.toggleBottomPanel(BottomPanelTab.CONSOLE)
         },
         PaletteCommand(
@@ -577,9 +650,9 @@ fun IdeWorkspaceScreen(
               uiState.isEditorTopChromeHidden &&
               uiState.isEditorBottomBarsHidden &&
               uiState.isBottomDockHidden
-            ) "Show All UI Layers (4/4)"
-            else "Hide All UI Layers (Zen Mode)",
-          subtitle = "Collapse or restore Top Bar, Tabs & Path, Editor Bar, and Bottom Dock",
+            ) "Show All UI (4/4)"
+            else "Zen Mode",
+          subtitle = "VIEW",
         ) {
           val allHidden =
             uiState.isTopBarHidden &&
@@ -588,58 +661,58 @@ fun IdeWorkspaceScreen(
               uiState.isBottomDockHidden
           viewModel.toggleAllUiChrome(!allHidden)
         },
-        PaletteCommand("Export / Deploy Worker to Cloudflare", "Publish all local edits, bindings & deletions live") {
+        PaletteCommand("Deploy Worker", "CLOUD") {
           viewModel.deployActiveWorker()
         },
-        PaletteCommand("Rename Worker", "Rename this Worker script, wrangler.jsonc & live URL") {
+        PaletteCommand("Rename Worker", "CLOUD") {
           if (uiState.workspace != null) showRenameWorkerDialog = true
         },
-        PaletteCommand("Change workers.dev Subdomain", "Update your *.workers.dev subdomain endpoint") {
+        PaletteCommand("Workers Subdomain", "CLOUD") {
           showChangeSubdomainDialog = true
         },
-        PaletteCommand("Review Diff Before Deploy", "Inspect Unified or Side-by-Side line changes before deploying") {
+        PaletteCommand("Review Diff & Deploy", "DIFF") {
           viewModel.openDiffReview(DiffReviewIntent.PRE_DEPLOY)
         },
-        PaletteCommand("Open Workspace Diff Viewer", "Unified and Side-by-Side diff inspector for changed files") {
+        PaletteCommand("Diff Viewer", "DIFF") {
           viewModel.openDiffReview(DiffReviewIntent.WORKSPACE)
         },
-        PaletteCommand("Resolve Merge Conflicts", "Open interactive 3-way merge conflict resolver") {
+        PaletteCommand("Merge Conflicts", "GIT") {
           viewModel.openConflictResolver()
         },
-        PaletteCommand("Re-Import Worker from Cloudflare", "Discard local edits and pull fresh Worker code") {
+        PaletteCommand("Re-Import Worker", "CLOUD") {
           viewModel.reimportActiveWorkerFromCloudflare()
         },
-        PaletteCommand("Revert Workspace to Baseline", "Restore workspace files back to imported baseline") {
+        PaletteCommand("Revert Workspace", "DIFF") {
           viewModel.revertWorkspaceToImportedBaseline()
         },
-        PaletteCommand("Export Workspace Bundle (.json)", "Save organized workspace files and metadata as JSON") {
+        PaletteCommand("Export Bundle (.json)", "IO") {
           if (uiState.workspace != null) triggerExportWorkspaceBundle()
         },
-        PaletteCommand("Import Workspace Bundle (.json)", "Load saved workspace JSON bundle into Project Dir") {
+        PaletteCommand("Import Bundle (.json)", "IO") {
           triggerImportWorkspaceBundle()
         },
-        PaletteCommand("Upload Single File", "Pick one local script/asset file into this project") {
+        PaletteCommand("Upload File", "IO") {
           if (uiState.workspace != null) triggerSingleUpload()
         },
-        PaletteCommand("Batch Upload Files", "Import multiple module scripts into this project") {
+        PaletteCommand("Batch Upload", "IO") {
           if (uiState.workspace != null) triggerBatchUpload()
         },
-        PaletteCommand("Export Active File", "Save current script out to device storage") {
+        PaletteCommand("Export Active File", "IO") {
           if (uiState.activeFile != null) triggerExportActiveFile()
         },
-        PaletteCommand("Sync wrangler.jsonc", "Apply wrangler.jsonc/.toml bindings, vars & crons to workspace") {
+        PaletteCommand("Sync wrangler.jsonc", "CONFIG") {
           viewModel.syncWranglerFileToWorkspace()
         },
-        PaletteCommand("Format Document", "Auto-indent JavaScript or JSON") {
+        PaletteCommand("Format Document", "EDITOR") {
           viewModel.formatActiveFile()
         },
-        PaletteCommand("Git Sync (Optional)", "Stage, commit & push project changes to GitHub") {
+        PaletteCommand("Git Sync", "GIT") {
           showProjectGitModal = true
         },
-        PaletteCommand("Settings & Cloudflare Credentials", "API tokens, deployment defaults, theme & editor preferences") {
+        PaletteCommand("Settings", "APP") {
           showProjectSettingsModal = true
         },
-        PaletteCommand("Back to All Projects (Home)", "Return to the Home Projects Hub") {
+        PaletteCommand("All Projects", "HOME") {
           viewModel.closeWorkspaceToHome()
         },
       ) + fileCommands
@@ -925,6 +998,15 @@ fun IdeWorkspaceScreen(
                       onHideEditorBottomBars = { viewModel.setEditorBottomBarsHidden(true) },
                       onOpenConflictResolver = viewModel::openConflictResolver,
                       onRegisterFlushHook = viewModel::registerEditorFlushHook,
+                      onComputeCompletions = viewModel::completeAtCursor,
+                      onAcceptCompletion = viewModel::noteCompletionAccepted,
+                      onRequestSmartRename = { ident ->
+                        renameSymbolInitial = ident.orEmpty()
+                        showRenameSymbolDialog = true
+                      },
+                      onOpenLocalHistory = { activeIdeSheetTab = IdeCoreSheetTab.LOCAL_HISTORY },
+                      onOpenProjectSearch = { activeIdeSheetTab = IdeCoreSheetTab.FIND_IN_FILES },
+                      editorCommandRequest = editorCommandRequest,
                       modifier = Modifier.fillMaxSize(),
                     )
                   }
@@ -1132,7 +1214,7 @@ fun IdeWorkspaceScreen(
                   EdgeMenuUiLayer(
                     code = "L1",
                     label = "Top Bar",
-                    subtitle = "Project header & deploy",
+                    subtitle = "",
                     visible = !uiState.isTopBarHidden,
                     testTag = "ui_layer_toggle_top_bar",
                     onToggle = viewModel::toggleTopBarHidden,
@@ -1140,7 +1222,7 @@ fun IdeWorkspaceScreen(
                   EdgeMenuUiLayer(
                     code = "L2",
                     label = "Tabs & Path",
-                    subtitle = "File tabs, path & lint",
+                    subtitle = "",
                     visible = !uiState.isEditorTopChromeHidden,
                     testTag = "ui_layer_toggle_editor_top",
                     onToggle = viewModel::toggleEditorTopChromeHidden,
@@ -1148,7 +1230,7 @@ fun IdeWorkspaceScreen(
                   EdgeMenuUiLayer(
                     code = "L3",
                     label = "Editor Bar",
-                    subtitle = "Status, zoom & key rail",
+                    subtitle = "",
                     visible = !uiState.isEditorBottomBarsHidden,
                     testTag = "ui_layer_toggle_editor_bottom",
                     onToggle = viewModel::toggleEditorBottomBarsHidden,
@@ -1156,7 +1238,7 @@ fun IdeWorkspaceScreen(
                   EdgeMenuUiLayer(
                     code = "L4",
                     label = "Bottom Dock",
-                    subtitle = "Code · Test · Config · Console",
+                    subtitle = "",
                     visible = !uiState.isBottomDockHidden,
                     testTag = "ui_layer_toggle_bottom_dock",
                     onToggle = viewModel::toggleBottomDockHidden,
@@ -1176,6 +1258,57 @@ fun IdeWorkspaceScreen(
                   showCommandPalette = true
                 },
               )
+            }
+            if (activeWs != null) {
+              EdgeMenuItem(
+                label = "Go to Symbol",
+                icon = Icons.Outlined.Tag,
+                badgeText = "SYM",
+                onClick = {
+                  overflowMenuOpen = false
+                  activeIdeSheetTab = IdeCoreSheetTab.SYMBOLS
+                },
+              )
+              EdgeMenuItem(
+                label = "Find in Files",
+                icon = Icons.Outlined.Search,
+                badgeText = "FIND",
+                onClick = {
+                  overflowMenuOpen = false
+                  activeIdeSheetTab = IdeCoreSheetTab.FIND_IN_FILES
+                },
+              )
+              EdgeMenuItem(
+                label = "Local History",
+                icon = Icons.Outlined.History,
+                badgeText = "HIST",
+                onClick = {
+                  overflowMenuOpen = false
+                  activeIdeSheetTab = IdeCoreSheetTab.LOCAL_HISTORY
+                },
+              )
+              EdgeMenuItem(
+                label = "Rename Symbol",
+                icon = Icons.Outlined.DriveFileRenameOutline,
+                badgeText = "REF",
+                onClick = {
+                  overflowMenuOpen = false
+                  renameSymbolInitial = ""
+                  showRenameSymbolDialog = true
+                },
+              )
+              uiState.lastUndoableFileOpLabel?.let { opLabel ->
+                EdgeMenuItem(
+                  label = "Undo $opLabel",
+                  icon = Icons.AutoMirrored.Outlined.Undo,
+                  tone = EdgeMenuTone.ACCENT,
+                  badgeText = "UNDO",
+                  onClick = {
+                    overflowMenuOpen = false
+                    viewModel.undoLastFileOperation()
+                  },
+                )
+              }
             }
             EdgeMenuItem(
               label = "Sync wrangler.jsonc",
@@ -1245,9 +1378,7 @@ fun IdeWorkspaceScreen(
               )
               EdgeMenuItem(
                 label = "Workers Subdomain",
-                subtitle =
-                  if (effectiveSub.isNotBlank()) "$effectiveSub.workers.dev"
-                  else "Configure *.workers.dev",
+                subtitle = effectiveSub.takeIf { it.isNotBlank() }?.let { "$it.workers.dev" },
                 icon = Icons.Outlined.Language,
                 badgeText = "*.dev",
                 onClick = {
@@ -1290,7 +1421,6 @@ fun IdeWorkspaceScreen(
             )
             EdgeMenuItem(
               label = "Git Sync",
-              subtitle = "Optional repository sync",
               icon = Icons.Outlined.AccountTree,
               badgeText = "GIT",
               onClick = {

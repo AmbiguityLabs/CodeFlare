@@ -78,26 +78,35 @@ import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.RoseError
 import com.example.ui.theme.rememberGlassBorderStroke
 
+import com.example.data.remote.WorkerLanguage
+import com.example.editor.SyntaxHighlighter
+
 enum class DiffReviewIntent(
   val title: String,
-  val subtitle: String,
   val primaryActionLabel: String?,
 ) {
   WORKSPACE(
-    title = "Workspace Diff Inspector",
-    subtitle = "Compare local edits against deployed Worker baseline",
+    title = "Workspace Diff",
     primaryActionLabel = null,
   ),
   PRE_DEPLOY(
-    title = "Pre-Deploy Diff Review",
-    subtitle = "Review changes before publishing live to Cloudflare",
-    primaryActionLabel = "Deploy to Cloudflare",
+    title = "Pre-Deploy Diff",
+    primaryActionLabel = "Deploy",
   ),
   PRE_GIT_PUSH(
-    title = "Pre-Push Diff Review",
-    subtitle = "Review staged & working changes before pushing to GitHub",
-    primaryActionLabel = "Proceed to Push",
+    title = "Pre-Push Diff",
+    primaryActionLabel = "Push",
   ),
+}
+
+private fun languageForPath(path: String): WorkerLanguage {
+  val lower = path.lowercase()
+  return when {
+    lower.endsWith(".ts") || lower.endsWith(".tsx") || lower.endsWith(".mts") -> WorkerLanguage.TYPESCRIPT
+    lower.endsWith(".js") || lower.endsWith(".mjs") || lower.endsWith(".cjs") || lower.endsWith(".jsx") -> WorkerLanguage.JAVASCRIPT
+    lower.endsWith(".json") || lower.endsWith(".jsonc") -> WorkerLanguage.JSON
+    else -> WorkerLanguage.TEXT
+  }
 }
 
 @Composable
@@ -156,11 +165,11 @@ fun DiffReviewModal(
               overflow = TextOverflow.Ellipsis,
             )
             Text(
-              text = "${entries.size} changed file(s) • ${intent.subtitle}",
-              style = MaterialTheme.typography.labelSmall,
+              text = "${entries.size} changed",
+              fontFamily = JetBrainsMono,
+              fontSize = 10.5.sp,
               color = palette.textMuted,
               maxLines = 1,
-              overflow = TextOverflow.Ellipsis,
             )
           }
           IconButton(onClick = onDismiss) {
@@ -177,13 +186,8 @@ fun DiffReviewModal(
               verticalArrangement = Arrangement.spacedBy(8.dp),
               modifier = Modifier.padding(24.dp),
             ) {
-              Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = EmeraldLive, modifier = Modifier.size(40.dp))
-              Text("Working Tree Clean", style = MaterialTheme.typography.titleSmall, color = palette.textPrimary, fontWeight = FontWeight.SemiBold)
-              Text(
-                text = "No modified, added, or deleted files compared to the baseline.",
-                style = MaterialTheme.typography.bodySmall,
-                color = palette.textSecondary,
-              )
+              Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = EmeraldLive, modifier = Modifier.size(36.dp))
+              Text("Clean", style = MaterialTheme.typography.titleSmall, color = palette.textPrimary, fontWeight = FontWeight.SemiBold)
             }
           }
         } else {
@@ -328,13 +332,15 @@ fun DiffReviewModal(
                 if (showUnchangedContext) all else all.filter { it.type != DiffType.UNCHANGED }
               }
 
+            val activeLang = remember(activeEntry.path) { languageForPath(activeEntry.path) }
             Box(modifier = Modifier.weight(1f).fillMaxWidth().background(palette.editorBg)) {
               if (viewMode == DiffViewMode.UNIFIED) {
-                UnifiedDiffList(diffLines = diffLines)
+                UnifiedDiffList(diffLines = diffLines, language = activeLang)
               } else {
                 val sideRows = remember(diffLines) { MergeConflictResolver.buildSideBySideRows(diffLines) }
                 SideBySideDiffTable(
                   rows = sideRows,
+                  language = activeLang,
                   leftHeader = activeEntry.originalLabel,
                   rightHeader = activeEntry.modifiedLabel,
                 )
@@ -383,12 +389,15 @@ fun DiffReviewModal(
 }
 
 @Composable
-private fun UnifiedDiffList(diffLines: List<com.example.data.remote.DiffLine>) {
+private fun UnifiedDiffList(
+  diffLines: List<com.example.data.remote.DiffLine>,
+  language: WorkerLanguage,
+) {
   val palette = LocalIdePalette.current
   val horizScroll = rememberScrollState()
   if (diffLines.isEmpty()) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-      Text("No line differences.", style = MaterialTheme.typography.bodySmall, color = palette.textMuted)
+      Text("No changes", style = MaterialTheme.typography.bodySmall, color = palette.textMuted)
     }
     return
   }
@@ -396,8 +405,8 @@ private fun UnifiedDiffList(diffLines: List<com.example.data.remote.DiffLine>) {
     items(diffLines) { line ->
       val bg =
         when (line.type) {
-          DiffType.ADDED -> EmeraldLive.copy(alpha = 0.16f)
-          DiffType.REMOVED -> RoseError.copy(alpha = 0.16f)
+          DiffType.ADDED -> EmeraldLive.copy(alpha = 0.14f)
+          DiffType.REMOVED -> RoseError.copy(alpha = 0.14f)
           DiffType.UNCHANGED -> Color.Transparent
         }
       val gutterColor =
@@ -414,6 +423,10 @@ private fun UnifiedDiffList(diffLines: List<com.example.data.remote.DiffLine>) {
         }
       val oldNum = line.lineNumberOld?.toString()?.padStart(3) ?: "   "
       val newNum = line.lineNumberNew?.toString()?.padStart(3) ?: "   "
+      val styledLine =
+        remember(line.text, language, palette) {
+          SyntaxHighlighter.highlight(line.text, language, palette)
+        }
       Row(
         modifier = Modifier.fillMaxWidth().background(bg).padding(horizontal = 8.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -424,7 +437,7 @@ private fun UnifiedDiffList(diffLines: List<com.example.data.remote.DiffLine>) {
           color = gutterColor,
         )
         Text(
-          text = line.text,
+          text = styledLine,
           style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
           color = palette.textPrimary,
           softWrap = false,
@@ -437,6 +450,7 @@ private fun UnifiedDiffList(diffLines: List<com.example.data.remote.DiffLine>) {
 @Composable
 private fun SideBySideDiffTable(
   rows: List<com.example.editor.SideBySideDiffRow>,
+  language: WorkerLanguage,
   leftHeader: String,
   rightHeader: String,
 ) {
@@ -466,7 +480,7 @@ private fun SideBySideDiffTable(
 
     if (rows.isEmpty()) {
       Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("No line differences.", style = MaterialTheme.typography.bodySmall, color = palette.textMuted)
+        Text("No changes", style = MaterialTheme.typography.bodySmall, color = palette.textMuted)
       }
       return
     }
@@ -477,6 +491,7 @@ private fun SideBySideDiffTable(
           SideBySideCell(
             lineNumber = row.leftLineNumber,
             text = row.leftText,
+            language = language,
             kind = row.leftKind,
             modifier = Modifier.width(260.dp),
           )
@@ -484,6 +499,7 @@ private fun SideBySideDiffTable(
           SideBySideCell(
             lineNumber = row.rightLineNumber,
             text = row.rightText,
+            language = language,
             kind = row.rightKind,
             modifier = Modifier.width(260.dp),
           )
@@ -497,14 +513,15 @@ private fun SideBySideDiffTable(
 private fun SideBySideCell(
   lineNumber: Int?,
   text: String,
+  language: WorkerLanguage,
   kind: DiffCellKind,
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
   val bg =
     when (kind) {
-      DiffCellKind.REMOVED -> RoseError.copy(alpha = 0.16f)
-      DiffCellKind.ADDED -> EmeraldLive.copy(alpha = 0.16f)
+      DiffCellKind.REMOVED -> RoseError.copy(alpha = 0.14f)
+      DiffCellKind.ADDED -> EmeraldLive.copy(alpha = 0.14f)
       DiffCellKind.EMPTY_PAD -> palette.chromeSurface.copy(alpha = 0.35f)
       DiffCellKind.UNCHANGED -> Color.Transparent
     }
@@ -520,6 +537,10 @@ private fun SideBySideCell(
       DiffCellKind.ADDED -> "+"
       else -> " "
     }
+  val styledText =
+    remember(text, language, palette) {
+      SyntaxHighlighter.highlight(text, language, palette)
+    }
   Row(
     modifier = modifier.background(bg).padding(horizontal = 6.dp, vertical = 2.dp),
     verticalAlignment = Alignment.CenterVertically,
@@ -531,7 +552,7 @@ private fun SideBySideCell(
     )
     Spacer(Modifier.width(4.dp))
     Text(
-      text = text,
+      text = styledText,
       style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
       color = palette.textPrimary,
       softWrap = false,
@@ -729,6 +750,7 @@ fun ConflictResolverModal(
                 )
               }
             } else {
+              val conflictLang = remember(activeFile.path) { languageForPath(activeFile.path) }
               LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -736,6 +758,7 @@ fun ConflictResolverModal(
                 items(activeFile.hunks, key = { "${activeFile.path}:${it.index}:${it.startLine}" }) { hunk ->
                   ConflictHunkCard(
                     hunk = hunk,
+                    language = conflictLang,
                     onChoose = { choice -> onResolveHunk(activeFile.path, hunk.index, choice) },
                   )
                 }
@@ -754,7 +777,7 @@ fun ConflictResolverModal(
             shape = RoundedCornerShape(10.dp),
             modifier = Modifier.weight(1f),
           ) {
-            Text("Keep Markers in Editor")
+            Text("Keep Markers")
           }
           FilledTonalButton(
             onClick = onApplyResolvedToWorkspace,
@@ -765,7 +788,7 @@ fun ConflictResolverModal(
             Icon(Icons.Outlined.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
             Text(
-              text = if (totalRemaining == 0) "Apply Merge" else "Resolve $totalRemaining Left",
+              text = if (totalRemaining == 0) "Apply Merge" else "$totalRemaining Left",
               fontWeight = FontWeight.SemiBold,
             )
           }
@@ -778,9 +801,20 @@ fun ConflictResolverModal(
 @Composable
 private fun ConflictHunkCard(
   hunk: ConflictHunk,
+  language: WorkerLanguage,
   onChoose: (ConflictChoice) -> Unit,
 ) {
   val palette = LocalIdePalette.current
+  val localCode =
+    remember(hunk.localLines, language, palette) {
+      val raw = hunk.localLines.joinToString("\n").ifEmpty { "(empty)" }
+      SyntaxHighlighter.highlight(raw, language, palette)
+    }
+  val remoteCode =
+    remember(hunk.remoteLines, language, palette) {
+      val raw = hunk.remoteLines.joinToString("\n").ifEmpty { "(empty)" }
+      SyntaxHighlighter.highlight(raw, language, palette)
+    }
   Surface(
     color = palette.chromeSurface,
     shape = RoundedCornerShape(14.dp),
@@ -791,14 +825,13 @@ private fun ConflictHunkCard(
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Icon(Icons.Outlined.WarningAmber, contentDescription = null, tint = AmberWarn, modifier = Modifier.size(16.dp))
         Text(
-          text = "Conflict #${hunk.index + 1} (Lines ${hunk.startLine}–${hunk.endLine})",
+          text = "#${hunk.index + 1} · Ln ${hunk.startLine}–${hunk.endLine}",
           style = MaterialTheme.typography.labelMedium,
           color = AmberWarn,
           fontWeight = FontWeight.Bold,
         )
       }
 
-      // Local block
       Column(
         modifier =
           Modifier
@@ -816,14 +849,13 @@ private fun ConflictHunkCard(
         )
         Box(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
           Text(
-            text = hunk.localLines.joinToString("\n").ifEmpty { "(empty)" },
+            text = localCode,
             style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
             color = palette.textPrimary,
           )
         }
       }
 
-      // Remote block
       Column(
         modifier =
           Modifier
@@ -841,7 +873,7 @@ private fun ConflictHunkCard(
         )
         Box(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
           Text(
-            text = hunk.remoteLines.joinToString("\n").ifEmpty { "(empty)" },
+            text = remoteCode,
             style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
             color = palette.textPrimary,
           )

@@ -549,6 +549,7 @@ fun CommandPaletteDialog(
   commands: List<PaletteCommand>,
   onDismiss: () -> Unit,
 ) {
+  val palette = LocalIdePalette.current
   var query by remember { mutableStateOf("") }
   val filtered =
     remember(query, commands) {
@@ -561,19 +562,28 @@ fun CommandPaletteDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    title = { Text("Command Palette") },
+    containerColor = palette.chromeSurface,
+    title = {
+      Text(
+        text = "Command Palette",
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.SemiBold,
+        color = palette.textPrimary,
+      )
+    },
     text = {
-      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(
           value = query,
           onValueChange = { query = it },
-          placeholder = { Text("Type a command…") },
+          placeholder = { Text("Command or file…", fontFamily = JetBrainsMono, fontSize = 12.sp) },
           singleLine = true,
-          shape = RoundedCornerShape(14.dp),
+          textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = JetBrainsMono, fontSize = 12.5.sp),
+          shape = RoundedCornerShape(12.dp),
           modifier = Modifier.fillMaxWidth().testTag("command_palette_input"),
         )
         LazyColumn(
-          modifier = Modifier.heightIn(max = 320.dp),
+          modifier = Modifier.heightIn(max = 340.dp),
           verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
           items(filtered) { cmd ->
@@ -582,13 +592,41 @@ fun CommandPaletteDialog(
                 onDismiss()
                 cmd.action()
               },
-              shape = RoundedCornerShape(10.dp),
-              color = MaterialTheme.colorScheme.surfaceContainerLow,
+              shape = RoundedCornerShape(9.dp),
+              color = palette.editorBg,
               modifier = Modifier.fillMaxWidth(),
             ) {
-              Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                Text(cmd.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                Text(cmd.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+              Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+              ) {
+                Text(
+                  text = cmd.title,
+                  style = MaterialTheme.typography.bodyMedium,
+                  fontSize = 13.sp,
+                  fontWeight = FontWeight.Medium,
+                  color = palette.textPrimary,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                  modifier = Modifier.weight(1f),
+                )
+                if (cmd.subtitle.isNotBlank()) {
+                  Surface(
+                    shape = RoundedCornerShape(5.dp),
+                    color = palette.chromePill,
+                  ) {
+                    Text(
+                      text = cmd.subtitle,
+                      fontFamily = JetBrainsMono,
+                      fontSize = 9.sp,
+                      fontWeight = FontWeight.SemiBold,
+                      color = palette.textMuted,
+                      maxLines = 1,
+                      modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                  }
+                }
               }
             }
           }

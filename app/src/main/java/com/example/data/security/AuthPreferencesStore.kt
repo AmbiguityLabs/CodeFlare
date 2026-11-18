@@ -61,6 +61,11 @@ data class EditorSettings(
   val wordWrap: Boolean = false,
   val showLineNumbers: Boolean = true,
   val autoCloseBrackets: Boolean = true,
+  val stickyHeaders: Boolean = true,
+  val indentGuides: Boolean = true,
+  val codeFolding: Boolean = true,
+  val gutterDiffMarkers: Boolean = true,
+  val softKeyboardSuggestions: Boolean = false,
   val autoSaveEnabled: Boolean = true,
   val autoSaveIntervalSeconds: Int = 5,
   val defaultCompatibilityDate: String = "2024-11-01",
@@ -102,6 +107,11 @@ class AuthPreferencesStore(private val context: Context) {
     val WORD_WRAP = booleanPreferencesKey("editor_word_wrap")
     val SHOW_LINE_NUMBERS = booleanPreferencesKey("editor_line_numbers")
     val AUTO_CLOSE_BRACKETS = booleanPreferencesKey("editor_auto_brackets")
+    val STICKY_HEADERS = booleanPreferencesKey("editor_sticky_headers")
+    val INDENT_GUIDES = booleanPreferencesKey("editor_indent_guides")
+    val CODE_FOLDING = booleanPreferencesKey("editor_code_folding")
+    val GUTTER_DIFF_MARKERS = booleanPreferencesKey("editor_gutter_diff_markers")
+    val SOFT_KEYBOARD_SUGGESTIONS = booleanPreferencesKey("editor_soft_keyboard_suggestions")
     val AUTO_SAVE_ENABLED = booleanPreferencesKey("editor_auto_save_enabled")
     val AUTO_SAVE_INTERVAL_SEC = intPreferencesKey("editor_auto_save_interval_sec")
     val DEFAULT_COMPAT_DATE = stringPreferencesKey("deploy_default_compat_date")
@@ -163,6 +173,11 @@ class AuthPreferencesStore(private val context: Context) {
         wordWrap = prefs[Keys.WORD_WRAP] ?: false,
         showLineNumbers = prefs[Keys.SHOW_LINE_NUMBERS] ?: true,
         autoCloseBrackets = prefs[Keys.AUTO_CLOSE_BRACKETS] ?: true,
+        stickyHeaders = prefs[Keys.STICKY_HEADERS] ?: true,
+        indentGuides = prefs[Keys.INDENT_GUIDES] ?: true,
+        codeFolding = prefs[Keys.CODE_FOLDING] ?: true,
+        gutterDiffMarkers = prefs[Keys.GUTTER_DIFF_MARKERS] ?: true,
+        softKeyboardSuggestions = prefs[Keys.SOFT_KEYBOARD_SUGGESTIONS] ?: false,
         autoSaveEnabled = prefs[Keys.AUTO_SAVE_ENABLED] ?: true,
         autoSaveIntervalSeconds = (prefs[Keys.AUTO_SAVE_INTERVAL_SEC] ?: 5).coerceIn(3, 60),
         defaultCompatibilityDate =
@@ -261,6 +276,11 @@ class AuthPreferencesStore(private val context: Context) {
       prefs[Keys.WORD_WRAP] = next.wordWrap
       prefs[Keys.SHOW_LINE_NUMBERS] = next.showLineNumbers
       prefs[Keys.AUTO_CLOSE_BRACKETS] = next.autoCloseBrackets
+      prefs[Keys.STICKY_HEADERS] = next.stickyHeaders
+      prefs[Keys.INDENT_GUIDES] = next.indentGuides
+      prefs[Keys.CODE_FOLDING] = next.codeFolding
+      prefs[Keys.GUTTER_DIFF_MARKERS] = next.gutterDiffMarkers
+      prefs[Keys.SOFT_KEYBOARD_SUGGESTIONS] = next.softKeyboardSuggestions
       prefs[Keys.AUTO_SAVE_ENABLED] = next.autoSaveEnabled
       prefs[Keys.AUTO_SAVE_INTERVAL_SEC] = next.autoSaveIntervalSeconds.coerceIn(3, 60)
       prefs[Keys.DEFAULT_COMPAT_DATE] = next.defaultCompatibilityDate.trim().ifBlank { "2024-11-01" }

@@ -101,6 +101,22 @@ import com.example.editor.FileDiffEntry
 import com.example.editor.MergeConflictFile
 import com.example.editor.MergeConflictResolver
 import com.example.editor.WranglerSyncParser
+import com.example.idecore.IdeBackgroundThreads
+import com.example.idecore.IdePerfSampler
+import com.example.idecore.LocalHistorySnapshot
+import com.example.idecore.LocalHistoryStore
+import com.example.idecore.WorkspaceEvent
+import com.example.idecore.WorkspaceEventBus
+import com.example.idecore.WorkspaceFileOpJournal
+import com.example.idecore.completion.CompletionStatsStore
+import com.example.idecore.completion.EdgeCompletionEngine
+import com.example.idecore.completion.EdgeCompletionItem
+import com.example.idecore.completion.MemberUsageIndexer
+import com.example.idecore.search.ProjectSearchOptions
+import com.example.idecore.search.ProjectSymbolHit
+import com.example.idecore.search.ProjectTextMatch
+import com.example.idecore.search.RenamePreview
+import com.example.idecore.search.WorkspaceSearchAndRefactor
 import com.example.ui.components.DiffReviewIntent
 import com.example.terminal.LinuxTerminalEngine
 import com.example.terminal.ShellExecutionResult
@@ -125,7 +141,9 @@ import org.json.JSONTokener
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -333,6 +351,7 @@ data class IdeUiState(
   val isTailRunning: Boolean = false,
   val tailLogs: List<ConsoleLogEntry> = emptyList(),
   val consoleLogs: List<ConsoleLogEntry> = emptyList(),
+  val lastUndoableFileOpLabel: String? = null,
   val statusMessage: String? = null,
 ) {
   val activeFile: WorkerFile?
@@ -423,6 +442,18 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   private val ramDb = RamWorkspaceDatabase()
   private val terminalIdGen = AtomicLong(1L)
 
+  // IDE Core engines adapted from CodeAssist ide-core
+  private val ideCoreIndexExecutor = IdeBackgroundThreads.single("ide-core-index")
+  private val localHistoryStore = LocalHistoryStore(File(application.filesDir, "local_history"))
+  private val fileOpJournal = WorkspaceFileOpJournal()
+  private val completionStatsStore =
+    CompletionStatsStore(File(application.filesDir, "ide_meta/completion_stats.properties"))
+  private val memberUsageIndexer = MemberUsageIndexer()
+  private val completionEngine = EdgeCompletionEngine(completionStatsStore, memberUsageIndexer)
+  val idePerfSampler = IdePerfSampler()
+  val workspaceEventBus = WorkspaceEventBus()
+  private val lastHistoryRecordMs = ConcurrentHashMap<String, Long>()
+
   private val _uiState = MutableStateFlow(IdeUiState())
   val uiState: StateFlow<IdeUiState> = _uiState.asStateFlow()
 
@@ -477,6 +508,44 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   init {
+    workspaceEventBus.subscribe { event ->
+      when (event) {
+        is WorkspaceEvent.FileSaved -> {
+          val lang = _uiState.value.workspace?.files?.firstOrNull { it.path == event.path }?.language
+          if (lang != null) {
+            ideCoreIndexExecutor.execute {
+              memberUsageIndexer.updateFile(event.path, event.after, lang)
+            }
+          }
+        }
+        is WorkspaceEvent.FileDeleted -> {
+          ideCoreIndexExecutor.execute { memberUsageIndexer.removeFile(event.path) }
+        }
+        is WorkspaceEvent.FilesRefactored -> {
+          val ws = _uiState.value.workspace
+          ideCoreIndexExecutor.execute { memberUsageIndexer.indexWorkspace(ws) }
+        }
+        else -> Unit
+      }
+    }
+
+    viewModelScope.launch {
+      _uiState
+        .map { it.workspace?.scriptName }
+        .distinctUntilChanged()
+        .collect { _ ->
+          val state = _uiState.value
+          val ws = state.workspace
+          ideCoreIndexExecutor.execute { memberUsageIndexer.indexWorkspace(ws) }
+          val key = activeWorkspaceKey(state)
+          val latestLabel = key?.let { fileOpJournal.latestForWorkspace(it)?.op?.label }
+          _uiState.update {
+            if (it.lastUndoableFileOpLabel != latestLabel) it.copy(lastUndoableFileOpLabel = latestLabel)
+            else it
+          }
+        }
+    }
+
     viewModelScope.launch {
       val persistedApi = draftManager.loadApiTesterState()
       _uiState.update {
@@ -2271,6 +2340,20 @@ export default {
             _uiState.update { if (it.ramDbStats != stats) it.copy(ramDbStats = stats) else it }
           }
       }
+      val wsKey = ramKey ?: "default"
+      val histKey = "$wsKey::$path"
+      val nowMs = System.currentTimeMillis()
+      val prevHistMs = lastHistoryRecordMs[histKey] ?: 0L
+      if (bumpRevision || nowMs - prevHistMs >= 4_000L) {
+        lastHistoryRecordMs[histKey] = nowMs
+        localHistoryStore.recordSnapshot(
+          workspaceKey = wsKey,
+          filePath = path,
+          before = prevValue.text,
+          after = newValue.text,
+        )
+      }
+      workspaceEventBus.publish(WorkspaceEvent.FileSaved(wsKey, path, prevValue.text, newValue.text))
       scheduleDraftSave(syncRamDb = false)
     }
   }
@@ -2363,10 +2446,13 @@ export default {
   }
 
   fun formatActiveFile() {
+    flushActiveEditorBuffer()
     val file = _uiState.value.activeFile ?: return
     if (file.isVirtualReadOnly) return
     val formatted = CodeFormatter.format(file.content, file.language, _uiState.value.editorSettings.tabSize)
     if (formatted != file.content) {
+      val wsKey = activeWorkspaceKey() ?: "default"
+      localHistoryStore.recordSnapshot(wsKey, file.path, file.content, formatted, label = "Format")
       val cursor = formatted.length.coerceAtMost(_uiState.value.activeTextFieldValue.selection.start)
       updateEditorValue(TextFieldValue(formatted, TextRange(cursor)), bumpRevision = true)
       _uiState.update { it.copy(statusMessage = "Formatted ${file.fileName}") }
@@ -2531,6 +2617,8 @@ export default {
         hasModuleSetChanged = true,
       )
     val ramKey = activeWorkspaceKey()
+    val wsKey = ramKey ?: "default"
+    val opEntry = fileOpJournal.record(WorkspaceFileOpJournal.FileOp.Created(wsKey, clean))
     val diags = reanalyzeSingleFile(newFile, updatedFiles)
     _uiState.update { state ->
       val nextFields = state.editorFieldValues + (clean to TextFieldValue(starter))
@@ -2545,9 +2633,11 @@ export default {
         activeFilePath = clean,
         editorFieldValues = nextFields,
         diagnostics = diags,
+        lastUndoableFileOpLabel = opEntry.op.label,
         ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else state.ramDbStats,
       )
     }
+    workspaceEventBus.publish(WorkspaceEvent.FileCreated(wsKey, clean))
     if (ramKey != null) persistWorkspaceToProjectDirAsync(ramKey)
     openFileTab(clean, recordHistory = true)
   }
@@ -2856,6 +2946,19 @@ export default {
         hasModuleSetChanged = true,
       )
     val ramKey = activeWorkspaceKey()
+    val wsKey = ramKey ?: "default"
+    val wasOpenTab = filePath in _uiState.value.openTabPaths
+    val wasEntryPoint = ws.entryModulePath == filePath
+    localHistoryStore.recordSnapshot(wsKey, filePath, target.content, target.content, label = "Deleted")
+    val opEntry =
+      fileOpJournal.record(
+        WorkspaceFileOpJournal.FileOp.Deleted(
+          workspaceKey = wsKey,
+          file = target,
+          wasOpenTab = wasOpenTab,
+          wasEntryPoint = wasEntryPoint,
+        ),
+      )
     fileDiagnosticsCache.remove(filePath)
     val diags = rebuildDiagnosticsFull(updatedFiles)
 
@@ -2877,10 +2980,12 @@ export default {
         activeFilePath = nextActive,
         editorFieldValues = nextFields,
         diagnostics = diags,
+        lastUndoableFileOpLabel = opEntry.op.label,
         ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else state.ramDbStats,
         statusMessage = "Removed '$filePath'",
       )
     }
+    workspaceEventBus.publish(WorkspaceEvent.FileDeleted(wsKey, filePath))
     if (ramKey != null) persistWorkspaceToProjectDirAsync(ramKey)
     appendLog("INFO", "Removed module '$filePath' from '${ws.scriptName}'")
     scheduleDraftSave()
@@ -2908,6 +3013,8 @@ export default {
     val nextFieldValues = (_uiState.value.editorFieldValues - oldPath) + (newPath to oldFieldVal)
     val nextWs = ws.copy(files = updatedFiles, entryModulePath = nextEntry, hasModuleSetChanged = true)
     val ramKey = activeWorkspaceKey()
+    val wsKey = ramKey ?: "default"
+    val opEntry = fileOpJournal.record(WorkspaceFileOpJournal.FileOp.Renamed(wsKey, oldPath, newPath))
     if (ramKey != null) {
       ramDb.updateWorkspace(ramKey) { rec ->
         rec.copy(
@@ -2928,10 +3035,12 @@ export default {
         activeFilePath = nextActive,
         editorFieldValues = nextFieldValues,
         diagnostics = diags,
+        lastUndoableFileOpLabel = opEntry.op.label,
         ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else state.ramDbStats,
         statusMessage = "Renamed '$oldPath' -> '$newPath'",
       )
     }
+    workspaceEventBus.publish(WorkspaceEvent.FileRenamed(wsKey, oldPath, newPath))
     scheduleDraftSave()
   }
 
@@ -2972,10 +3081,16 @@ export default {
   }
 
   fun revertFile(filePath: String) {
+    flushActiveEditorBuffer()
     val key = activeWorkspaceKey()
+    val preRevertContent = _uiState.value.workspace?.files?.firstOrNull { it.path == filePath }?.content
     if (key != null) {
       val updated = ramDb.revertFileToImportedBaseline(key, filePath) ?: return
       val ws = updated.workingWorkspace
+      val afterContent = ws.files.firstOrNull { it.path == filePath }?.content
+      if (preRevertContent != null && afterContent != null && preRevertContent != afterContent) {
+        localHistoryStore.recordSnapshot(key, filePath, preRevertContent, afterContent, label = "Revert")
+      }
       persistWorkspaceToProjectDirAsync(key)
       val diags = rebuildDiagnosticsFull(ws.files)
       _uiState.update { state ->
@@ -8095,6 +8210,289 @@ jobs:
     _uiState.update { state ->
       val next = (state.consoleLogs + ConsoleLogEntry(ts, level, message)).takeLast(120)
       state.copy(consoleLogs = next)
+    }
+  }
+
+  // --- IDE Core Engines (Completion, Symbols, Find in Files, Local History, Smart Rename, FileOp Undo) ---
+
+  fun completeAtCursor(
+    filePath: String,
+    documentText: CharSequence,
+    cursor: Int,
+    language: com.example.data.remote.WorkerLanguage,
+  ): List<EdgeCompletionItem> {
+    val t0 = System.nanoTime()
+    val items =
+      completionEngine.complete(
+        workspace = _uiState.value.workspace,
+        filePath = filePath,
+        documentText = documentText,
+        cursor = cursor,
+        language = language,
+      )
+    idePerfSampler.record("completion", (System.nanoTime() - t0) / 1_000_000L)
+    return items
+  }
+
+  fun noteCompletionAccepted(item: EdgeCompletionItem) {
+    ideCoreIndexExecutor.execute { completionEngine.noteAccepted(item) }
+  }
+
+  fun searchProjectSymbols(query: String): List<ProjectSymbolHit> {
+    flushActiveEditorBuffer()
+    val t0 = System.nanoTime()
+    val state = _uiState.value
+    val hits = WorkspaceSearchAndRefactor.searchSymbols(state.workspace, state.editorFieldValues, query)
+    idePerfSampler.record("symbolSearch", (System.nanoTime() - t0) / 1_000_000L)
+    return hits
+  }
+
+  fun findInWorkspaceFiles(
+    query: String,
+    options: ProjectSearchOptions,
+  ): List<ProjectTextMatch> {
+    flushActiveEditorBuffer()
+    val t0 = System.nanoTime()
+    val state = _uiState.value
+    val matches = WorkspaceSearchAndRefactor.findInFiles(state.workspace, state.editorFieldValues, query, options)
+    idePerfSampler.record("findInFiles", (System.nanoTime() - t0) / 1_000_000L)
+    return matches
+  }
+
+  fun loadActiveFileHistory(): List<LocalHistorySnapshot> {
+    flushActiveEditorBuffer()
+    localHistoryStore.flush()
+    val state = _uiState.value
+    val path = state.activeFilePath ?: return emptyList()
+    val key = activeWorkspaceKey(state) ?: "default"
+    return localHistoryStore.snapshots(key, path)
+  }
+
+  fun readActiveFileHistorySnapshot(snapshotId: Long): String? {
+    val state = _uiState.value
+    val path = state.activeFilePath ?: return null
+    val key = activeWorkspaceKey(state) ?: "default"
+    return localHistoryStore.readSnapshot(key, path, snapshotId)
+  }
+
+  fun restoreActiveFileFromHistory(snapshotId: Long) {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val file = state.activeFile ?: return
+    if (file.isVirtualReadOnly) return
+    val key = activeWorkspaceKey(state) ?: "default"
+    val restored = localHistoryStore.readSnapshot(key, file.path, snapshotId) ?: return
+    if (restored == file.content) return
+    localHistoryStore.recordSnapshot(key, file.path, file.content, restored, label = "Restore")
+    applyDirectTextValue(file.path, TextFieldValue(restored))
+    _uiState.update { it.copy(statusMessage = "Restored ${file.fileName}") }
+  }
+
+  fun previewSymbolRename(oldName: String): RenamePreview {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    return WorkspaceSearchAndRefactor.previewRename(state.workspace, state.editorFieldValues, oldName)
+  }
+
+  fun applySmartRenameSymbol(oldName: String, newName: String) {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val ws = state.workspace ?: return
+    val t0 = System.nanoTime()
+    val result = WorkspaceSearchAndRefactor.applyRename(ws.files, state.editorFieldValues, oldName, newName)
+    idePerfSampler.record("rename", (System.nanoTime() - t0) / 1_000_000L)
+    if (result.totalReplacements == 0 || result.updatedContents.isEmpty()) {
+      _uiState.update { it.copy(statusMessage = "No matches for '$oldName'") }
+      return
+    }
+    val ramKey = activeWorkspaceKey(state)
+    val wsKey = ramKey ?: "default"
+
+    val updatedFiles =
+      ws.files.map { f ->
+        val nextText = result.updatedContents[f.path]
+        if (nextText != null) {
+          localHistoryStore.recordSnapshot(wsKey, f.path, f.content, nextText, label = "Rename")
+          f.copy(content = nextText)
+        } else {
+          f
+        }
+      }
+    val nextWs = ws.copy(files = updatedFiles)
+    val nextFields = state.editorFieldValues.toMutableMap()
+    result.updatedContents.forEach { (path, content) ->
+      val prevSel = state.editorFieldValues[path]?.selection?.start ?: 0
+      nextFields[path] = TextFieldValue(content, TextRange(prevSel.coerceIn(0, content.length)))
+    }
+    val diags = rebuildDiagnosticsFull(updatedFiles)
+    if (ramKey != null) {
+      ramDb.updateWorkspace(ramKey) { rec ->
+        rec.copy(workingWorkspace = nextWs, fieldValues = nextFields)
+      }
+      persistWorkspaceToProjectDirAsync(ramKey)
+    }
+    _uiState.update { cur ->
+      cur.copy(
+        workspace = nextWs,
+        editorFieldValues = nextFields,
+        editorRevision = cur.editorRevision + 1L,
+        diagnostics = diags,
+        ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else cur.ramDbStats,
+        statusMessage = "Renamed $oldName → $newName (${result.totalReplacements} in ${result.updatedContents.size}f)",
+      )
+    }
+    workspaceEventBus.publish(WorkspaceEvent.FilesRefactored(wsKey, result.updatedContents.keys.toList()))
+    scheduleDraftSave()
+  }
+
+  fun undoLastFileOperation() {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val ws = state.workspace ?: return
+    val ramKey = activeWorkspaceKey(state)
+    val wsKey = ramKey ?: "default"
+    val entry = fileOpJournal.takeLatestForWorkspace(wsKey) ?: return
+    val nextLabel = fileOpJournal.latestForWorkspace(wsKey)?.op?.label
+
+    when (val op = entry.op) {
+      is WorkspaceFileOpJournal.FileOp.Deleted -> {
+        if (ws.files.any { it.path == op.file.path }) {
+          _uiState.update { it.copy(lastUndoableFileOpLabel = nextLabel) }
+          return
+        }
+        val nextEntry = if (op.wasEntryPoint) op.file.path else ws.entryModulePath
+        val restoredFiles =
+          ProjectDirectoryManager.organizeWorkspaceFiles(
+            (ws.files.filterNot { it.isVirtualReadOnly } + op.file).map { it.copy(isEntryPoint = it.path == nextEntry) } +
+              ws.files.filter { it.isVirtualReadOnly },
+          )
+        val nextWs = ws.copy(files = restoredFiles, entryModulePath = nextEntry, hasModuleSetChanged = true)
+        val nextTabs =
+          if (op.file.path in state.openTabPaths) state.openTabPaths
+          else state.openTabPaths + op.file.path
+        val nextFields = state.editorFieldValues + (op.file.path to TextFieldValue(op.file.content))
+        val diags = rebuildDiagnosticsFull(restoredFiles)
+        if (ramKey != null) {
+          ramDb.updateWorkspace(ramKey) { rec ->
+            rec.copy(
+              workingWorkspace = nextWs,
+              openTabPaths = nextTabs,
+              activeFilePath = op.file.path,
+              fieldValues = nextFields,
+            )
+          }
+          persistWorkspaceToProjectDirAsync(ramKey)
+        }
+        _uiState.update { cur ->
+          cur.copy(
+            workspace = nextWs,
+            openTabPaths = nextTabs,
+            activeFilePath = op.file.path,
+            editorFieldValues = nextFields,
+            editorRevision = cur.editorRevision + 1L,
+            diagnostics = diags,
+            lastUndoableFileOpLabel = nextLabel,
+            ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else cur.ramDbStats,
+            statusMessage = "Restored ${op.file.fileName}",
+          )
+        }
+        workspaceEventBus.publish(WorkspaceEvent.FileCreated(wsKey, op.file.path))
+        scheduleDraftSave()
+      }
+
+      is WorkspaceFileOpJournal.FileOp.Renamed -> {
+        val target = ws.files.firstOrNull { it.path == op.newPath }
+        if (target == null || ws.files.any { it.path == op.oldPath }) {
+          _uiState.update { it.copy(lastUndoableFileOpLabel = nextLabel) }
+          return
+        }
+        val restoredFiles =
+          ProjectDirectoryManager.organizeWorkspaceFiles(
+            ws.files.map { f ->
+              if (f.path == op.newPath) {
+                f.copy(path = op.oldPath, contentType = MultipartWorkerParser.inferModuleMimeType(op.oldPath))
+              } else f
+            },
+          )
+        val nextEntry = if (ws.entryModulePath == op.newPath) op.oldPath else ws.entryModulePath
+        val nextTabs = state.openTabPaths.map { if (it == op.newPath) op.oldPath else it }
+        val nextActive = if (state.activeFilePath == op.newPath) op.oldPath else state.activeFilePath
+        val prevField = state.editorFieldValues[op.newPath] ?: TextFieldValue(target.content)
+        val nextFields = (state.editorFieldValues - op.newPath) + (op.oldPath to prevField)
+        val nextWs = ws.copy(files = restoredFiles, entryModulePath = nextEntry, hasModuleSetChanged = true)
+        val diags = rebuildDiagnosticsFull(restoredFiles)
+        if (ramKey != null) {
+          ramDb.updateWorkspace(ramKey) { rec ->
+            rec.copy(
+              workingWorkspace = nextWs,
+              openTabPaths = nextTabs,
+              activeFilePath = nextActive,
+              fieldValues = nextFields,
+            )
+          }
+          persistWorkspaceToProjectDirAsync(ramKey)
+        }
+        _uiState.update { cur ->
+          cur.copy(
+            workspace = nextWs,
+            openTabPaths = nextTabs,
+            activeFilePath = nextActive,
+            editorFieldValues = nextFields,
+            editorRevision = cur.editorRevision + 1L,
+            diagnostics = diags,
+            lastUndoableFileOpLabel = nextLabel,
+            ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else cur.ramDbStats,
+            statusMessage = "Restored ${op.oldPath}",
+          )
+        }
+        workspaceEventBus.publish(WorkspaceEvent.FileRenamed(wsKey, op.newPath, op.oldPath))
+        scheduleDraftSave()
+      }
+
+      is WorkspaceFileOpJournal.FileOp.Created -> {
+        val editableRemaining = ws.files.filter { !it.isVirtualReadOnly && it.path != op.path }
+        if (editableRemaining.isEmpty() || ws.files.none { it.path == op.path }) {
+          _uiState.update { it.copy(lastUndoableFileOpLabel = nextLabel) }
+          return
+        }
+        val nextEntry =
+          if (ws.entryModulePath == op.path) editableRemaining.first().path else ws.entryModulePath
+        val updatedFiles =
+          editableRemaining.map { it.copy(isEntryPoint = it.path == nextEntry) } +
+            ws.files.filter { it.isVirtualReadOnly }
+        val nextTabs = state.openTabPaths.filterNot { it == op.path }
+        val nextActive =
+          if (state.activeFilePath == op.path) nextTabs.lastOrNull() ?: nextEntry else state.activeFilePath
+        val nextFields = state.editorFieldValues - op.path
+        val nextWs = ws.copy(files = updatedFiles, entryModulePath = nextEntry, hasModuleSetChanged = true)
+        val diags = rebuildDiagnosticsFull(updatedFiles)
+        if (ramKey != null) {
+          ramDb.updateWorkspace(ramKey) { rec ->
+            rec.copy(
+              workingWorkspace = nextWs,
+              openTabPaths = nextTabs,
+              activeFilePath = nextActive,
+              fieldValues = nextFields,
+            )
+          }
+          persistWorkspaceToProjectDirAsync(ramKey)
+        }
+        _uiState.update { cur ->
+          cur.copy(
+            workspace = nextWs,
+            openTabPaths = nextTabs,
+            activeFilePath = nextActive,
+            editorFieldValues = nextFields,
+            editorRevision = cur.editorRevision + 1L,
+            diagnostics = diags,
+            lastUndoableFileOpLabel = nextLabel,
+            ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else cur.ramDbStats,
+            statusMessage = "Undid create ${op.path.substringAfterLast('/')}",
+          )
+        }
+        workspaceEventBus.publish(WorkspaceEvent.FileDeleted(wsKey, op.path))
+        scheduleDraftSave()
+      }
     }
   }
 }
