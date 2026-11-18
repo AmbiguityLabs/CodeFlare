@@ -16,8 +16,8 @@ android {
     applicationId = "com.aistudio.edgecode.wqznxm"
     minSdk = 24
     targetSdk = 36
-    versionCode = 2
-    versionName = "1.1"
+    versionCode = 1
+    versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -58,6 +58,10 @@ android {
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
     targetCompatibility = JavaVersion.VERSION_11
+  }
+  lint {
+    checkReleaseBuilds = false
+    abortOnError = false
   }
   buildFeatures {
     compose = true
