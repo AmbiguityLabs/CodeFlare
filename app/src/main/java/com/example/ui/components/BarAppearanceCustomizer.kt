@@ -49,6 +49,7 @@ import com.example.data.security.PopupMenuStyleConfig
 import com.example.ui.screens.settings.SettingsFoldableSection
 import com.example.ui.screens.settings.SettingsToggleRow
 import com.example.ui.theme.JetBrainsMono
+import com.example.ui.theme.LocalIconLabelBehavior
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.LocalPopupMenuStyle
 import com.example.ui.theme.UiStyleVersion
@@ -66,6 +67,7 @@ fun FloatingBarCustomizerSection(
   initiallyExpanded: Boolean = true,
 ) {
   val palette = LocalIdePalette.current
+  val globalLabelBehavior = LocalIconLabelBehavior.current
   val cfg = config.normalized()
   var selectedPreviewIndex by remember { mutableIntStateOf(0) }
   val summaryText = "${cfg.heightDp}dp · ${cfg.widthPercent}% · ${(cfg.opacity * 100f).roundToInt()}%"
@@ -222,12 +224,20 @@ fun FloatingBarCustomizerSection(
           HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.75.dp)
 
           SettingsToggleRow(
-            title = "Show Labels",
+            title = "Always Show All Labels",
             checked = cfg.showLabels,
             onCheckedChange = { show -> onChange { it.copy(showLabels = show).normalized() } },
             horizontalPadding = 2.dp,
             modifier = Modifier.testTag("${tagPrefix}_labels_toggle"),
           )
+          if (!cfg.showLabels) {
+            Text(
+              text = "Global button labels: ${globalLabelBehavior.label}",
+              fontSize = 11.sp,
+              color = palette.textMuted,
+              modifier = Modifier.padding(start = 2.dp, bottom = 4.dp),
+            )
+          }
           SettingsToggleRow(
             title = "Counter Badges",
             checked = cfg.showBadges,

@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
@@ -137,6 +138,11 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
             Offset(gutterW, topY),
             Size(size.width - gutterW, bandH),
           )
+          drawRect(
+            palette.activePillFg.copy(alpha = 0.78f),
+            Offset(gutterW, topY + 2f),
+            Size(2.dp.toPx(), (bandH - 4f).coerceAtLeast(4f)),
+          )
         }
       }
     }
@@ -175,9 +181,9 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
     // 1c. Per-line highlights, text, squiggles, brackets, composing underline
     val selBg =
       if (p.isSelfDragMoveActive) {
-        palette.activePillBg.copy(alpha = 0.24f)
+        lerp(palette.activePillBg, palette.ctaBg, 0.25f).copy(alpha = 0.18f)
       } else {
-        palette.activePillBg.copy(alpha = if (palette.isDark) 0.72f else 0.65f)
+        lerp(palette.activePillBg, palette.ctaBg, 0.30f).copy(alpha = if (palette.isDark) 0.38f else 0.30f)
       }
     val symBg = palette.activePillFg.copy(alpha = 0.14f)
     val bracketFill = palette.activePillBg.copy(alpha = 0.9f)
@@ -387,10 +393,10 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
     val gutterBg = if (p.hasCustomBg) palette.editorGutterBg.copy(alpha = 0.86f) else palette.editorGutterBg
     drawRect(gutterBg, Offset.Zero, Size(gutterW, size.height))
     drawLine(
-      color = palette.border.copy(alpha = 0.55f),
-      start = Offset(gutterW - 0.75.dp.toPx(), 0f),
-      end = Offset(gutterW - 0.75.dp.toPx(), size.height),
-      strokeWidth = 0.75.dp.toPx(),
+      color = palette.border.copy(alpha = 0.40f),
+      start = Offset(gutterW - 0.5.dp.toPx(), 0f),
+      end = Offset(gutterW - 0.5.dp.toPx(), size.height),
+      strokeWidth = 0.5.dp.toPx(),
     )
 
     val foldZoneW = if (geom.codeFolding) 18.dp.toPx() else 4.dp.toPx()
@@ -469,7 +475,7 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
       val numStr = (docLine + 1).toString()
       val style =
         p.gutterStyle.copy(
-          color = if (isActive) palette.activePillFg else palette.textMuted.copy(alpha = 0.72f),
+          color = if (isActive) palette.activePillFg else palette.textMuted.copy(alpha = 0.50f),
           fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
         )
       val measured = p.gutterMeasurer.measure(numStr, style = style, maxLines = 1)

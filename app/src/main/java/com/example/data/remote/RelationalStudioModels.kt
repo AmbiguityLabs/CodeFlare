@@ -130,69 +130,6 @@ data class D1MigrationState(
     get() = migrations.count { it.status != D1MigrationStatus.APPLIED }
 }
 
-enum class TopologyNodeKind(val badge: String) {
-  GITHUB_REPO("GIT"),
-  ROUTE_DOMAIN("ROUTE"),
-  CRON("CRON"),
-  WORKER("WORKER"),
-  D1_DB("D1"),
-  KV_NS("KV"),
-  R2_BUCKET("R2"),
-  QUEUE("QUEUE"),
-  DO_NAMESPACE("DO"),
-  SERVICE_WORKER("SVC"),
-  AI_BINDING("AI"),
-  ENV_VAR("ENV"),
-  MISSING_BINDING("UNBOUND"),
-}
-
-enum class TopologyEdgeStatus {
-  WIRED,
-  UNUSED_IN_CODE,
-  UNDECLARED_BINDING,
-}
-
-data class CodeBindingUsage(
-  val bindingName: String,
-  val filePath: String,
-  val line: Int,
-  val column: Int,
-  val memberAccess: String? = null,
-)
-
-data class TopologyNode(
-  val id: String,
-  val label: String,
-  val subtitle: String,
-  val kind: TopologyNodeKind,
-  val columnLayer: Int,
-  val bindingName: String? = null,
-  val resourceId: String? = null,
-  val filePath: String? = null,
-  val lineNumber: Int? = null,
-  val status: TopologyEdgeStatus = TopologyEdgeStatus.WIRED,
-  val badgeCount: Int? = null,
-)
-
-data class TopologyEdge(
-  val id: String,
-  val fromNodeId: String,
-  val toNodeId: String,
-  val label: String,
-  val status: TopologyEdgeStatus = TopologyEdgeStatus.WIRED,
-)
-
-data class EdgeTopologyGraph(
-  val nodes: List<TopologyNode> = emptyList(),
-  val edges: List<TopologyEdge> = emptyList(),
-  val codeUsages: List<CodeBindingUsage> = emptyList(),
-  val missingBindingNames: List<String> = emptyList(),
-  val unusedBindingNames: List<String> = emptyList(),
-) {
-  val driftCount: Int
-    get() = missingBindingNames.size + unusedBindingNames.size
-}
-
 data class XRayCorrelatedLog(
   val timestamp: String,
   val level: String,

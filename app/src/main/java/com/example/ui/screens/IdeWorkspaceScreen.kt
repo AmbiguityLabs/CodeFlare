@@ -17,6 +17,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -34,6 +35,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -857,19 +859,19 @@ fun IdeWorkspaceScreen(
               Modifier
                 .fillMaxWidth()
                 .background(palette.chromeBg)
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .padding(horizontal = 4.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
           ) {
             IconButton(
               onClick = viewModel::closeWorkspaceToHome,
-              modifier = Modifier.size(38.dp).testTag("back_to_home_button"),
+              modifier = Modifier.size(34.dp).testTag("back_to_home_button"),
             ) {
               Icon(
                 imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
                 contentDescription = "Back to Home",
                 tint = palette.textPrimary,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(18.dp),
               )
             }
 
@@ -877,15 +879,16 @@ fun IdeWorkspaceScreen(
               modifier =
                 Modifier
                   .weight(1f)
-                  .clip(RoundedCornerShape(8.dp))
+                  .clip(RoundedCornerShape(6.dp))
                   .clickable { showCommandPalette = true }
-                  .padding(horizontal = 4.dp, vertical = 4.dp),
+                  .padding(horizontal = 4.dp, vertical = 3.dp),
               verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(5.dp),
+              horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
               Text(
                 text = uiState.workspace?.scriptName ?: "Project",
                 style = MaterialTheme.typography.titleSmall,
+                fontSize = 13.5.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = palette.textPrimary,
                 maxLines = 1,
@@ -896,7 +899,7 @@ fun IdeWorkspaceScreen(
                 imageVector = Icons.Outlined.Search,
                 contentDescription = "Open Command Palette",
                 tint = palette.textMuted,
-                modifier = Modifier.size(14.dp),
+                modifier = Modifier.size(13.dp),
               )
               val fileCount = uiState.workspace?.files?.count { !it.isVirtualReadOnly } ?: 0
               val dirtyCount = uiState.workspace?.files?.count { it.isDirty } ?: 0
@@ -912,58 +915,72 @@ fun IdeWorkspaceScreen(
               )
             }
 
-            if (!isExpanded && uiState.workspace != null) {
-              IconRevealButton(
-                icon = Icons.Outlined.FolderOpen,
-                revealedLabel = "Files",
-                onClick = { scope.launch { drawerState.open() } },
-                height = 34.dp,
-                tag = "workspace_quick_files_button",
-              )
-            }
-
             if (uiState.workspace != null) {
-              IconRevealButton(
-                icon = Icons.Outlined.PlayArrow,
-                revealedLabel = "Run CLI",
-                isBusy = uiState.isRunningLocalScript,
-                active = uiState.projectMode == ProjectMode.TEST && uiState.activeBottomTab == BottomPanelTab.LOCAL_RUN,
-                onClick = { viewModel.runWorkspaceLocally(openTestWorkspace = true) },
-                height = 34.dp,
-                tag = "workspace_local_run_button",
-              )
+              Row(
+                modifier = Modifier.weight(1.1f, fill = false).horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                if (!isExpanded) {
+                  IconRevealButton(
+                    icon = Icons.Outlined.FolderOpen,
+                    revealedLabel = "Files",
+                    minimal = true,
+                    onClick = { scope.launch { drawerState.open() } },
+                    height = 28.dp,
+                    iconSize = 16.dp,
+                    tag = "workspace_quick_files_button",
+                  )
+                }
 
-              if (uiState.isLocalScratchpad) {
                 IconRevealButton(
-                  icon = Icons.Outlined.CloudOff,
-                  revealedLabel = "Connect",
-                  active = true,
-                  onClick = viewModel::exitScratchpadToAuth,
-                  height = 34.dp,
-                  tag = "connect_cloudflare_button",
+                  icon = Icons.Outlined.PlayArrow,
+                  revealedLabel = "Run CLI",
+                  minimal = true,
+                  isBusy = uiState.isRunningLocalScript,
+                  active = uiState.projectMode == ProjectMode.TEST && uiState.activeBottomTab == BottomPanelTab.LOCAL_RUN,
+                  onClick = { viewModel.runWorkspaceLocally(openTestWorkspace = true) },
+                  height = 28.dp,
+                  iconSize = 16.dp,
+                  tag = "workspace_local_run_button",
                 )
-              } else {
-                IconRevealButton(
-                  icon = Icons.Outlined.CloudUpload,
-                  revealedLabel = if (uiState.hasUnsavedChanges) "Deploy*" else "Deploy",
-                  active = uiState.hasUnsavedChanges,
-                  isBusy = uiState.isDeploying,
-                  onClick = { if (!uiState.isDeploying) viewModel.deployActiveWorker() },
-                  height = 34.dp,
-                  tag = "deploy_worker_button",
-                )
+
+                if (uiState.isLocalScratchpad) {
+                  IconRevealButton(
+                    icon = Icons.Outlined.CloudOff,
+                    revealedLabel = "Connect",
+                    minimal = true,
+                    active = true,
+                    onClick = viewModel::exitScratchpadToAuth,
+                    height = 28.dp,
+                    iconSize = 16.dp,
+                    tag = "connect_cloudflare_button",
+                  )
+                } else {
+                  IconRevealButton(
+                    icon = Icons.Outlined.CloudUpload,
+                    revealedLabel = if (uiState.hasUnsavedChanges) "Deploy*" else "Deploy",
+                    minimal = true,
+                    active = uiState.hasUnsavedChanges,
+                    isBusy = uiState.isDeploying,
+                    onClick = { if (!uiState.isDeploying) viewModel.deployActiveWorker() },
+                    height = 28.dp,
+                    iconSize = 16.dp,
+                    tag = "deploy_worker_button",
+                  )
+                }
               }
             }
 
             IconButton(
               onClick = { overflowMenuOpen = true },
-              modifier = Modifier.size(38.dp).testTag("project_overflow_menu_button"),
+              modifier = Modifier.size(34.dp).testTag("project_overflow_menu_button"),
             ) {
               Icon(
                 imageVector = Icons.Outlined.MoreVert,
                 contentDescription = "Project actions",
                 tint = palette.textSecondary,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(18.dp),
               )
             }
           }
@@ -971,7 +988,7 @@ fun IdeWorkspaceScreen(
           if (uiState.isOpeningWorker || uiState.isDeploying) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp))
           }
-          HorizontalDivider(color = palette.border.copy(alpha = 0.4f))
+          HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.5.dp)
           }
           }
 

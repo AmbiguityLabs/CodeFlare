@@ -8,6 +8,7 @@ import com.example.data.security.AuthPreferencesStore
 import com.example.data.security.DefaultEditorDragPolicy
 import com.example.data.security.EditorSettings
 import com.example.data.security.FloatingBarStyleConfig
+import com.example.data.security.IconLabelBehavior
 import com.example.data.security.PopupMenuStyleConfig
 import com.example.data.security.SelectionDragConfig
 import com.example.data.security.SmartSelectionHoldMode
@@ -43,6 +44,7 @@ class SettingsAndPreferencesTest {
     assertTrue(defaults.autoSaveEnabled)
     assertEquals(5, defaults.autoSaveIntervalSeconds)
     assertEquals("V1", defaults.uiStyleVersion)
+    assertEquals(IconLabelBehavior.REVEAL_ON_TAP, defaults.iconLabelBehavior)
   }
 
   @Test
@@ -281,5 +283,29 @@ class SettingsAndPreferencesTest {
     assertEquals(240, partialValidDecode.holdDelayMs)
     assertFalse(partialValidDecode.allowCrossAppDrag)
     assertEquals(0, partialValidDecode.enabledOverlayCount)
+  }
+
+  @Test
+  fun iconLabelBehaviorPersistsAndFallsBackCleanly() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val store = AuthPreferencesStore(context)
+
+    assertEquals(IconLabelBehavior.REVEAL_ON_TAP, EditorSettings().iconLabelBehavior)
+    assertEquals(IconLabelBehavior.REVEAL_ON_TAP, IconLabelBehavior.fromKey(null))
+    assertEquals(IconLabelBehavior.REVEAL_ON_TAP, IconLabelBehavior.fromKey(""))
+    assertEquals(IconLabelBehavior.REVEAL_ON_TAP, IconLabelBehavior.fromKey("UNKNOWN_MODE"))
+    assertEquals(IconLabelBehavior.ICON_ONLY, IconLabelBehavior.fromKey("icon_only"))
+    assertEquals(IconLabelBehavior.ALWAYS_SHOW, IconLabelBehavior.fromKey("Always_Show"))
+    assertEquals(IconLabelBehavior.REVEAL_ON_TAP, IconLabelBehavior.fromKey("reveal_on_tap"))
+
+    for (mode in listOf(
+      IconLabelBehavior.ICON_ONLY,
+      IconLabelBehavior.ALWAYS_SHOW,
+      IconLabelBehavior.REVEAL_ON_TAP,
+    )) {
+      store.updateEditorSettings { it.copy(iconLabelBehavior = mode) }
+      val loaded = store.editorSettingsFlow.first()
+      assertEquals(mode, loaded.iconLabelBehavior)
+    }
   }
 }

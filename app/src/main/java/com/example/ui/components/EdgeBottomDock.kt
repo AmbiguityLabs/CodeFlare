@@ -56,8 +56,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.security.FloatingBarStyleConfig
+import com.example.data.security.IconLabelBehavior
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalBarStylePreferences
+import com.example.ui.theme.LocalIconLabelBehavior
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.UiStyleVersion
 
@@ -114,8 +116,9 @@ private fun LiquidGlassFloatingDock(
 ) {
   val palette = LocalIdePalette.current
   val isDark = palette.isDark
+  val labelBehavior = LocalIconLabelBehavior.current
   val capsuleShape = RoundedCornerShape(cfg.cornerRadiusDp.dp)
-  val hideOrbSize = (cfg.heightDp - 10).coerceIn(38, 46).dp
+  val hideOrbSize = (cfg.heightDp - 10).coerceIn(34, 44).dp
 
   val topGlassTint =
     if (isDark) {
@@ -251,10 +254,19 @@ private fun LiquidGlassFloatingDock(
                 label = "v2_dock_icon_scale",
               )
 
+              val showLabel =
+                when {
+                  cfg.showLabels -> true
+                  labelBehavior == IconLabelBehavior.ALWAYS_SHOW -> true
+                  labelBehavior == IconLabelBehavior.ICON_ONLY -> false
+                  else -> active
+                }
+
               val horizontalPad =
                 when {
-                  active && cfg.showLabels -> 15.dp
-                  active -> 20.dp
+                  showLabel && active -> 14.dp
+                  showLabel -> 10.dp
+                  active -> 16.dp
                   else -> 11.dp
                 }
 
@@ -306,7 +318,7 @@ private fun LiquidGlassFloatingDock(
                   )
 
                   AnimatedVisibility(
-                    visible = active && cfg.showLabels,
+                    visible = showLabel,
                     enter = fadeIn(tween(150)) + expandHorizontally(tween(180)),
                     exit = fadeOut(tween(110)) + shrinkHorizontally(tween(140)),
                   ) {
@@ -409,10 +421,17 @@ private fun ClassicDockedBar(
           horizontalArrangement = Arrangement.spacedBy(cfg.iconSpacingDp.coerceIn(4, 34).dp, Alignment.CenterHorizontally),
           verticalAlignment = Alignment.CenterVertically,
         ) {
+          val labelBehavior = LocalIconLabelBehavior.current
           items.forEach { item ->
             val interactionSource = remember(item.testTag) { MutableInteractionSource() }
             val active = item.selected
-            val showLabel = active || cfg.showLabels
+            val showLabel =
+              when {
+                cfg.showLabels -> true
+                labelBehavior == IconLabelBehavior.ALWAYS_SHOW -> true
+                labelBehavior == IconLabelBehavior.ICON_ONLY -> false
+                else -> active
+              }
 
             val pillBg by animateColorAsState(
               targetValue = if (active) palette.activePillBg else Color.Transparent,

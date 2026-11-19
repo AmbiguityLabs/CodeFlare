@@ -492,17 +492,17 @@ fun EdgeCodeEditorSurface(
   val digits = session.doc.lineCount.coerceAtLeast(1).toString().length.coerceAtLeast(2)
   val gutterW =
     with(density) {
-      val foldExtra = if (editorSettings.codeFolding) 18.dp.toPx() else 6.dp.toPx()
-      (digits * charW * 0.88f + 22.dp.toPx() + foldExtra).coerceAtLeast(42.dp.toPx())
+      val foldExtra = if (editorSettings.codeFolding) 16.dp.toPx() else 4.dp.toPx()
+      (digits * charW * 0.88f + 16.dp.toPx() + foldExtra).coerceAtLeast(36.dp.toPx())
     }
 
   geometry.lineHeightPx = lineH
   geometry.baselineOffsetPx = baseline
   geometry.charWidthPx = charW
   geometry.gutterWidthPx = gutterW
-  geometry.textPaddingStartPx = with(density) { 10.dp.toPx() }
-  geometry.topPaddingPx = with(density) { 8.dp.toPx() }
-  geometry.bottomPaddingPx = with(density) { 140.dp.toPx() }
+  geometry.textPaddingStartPx = with(density) { 7.dp.toPx() }
+  geometry.topPaddingPx = with(density) { 6.dp.toPx() }
+  geometry.bottomPaddingPx = with(density) { 108.dp.toPx() }
   geometry.showLineNumbers = editorSettings.showLineNumbers
   geometry.wordWrap = editorSettings.wordWrap
   geometry.codeFolding = editorSettings.codeFolding
@@ -1394,6 +1394,7 @@ fun EdgeCodeEditorSurface(
           activeHoldScope == null &&
           !isSelfDragActive &&
           dropHoverState == null &&
+          !showPasteHistory &&
           isFocused,
       anchorY = selAnchorY,
       readOnly = readOnly,

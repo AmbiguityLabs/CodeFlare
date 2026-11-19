@@ -14,6 +14,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import com.example.data.security.FloatingBarStyleConfig
+import com.example.data.security.IconLabelBehavior
 import com.example.data.security.PopupMenuStyleConfig
 import com.example.data.security.SelectionDragConfig
 
@@ -29,6 +30,7 @@ val LocalIdePalette = staticCompositionLocalOf { DarkIdePalette }
 val LocalBarStylePreferences = staticCompositionLocalOf { BarStylePreferences() }
 val LocalPopupMenuStyle = staticCompositionLocalOf { PopupMenuStyleConfig.DEFAULT }
 val LocalSelectionDragConfig = staticCompositionLocalOf { SelectionDragConfig.DEFAULT }
+val LocalIconLabelBehavior = staticCompositionLocalOf { IconLabelBehavior.REVEAL_ON_TAP }
 
 private fun buildDarkColorScheme(palette: IdePalette) =
   darkColorScheme(
@@ -92,6 +94,7 @@ fun EdgeCodeTheme(
   uiStyle: UiStyleVersion = UiStyleVersion.V1_DEFAULT,
   barPreferences: BarStylePreferences = BarStylePreferences(),
   selectionDragConfig: SelectionDragConfig = SelectionDragConfig.DEFAULT,
+  iconLabelBehavior: IconLabelBehavior = IconLabelBehavior.REVEAL_ON_TAP,
   content: @Composable () -> Unit,
 ) {
   val context = LocalContext.current
@@ -110,6 +113,7 @@ fun EdgeCodeTheme(
     LocalBarStylePreferences provides barPreferences,
     LocalPopupMenuStyle provides barPreferences.homeMenu,
     LocalSelectionDragConfig provides selectionDragConfig.normalized(),
+    LocalIconLabelBehavior provides iconLabelBehavior,
   ) {
     MaterialTheme(
       colorScheme = colorScheme,

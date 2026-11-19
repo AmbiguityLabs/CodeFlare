@@ -58,7 +58,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.security.IconLabelBehavior
 import com.example.ui.theme.JetBrainsMono
+import com.example.ui.theme.LocalIconLabelBehavior
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.UiStyleVersion
 import kotlin.math.PI
@@ -76,29 +78,47 @@ fun IconRevealButton(
   active: Boolean = false,
   isBusy: Boolean = false,
   accentContainer: Boolean = false,
+  minimal: Boolean = false,
+  contentTint: Color? = null,
   statusDotColor: Color? = null,
   badgeCount: String? = null,
   height: Dp = 36.dp,
+  iconSize: Dp = 17.dp,
   revealDurationMs: Long = 2200L,
+  labelBehaviorOverride: IconLabelBehavior? = null,
 ) {
   val palette = LocalIdePalette.current
   val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
+  val behavior = labelBehaviorOverride ?: LocalIconLabelBehavior.current
   var revealBump by remember { mutableIntStateOf(0) }
-  var isRevealed by remember { mutableStateOf(false) }
+  var tapRevealed by remember { mutableStateOf(false) }
 
-  LaunchedEffect(revealBump) {
+  LaunchedEffect(revealBump, behavior) {
+    if (behavior != IconLabelBehavior.REVEAL_ON_TAP) {
+      tapRevealed = false
+      return@LaunchedEffect
+    }
     if (revealBump > 0) {
-      isRevealed = true
+      tapRevealed = true
       delay(revealDurationMs)
-      isRevealed = false
+      tapRevealed = false
     }
   }
+
+  val isRevealed =
+    when (behavior) {
+      IconLabelBehavior.ICON_ONLY -> false
+      IconLabelBehavior.REVEAL_ON_TAP -> tapRevealed
+      IconLabelBehavior.ALWAYS_SHOW -> true
+    }
 
   val containerColor by animateColorAsState(
     targetValue =
       when {
         accentContainer -> palette.ctaBg
         active -> palette.activePillBg
+        minimal && isRevealed -> palette.chromeSurface
+        minimal -> Color.Transparent
         isV2 -> palette.chromeSurface
         else -> palette.glassElevated
       },
@@ -110,6 +130,8 @@ fun IconRevealButton(
       when {
         accentContainer -> palette.ctaFg
         active -> palette.activePillFg
+        contentTint != null -> contentTint
+        minimal -> palette.textSecondary
         else -> palette.textPrimary
       },
     animationSpec = tween(150),
@@ -118,6 +140,8 @@ fun IconRevealButton(
 
   val borderStroke =
     when {
+      minimal && !active && !isRevealed -> null
+      minimal && isRevealed && !isV2 -> BorderStroke(0.5.dp, palette.glassBorderSubtle)
       isV2 && !active -> null
       active -> BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.35f))
       isV2 -> null
@@ -126,10 +150,12 @@ fun IconRevealButton(
 
   Surface(
     onClick = {
-      revealBump++
+      if (behavior == IconLabelBehavior.REVEAL_ON_TAP) {
+        revealBump++
+      }
       onClick()
     },
-    shape = RoundedCornerShape(if (isV2) 999.dp else 10.dp),
+    shape = RoundedCornerShape(if (isV2) 999.dp else if (minimal) 8.dp else 10.dp),
     color = containerColor,
     border = borderStroke,
     modifier =
@@ -139,14 +165,22 @@ fun IconRevealButton(
         .then(if (tag != null) Modifier.testTag(tag) else Modifier),
   ) {
     Row(
-      modifier = Modifier.padding(horizontal = if (isRevealed) 11.dp else 9.dp),
+      modifier =
+        Modifier.padding(
+          horizontal =
+            when {
+              isRevealed -> if (minimal) 8.dp else 11.dp
+              minimal -> 6.dp
+              else -> 9.dp
+            },
+        ),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.Center,
     ) {
       Box(contentAlignment = Alignment.TopEnd) {
         if (isBusy) {
           EdgeLoadingIndicator(
-            size = 16.dp,
+            size = iconSize - 1.dp,
             strokeWidth = 2.dp,
             color = contentColor,
           )
@@ -155,7 +189,7 @@ fun IconRevealButton(
             imageVector = icon,
             contentDescription = revealedLabel,
             tint = contentColor,
-            modifier = Modifier.size(17.dp),
+            modifier = Modifier.size(iconSize),
           )
         }
         if (statusDotColor != null && !isBusy) {
@@ -163,7 +197,7 @@ fun IconRevealButton(
             modifier =
               Modifier
                 .offset(x = 3.dp, y = (-2).dp)
-                .size(6.dp)
+                .size(5.5.dp)
                 .clip(CircleShape)
                 .background(statusDotColor),
           )
@@ -176,11 +210,11 @@ fun IconRevealButton(
         exit = fadeOut(tween(120)) + shrinkHorizontally(tween(150)),
       ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-          Spacer(Modifier.width(6.dp))
+          Spacer(Modifier.width(5.dp))
           Text(
             text = revealedLabel,
             style = MaterialTheme.typography.labelMedium,
-            fontSize = 11.5.sp,
+            fontSize = if (minimal) 10.5.sp else 11.5.sp,
             fontWeight = FontWeight.SemiBold,
             color = contentColor,
             maxLines = 1,
@@ -214,9 +248,18 @@ fun IconSegmentTab(
   tag: String? = null,
   badgeText: String? = null,
   badgeColor: Color? = null,
+  labelBehaviorOverride: IconLabelBehavior? = null,
 ) {
   val palette = LocalIdePalette.current
   val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
+  val behavior = labelBehaviorOverride ?: LocalIconLabelBehavior.current
+  val showLabel =
+    when (behavior) {
+      IconLabelBehavior.ICON_ONLY -> false
+      IconLabelBehavior.REVEAL_ON_TAP -> selected
+      IconLabelBehavior.ALWAYS_SHOW -> true
+    }
+
   val bg by animateColorAsState(
     targetValue =
       when {
@@ -250,7 +293,7 @@ fun IconSegmentTab(
         .then(if (tag != null) Modifier.testTag(tag) else Modifier),
   ) {
     Row(
-      modifier = Modifier.padding(horizontal = if (selected) 11.dp else 9.dp),
+      modifier = Modifier.padding(horizontal = if (showLabel) 11.dp else 9.dp),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.Center,
     ) {
@@ -261,7 +304,7 @@ fun IconSegmentTab(
         modifier = Modifier.size(16.dp),
       )
       AnimatedVisibility(
-        visible = selected,
+        visible = showLabel,
         enter = fadeIn(tween(150)) + expandHorizontally(tween(170)),
         exit = fadeOut(tween(110)) + shrinkHorizontally(tween(140)),
       ) {
@@ -309,14 +352,29 @@ fun IconToggleRevealText(
   text: String,
   tint: Color? = null,
   modifier: Modifier = Modifier,
+  onFallbackClick: (() -> Unit)? = null,
 ) {
   val palette = LocalIdePalette.current
+  val behavior = LocalIconLabelBehavior.current
   var revealed by remember { mutableStateOf(false) }
+  val isTextShown =
+    when (behavior) {
+      IconLabelBehavior.ICON_ONLY -> false
+      IconLabelBehavior.REVEAL_ON_TAP -> revealed
+      IconLabelBehavior.ALWAYS_SHOW -> true
+    }
+
   Row(
     modifier =
       modifier
         .clip(RoundedCornerShape(999.dp))
-        .clickable(role = Role.Button) { revealed = !revealed }
+        .clickable(role = Role.Button) {
+          if (behavior == IconLabelBehavior.REVEAL_ON_TAP) {
+            revealed = !revealed
+          } else {
+            onFallbackClick?.invoke()
+          }
+        }
         .padding(horizontal = 6.dp, vertical = 4.dp),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -327,7 +385,7 @@ fun IconToggleRevealText(
       tint = tint ?: palette.textMuted,
       modifier = Modifier.size(15.dp),
     )
-    AnimatedVisibility(visible = revealed) {
+    AnimatedVisibility(visible = isTextShown) {
       Text(
         text = text,
         fontFamily = JetBrainsMono,

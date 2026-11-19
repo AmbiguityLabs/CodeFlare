@@ -40,7 +40,10 @@ import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.outlined.Wallpaper
 import androidx.compose.material.icons.outlined.Web
 import androidx.compose.material3.HorizontalDivider
@@ -79,6 +82,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.remote.WorkerLanguage
 import com.example.data.security.EditorSettings
 import com.example.data.security.FloatingBarStyleConfig
+import com.example.data.security.IconLabelBehavior
 import com.example.data.security.PopupMenuStyleConfig
 import com.example.editor.SyntaxHighlighter
 import com.example.ui.theme.EditorBackgroundPreset
@@ -259,6 +263,107 @@ fun AppearanceHubContent(
         onCheckedChange = { dyn -> onUpdateSettings { it.copy(dynamicColor = dyn) } },
         modifier = Modifier.testTag("settings_material_you_toggle"),
       )
+
+      SettingsHairlineDivider()
+
+      Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = blockPadding, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        val activeBehavior = settings.iconLabelBehavior
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+              text = "Button Labels",
+              style = MaterialTheme.typography.bodyMedium,
+              fontSize = if (isV2) 15.sp else 14.sp,
+              fontWeight = if (isV2) FontWeight.Normal else FontWeight.Medium,
+              color = palette.textPrimary,
+            )
+            Text(
+              text = activeBehavior.description,
+              style = MaterialTheme.typography.bodySmall,
+              fontSize = 11.sp,
+              color = palette.textMuted,
+              maxLines = 2,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+          Spacer(Modifier.width(8.dp))
+          IconRevealButton(
+            icon =
+              when (activeBehavior) {
+                IconLabelBehavior.REVEAL_ON_TAP -> Icons.Outlined.TouchApp
+                IconLabelBehavior.ICON_ONLY -> Icons.Outlined.VisibilityOff
+                IconLabelBehavior.ALWAYS_SHOW -> Icons.Outlined.Visibility
+              },
+            revealedLabel = "Tap Test",
+            onClick = {},
+            active = true,
+            height = 30.dp,
+            iconSize = 15.dp,
+            tag = "settings_label_behavior_sample",
+          )
+        }
+        Row(
+          modifier =
+            Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(if (isV2) 20.dp else 10.dp))
+              .background(palette.editorBg)
+              .then(
+                if (isV2) Modifier
+                else Modifier.border(0.75.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(10.dp)),
+              )
+              .padding(4.dp),
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          IconLabelBehavior.entries.forEach { behaviorChoice ->
+            val selectedChoice = activeBehavior == behaviorChoice
+            val pillBg =
+              when {
+                selectedChoice -> palette.activePillBg
+                isV2 -> palette.chromeSurface
+                else -> palette.glassSurface
+              }
+            val pillFg = if (selectedChoice) palette.activePillFg else palette.textSecondary
+            Surface(
+              onClick = { onUpdateSettings { it.copy(iconLabelBehavior = behaviorChoice) } },
+              shape = RoundedCornerShape(if (isV2) 999.dp else 8.dp),
+              color = pillBg,
+              border =
+                when {
+                  isV2 -> null
+                  selectedChoice -> BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.35f))
+                  else -> BorderStroke(0.75.dp, palette.glassBorderSubtle)
+                },
+              modifier =
+                Modifier
+                  .weight(1f)
+                  .height(34.dp)
+                  .testTag("settings_label_behavior_${behaviorChoice.name.lowercase()}"),
+            ) {
+              Box(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp),
+                contentAlignment = Alignment.Center,
+              ) {
+                Text(
+                  text = behaviorChoice.shortLabel,
+                  fontSize = 11.5.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = pillFg,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+              }
+            }
+          }
+        }
+      }
     }
 
     SettingsFoldableSection(

@@ -39,12 +39,15 @@ import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.DragIndicator
+import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.OpenWith
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Restore
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -91,6 +94,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.security.IconLabelBehavior
 import com.example.editor.CodeSymbol
 import com.example.editor.drag.DragTransferMode
 import com.example.editor.engine.ClipboardHistoryStore
@@ -99,9 +103,11 @@ import com.example.editor.engine.LineChange
 import com.example.editor.selection.SelectionScope
 import com.example.idecore.completion.EdgeCompletionItem
 import com.example.idecore.completion.EdgeCompletionKind
+import com.example.ui.components.IconRevealButton
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
+import com.example.ui.theme.LocalIconLabelBehavior
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.RoseError
 import kotlinx.coroutines.delay
@@ -302,51 +308,57 @@ fun BoxScope.EdgeStickyScrollHeader(
     modifier = Modifier.align(Alignment.TopStart).fillMaxWidth(),
   ) {
     val sym = symbol ?: return@AnimatedVisibility
-    Column(modifier = Modifier.fillMaxWidth()) {
-      Row(
-        modifier =
-          Modifier
-            .fillMaxWidth()
-            .background(palette.editorGutterBg.copy(alpha = 0.95f))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 4.dp)
-            .testTag("editor_sticky_header"),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-      ) {
-        Text(
-          text = "${sym.line}",
-          fontFamily = JetBrainsMono,
-          fontSize = 10.sp,
-          color = palette.textMuted,
-          modifier = Modifier.widthIn(min = 24.dp),
-        )
-        Box(
+    Surface(
+      color = palette.editorBg,
+      shadowElevation = 2.dp,
+      modifier = Modifier.fillMaxWidth(),
+    ) {
+      Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
           modifier =
             Modifier
-              .clip(RoundedCornerShape(4.dp))
-              .background(palette.activePillBg)
-              .padding(horizontal = 5.dp, vertical = 1.dp),
+              .fillMaxWidth()
+              .background(palette.editorBg)
+              .clickable(onClick = onClick)
+              .padding(horizontal = 8.dp, vertical = 2.dp)
+              .testTag("editor_sticky_header"),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(7.dp),
         ) {
           Text(
-            text = sym.kind,
+            text = "${sym.line}",
             fontFamily = JetBrainsMono,
-            fontSize = 8.5.sp,
-            fontWeight = FontWeight.Bold,
-            color = palette.activePillFg,
+            fontSize = 10.sp,
+            color = palette.textMuted,
+            modifier = Modifier.widthIn(min = 22.dp),
+          )
+          Box(
+            modifier =
+              Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(palette.activePillBg)
+                .padding(horizontal = 5.dp, vertical = 1.dp),
+          ) {
+            Text(
+              text = sym.kind,
+              fontFamily = JetBrainsMono,
+              fontSize = 8.5.sp,
+              fontWeight = FontWeight.Bold,
+              color = palette.activePillFg,
+            )
+          }
+          Text(
+            text = lineText.trim().ifEmpty { sym.name },
+            fontFamily = JetBrainsMono,
+            fontSize = 11.sp,
+            color = palette.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
           )
         }
-        Text(
-          text = lineText.trim().ifEmpty { sym.name },
-          fontFamily = JetBrainsMono,
-          fontSize = 11.sp,
-          color = palette.textPrimary,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-          modifier = Modifier.weight(1f),
-        )
+        HorizontalDivider(color = palette.border.copy(alpha = 0.65f), thickness = 0.5.dp)
       }
-      HorizontalDivider(color = palette.border.copy(alpha = 0.6f), thickness = 0.75.dp)
     }
   }
 }
@@ -675,11 +687,12 @@ fun BoxScope.EdgeSelectionToolbar(
   onRename: () -> Unit,
 ) {
   val palette = LocalIdePalette.current
+  val labelBehavior = LocalIconLabelBehavior.current
   val density = LocalDensity.current
   val topOffsetPx =
     with(density) {
-      val desired = anchorY - 54.dp.toPx()
-      if (desired < 8.dp.toPx()) (anchorY + 34.dp.toPx()).roundToInt() else desired.roundToInt()
+      val desired = anchorY - 46.dp.toPx()
+      if (desired < 8.dp.toPx()) (anchorY + 30.dp.toPx()).roundToInt() else desired.roundToInt()
     }
 
   val hasAnyControl =
@@ -697,12 +710,13 @@ fun BoxScope.EdgeSelectionToolbar(
     modifier =
       Modifier
         .align(Alignment.TopCenter)
+        .padding(horizontal = 12.dp)
         .offset { IntOffset(0, topOffsetPx.coerceAtLeast(8)) },
   ) {
     Surface(
-      color = palette.glassElevated.copy(alpha = 0.97f),
-      shape = RoundedCornerShape(12.dp),
-      border = BorderStroke(0.75.dp, palette.glassBorderHighlight),
+      color = palette.chromeSurface,
+      shape = RoundedCornerShape(10.dp),
+      border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.8f)),
       shadowElevation = 6.dp,
       modifier = Modifier.testTag("editor_selection_toolbar"),
     ) {
@@ -716,8 +730,9 @@ fun BoxScope.EdgeSelectionToolbar(
           Box(
             modifier =
               Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .background(palette.activePillBg.copy(alpha = 0.65f))
+                .height(26.dp)
+                .clip(RoundedCornerShape(7.dp))
+                .background(palette.activePillBg.copy(alpha = 0.68f))
                 .pointerInput(onStartToolbarDrag) {
                   awaitEachGesture {
                     val down = awaitPointerEvent(PointerEventPass.Main).changes.firstOrNull { it.pressed } ?: return@awaitEachGesture
@@ -725,7 +740,7 @@ fun BoxScope.EdgeSelectionToolbar(
                     onStartToolbarDrag()
                   }
                 }
-                .padding(horizontal = 7.dp, vertical = 6.dp)
+                .padding(horizontal = 6.dp)
                 .testTag("sel_drag_grip"),
             contentAlignment = Alignment.Center,
           ) {
@@ -737,14 +752,18 @@ fun BoxScope.EdgeSelectionToolbar(
                 imageVector = Icons.Outlined.DragIndicator,
                 contentDescription = "Drag selected text",
                 tint = palette.activePillFg,
-                modifier = Modifier.size(15.dp),
+                modifier = Modifier.size(14.dp),
               )
-              Text(
-                text = "Drag",
-                fontSize = 10.5.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = palette.activePillFg,
-              )
+              if (labelBehavior == IconLabelBehavior.ALWAYS_SHOW) {
+                Text(
+                  text = "Drag",
+                  fontSize = 10.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = palette.activePillFg,
+                  maxLines = 1,
+                  softWrap = false,
+                )
+              }
             }
           }
         }
@@ -754,17 +773,18 @@ fun BoxScope.EdgeSelectionToolbar(
           Box(
             modifier =
               Modifier
-                .clip(RoundedCornerShape(7.dp))
-                .background(palette.editorBg.copy(alpha = 0.72f))
-                .padding(horizontal = 7.dp, vertical = 4.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(palette.editorBg)
+                .padding(horizontal = 5.dp, vertical = 3.dp)
                 .testTag("sel_scope_badge"),
           ) {
             Text(
               text = scopeLabel,
               fontFamily = JetBrainsMono,
-              fontSize = 10.sp,
+              fontSize = 9.5.sp,
               fontWeight = FontWeight.Bold,
               color = palette.activePillFg,
+              maxLines = 1,
             )
           }
         }
@@ -773,79 +793,115 @@ fun BoxScope.EdgeSelectionToolbar(
           IconButton(
             onClick = onShrinkScope,
             enabled = canShrinkScope,
-            modifier = Modifier.size(30.dp).testTag("sel_shrink_scope"),
+            modifier = Modifier.size(26.dp).testTag("sel_shrink_scope"),
           ) {
             Icon(
               imageVector = Icons.Outlined.Remove,
               contentDescription = "Shrink selection scope",
               tint = if (canShrinkScope) palette.textPrimary else palette.textMuted.copy(alpha = 0.35f),
-              modifier = Modifier.size(16.dp),
+              modifier = Modifier.size(15.dp),
             )
           }
           IconButton(
             onClick = onExpandScope,
             enabled = canExpandScope,
-            modifier = Modifier.size(30.dp).testTag("sel_expand_scope"),
+            modifier = Modifier.size(26.dp).testTag("sel_expand_scope"),
           ) {
             Icon(
               imageVector = Icons.Outlined.Add,
               contentDescription = "Expand selection scope",
               tint = if (canExpandScope) palette.activePillFg else palette.textMuted.copy(alpha = 0.35f),
-              modifier = Modifier.size(16.dp),
+              modifier = Modifier.size(15.dp),
             )
           }
         }
 
-        // Move / Copy mode toggle chip
+        // Move / Copy mode toggle button (honors IconLabelBehavior)
         if (showModeToggle && !readOnly) {
           val isMove = dragMode == DragTransferMode.MOVE
           val modeTint = if (isMove) palette.ctaBg else EmeraldLive
-          Surface(
+          IconRevealButton(
+            icon = if (isMove) Icons.Outlined.OpenWith else Icons.Outlined.ContentCopy,
+            revealedLabel = if (isMove) "Move" else "Copy",
+            minimal = true,
+            active = true,
+            contentTint = modeTint,
+            height = 26.dp,
+            iconSize = 14.dp,
             onClick = onToggleDragMode,
-            shape = RoundedCornerShape(8.dp),
-            color = modeTint.copy(alpha = 0.14f),
-            modifier = Modifier.testTag("sel_drag_mode_toggle"),
-          ) {
-            Row(
-              modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
-              Icon(
-                imageVector = if (isMove) Icons.Outlined.OpenWith else Icons.Outlined.ContentCopy,
-                contentDescription = if (isMove) "Drag mode: Move" else "Drag mode: Copy",
-                tint = modeTint,
-                modifier = Modifier.size(13.dp),
-              )
-              Text(
-                text = if (isMove) "Move" else "Copy",
-                fontFamily = JetBrainsMono,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                color = modeTint,
-              )
-            }
-          }
+            tag = "sel_drag_mode_toggle",
+          )
         }
 
         if (showQuickActions) {
-          ToolbarPillButton("Copy", onCopy, "sel_copy")
-          if (!readOnly) ToolbarPillButton("Cut", onCut, "sel_cut")
-          if (!readOnly) ToolbarPillButton("Paste", onPaste, "sel_paste")
-          if (!readOnly && hasClipboardHistory) {
-            IconButton(
-              onClick = onOpenPasteHistory,
-              modifier = Modifier.size(30.dp).testTag("sel_paste_history"),
-            ) {
-              Icon(Icons.Outlined.History, contentDescription = "Paste History", tint = palette.activePillFg, modifier = Modifier.size(15.dp))
+          IconRevealButton(
+            icon = Icons.Outlined.ContentCopy,
+            revealedLabel = "Copy",
+            minimal = true,
+            contentTint = palette.textPrimary,
+            height = 26.dp,
+            iconSize = 15.dp,
+            onClick = onCopy,
+            tag = "sel_copy",
+          )
+          if (!readOnly) {
+            IconRevealButton(
+              icon = Icons.Outlined.ContentCut,
+              revealedLabel = "Cut",
+              minimal = true,
+              contentTint = palette.textPrimary,
+              height = 26.dp,
+              iconSize = 15.dp,
+              onClick = onCut,
+              tag = "sel_cut",
+            )
+            IconRevealButton(
+              icon = Icons.Outlined.ContentPaste,
+              revealedLabel = "Paste",
+              minimal = true,
+              contentTint = palette.textPrimary,
+              height = 26.dp,
+              iconSize = 15.dp,
+              onClick = onPaste,
+              tag = "sel_paste",
+            )
+            if (hasClipboardHistory) {
+              IconRevealButton(
+                icon = Icons.Outlined.History,
+                revealedLabel = "History",
+                minimal = true,
+                contentTint = palette.activePillFg,
+                height = 26.dp,
+                iconSize = 15.dp,
+                onClick = onOpenPasteHistory,
+                tag = "sel_paste_history",
+              )
             }
           }
-          ToolbarPillButton("All", onSelectAll, "sel_all")
+          IconRevealButton(
+            icon = Icons.Outlined.SelectAll,
+            revealedLabel = "All",
+            minimal = true,
+            contentTint = palette.textPrimary,
+            height = 26.dp,
+            iconSize = 15.dp,
+            onClick = onSelectAll,
+            tag = "sel_all",
+          )
         }
 
         if (showCodeActions && !readOnly) {
-          ToolbarPillButton("//", onComment, "sel_comment")
-          ToolbarPillButton("Rename", onRename, "sel_rename")
+          ToolbarSlashButton(onClick = onComment, tag = "sel_comment")
+          IconRevealButton(
+            icon = Icons.Outlined.DriveFileRenameOutline,
+            revealedLabel = "Rename",
+            minimal = true,
+            contentTint = palette.textPrimary,
+            height = 26.dp,
+            iconSize = 15.dp,
+            onClick = onRename,
+            tag = "sel_rename",
+          )
         }
       }
     }
@@ -853,21 +909,26 @@ fun BoxScope.EdgeSelectionToolbar(
 }
 
 @Composable
-private fun ToolbarPillButton(label: String, onClick: () -> Unit, tag: String) {
+private fun ToolbarSlashButton(onClick: () -> Unit, tag: String) {
   val palette = LocalIdePalette.current
   Surface(
     onClick = onClick,
-    shape = RoundedCornerShape(8.dp),
+    shape = RoundedCornerShape(7.dp),
     color = Color.Transparent,
-    modifier = Modifier.testTag(tag),
+    modifier = Modifier.height(26.dp).testTag(tag),
   ) {
-    Text(
-      text = label,
-      fontSize = 11.5.sp,
-      fontWeight = FontWeight.SemiBold,
-      color = palette.textPrimary,
-      modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
-    )
+    Box(
+      modifier = Modifier.padding(horizontal = 7.dp),
+      contentAlignment = Alignment.Center,
+    ) {
+      Text(
+        text = "//",
+        fontFamily = JetBrainsMono,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        color = palette.textSecondary,
+      )
+    }
   }
 }
 
@@ -885,25 +946,25 @@ fun BoxScope.EdgePasteHistoryPopup(
     visible = visible,
     enter = fadeIn(tween(110)) + scaleIn(tween(110), initialScale = 0.95f),
     exit = fadeOut(tween(90)),
-    modifier = Modifier.align(Alignment.Center).padding(horizontal = 16.dp),
+    modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp, vertical = 8.dp),
   ) {
     Surface(
-      color = palette.glassElevated.copy(alpha = 0.98f),
-      shape = RoundedCornerShape(14.dp),
-      border = BorderStroke(0.75.dp, palette.glassBorderHighlight),
+      color = palette.chromeSurface,
+      shape = RoundedCornerShape(12.dp),
+      border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.8f)),
       shadowElevation = 8.dp,
       modifier = Modifier.fillMaxWidth().widthIn(max = 360.dp).testTag("editor_paste_history_popup"),
     ) {
       Column(modifier = Modifier.fillMaxWidth()) {
         Row(
-          modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+          modifier = Modifier.fillMaxWidth().height(34.dp).padding(start = 10.dp, end = 4.dp),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-          Icon(Icons.Outlined.ContentPaste, contentDescription = null, tint = palette.activePillFg, modifier = Modifier.size(15.dp))
+          Icon(Icons.Outlined.ContentPaste, contentDescription = null, tint = palette.activePillFg, modifier = Modifier.size(14.dp))
           Text(
             text = "Clipboard",
-            style = MaterialTheme.typography.titleSmall,
+            style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
             color = palette.textPrimary,
             modifier = Modifier.weight(1f),
@@ -914,17 +975,17 @@ fun BoxScope.EdgePasteHistoryPopup(
             fontSize = 10.sp,
             color = palette.textMuted,
           )
-          IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
-            Icon(Icons.Outlined.Close, contentDescription = "Close", tint = palette.textMuted, modifier = Modifier.size(15.dp))
+          IconButton(onClick = onDismiss, modifier = Modifier.size(26.dp)) {
+            Icon(Icons.Outlined.Close, contentDescription = "Close", tint = palette.textMuted, modifier = Modifier.size(14.dp))
           }
         }
-        HorizontalDivider(color = palette.border.copy(alpha = 0.5f), thickness = 0.75.dp)
+        HorizontalDivider(color = palette.border.copy(alpha = 0.55f), thickness = 0.5.dp)
         if (entries.isEmpty()) {
-          Box(modifier = Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
+          Box(modifier = Modifier.fillMaxWidth().padding(14.dp), contentAlignment = Alignment.Center) {
             Text("Empty", fontFamily = JetBrainsMono, fontSize = 11.sp, color = palette.textMuted)
           }
         } else {
-          LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)) {
+          LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 180.dp)) {
             itemsIndexed(entries) { idx, clip ->
               val preview = clip.replace('\n', '↵').take(120)
               Row(
@@ -935,7 +996,7 @@ fun BoxScope.EdgePasteHistoryPopup(
                       onSelectClip(clip)
                       onDismiss()
                     }
-                    .padding(horizontal = 12.dp, vertical = 9.dp)
+                    .padding(horizontal = 10.dp, vertical = 7.dp)
                     .testTag("paste_history_item_$idx"),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -945,7 +1006,7 @@ fun BoxScope.EdgePasteHistoryPopup(
                   fontFamily = JetBrainsMono,
                   fontSize = 9.5.sp,
                   color = palette.textMuted,
-                  modifier = Modifier.width(18.dp),
+                  modifier = Modifier.width(16.dp),
                 )
                 Text(
                   text = preview,
@@ -968,7 +1029,7 @@ fun BoxScope.EdgePasteHistoryPopup(
   }
 }
 
-// ---- 8. CodeAssist-Style Glass Completion Bar with Bolded Prefix Match ----
+// ---- 8. CodeAssist-Style Minimal Completion Strip with Bolded Prefix Match ----
 
 @Composable
 fun EdgeGlassCompletionBar(
@@ -980,9 +1041,9 @@ fun EdgeGlassCompletionBar(
   val palette = LocalIdePalette.current
   val needle = queryPrefix.substringAfterLast('.')
   Surface(
-    color = palette.glassElevated.copy(alpha = 0.96f),
-    shape = RoundedCornerShape(11.dp),
-    border = BorderStroke(0.75.dp, palette.glassBorderHighlight),
+    color = palette.chromeSurface,
+    shape = RoundedCornerShape(8.dp),
+    border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.75f)),
     shadowElevation = 4.dp,
     modifier = modifier.testTag("editor_completion_bar"),
   ) {
@@ -991,8 +1052,8 @@ fun EdgeGlassCompletionBar(
         Modifier
           .fillMaxWidth()
           .horizontalScroll(rememberScrollState())
-          .padding(horizontal = 6.dp, vertical = 5.dp),
-      horizontalArrangement = Arrangement.spacedBy(5.dp),
+          .padding(horizontal = 5.dp, vertical = 3.dp),
+      horizontalArrangement = Arrangement.spacedBy(4.dp),
       verticalAlignment = Alignment.CenterVertically,
     ) {
       items.forEachIndexed { idx, item ->
@@ -1022,23 +1083,21 @@ fun EdgeGlassCompletionBar(
           }
         Surface(
           onClick = { onSelect(item) },
-          shape = RoundedCornerShape(8.dp),
-          color = if (idx == 0) palette.activePillBg.copy(alpha = 0.55f) else palette.editorBg,
+          shape = RoundedCornerShape(6.dp),
+          color = if (idx == 0) palette.activePillBg.copy(alpha = 0.6f) else palette.editorBg,
           border =
-            BorderStroke(
-              0.75.dp,
-              if (idx == 0) palette.activePillFg.copy(alpha = 0.45f) else palette.border.copy(alpha = 0.55f),
-            ),
+            if (idx == 0) BorderStroke(0.5.dp, palette.activePillFg.copy(alpha = 0.45f))
+            else null,
           modifier = Modifier.testTag("completion_item_$idx"),
         ) {
           Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
           ) {
             Text(
               text = item.kind.badge,
-              style = TextStyle(fontFamily = JetBrainsMono, fontSize = 8.5.sp, fontWeight = FontWeight.Bold),
+              style = TextStyle(fontFamily = JetBrainsMono, fontSize = 8.sp, fontWeight = FontWeight.Bold),
               color = badgeColor,
               modifier =
                 Modifier
@@ -1049,7 +1108,7 @@ fun EdgeGlassCompletionBar(
             )
             Text(
               text = highlightedLabel,
-              style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, fontWeight = FontWeight.Medium),
+              style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.Medium),
               color = palette.textPrimary,
               maxLines = 1,
             )
@@ -1057,9 +1116,11 @@ fun EdgeGlassCompletionBar(
               Text(
                 text = item.detail,
                 fontFamily = JetBrainsMono,
-                fontSize = 9.5.sp,
+                fontSize = 9.sp,
                 color = palette.textMuted,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 84.dp),
               )
             }
           }

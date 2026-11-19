@@ -106,14 +106,14 @@ data class FloatingBarStyleConfig(
 
     val EDITOR_DEFAULT =
       FloatingBarStyleConfig(
-        heightDp = 56,
-        widthPercent = 86,
+        heightDp = 48,
+        widthPercent = 78,
         iconSpacingDp = 14,
-        iconSizeDp = 21,
-        opacity = 0.78f,
-        borderOpacity = 0.34f,
-        cornerRadiusDp = 32,
-        bottomMarginDp = 10,
+        iconSizeDp = 19,
+        opacity = 0.80f,
+        borderOpacity = 0.30f,
+        cornerRadiusDp = 28,
+        bottomMarginDp = 6,
         activePillOpacity = 0.24f,
         showLabels = false,
         showBadges = true,
@@ -282,11 +282,40 @@ data class SelectionDragConfig(
   }
 }
 
+enum class IconLabelBehavior(
+  val label: String,
+  val shortLabel: String,
+  val description: String,
+) {
+  REVEAL_ON_TAP(
+    label = "Reveal on Tap",
+    shortLabel = "On Tap",
+    description = "Show icon first; reveal text when tapped",
+  ),
+  ICON_ONLY(
+    label = "Icon Only",
+    shortLabel = "Icons",
+    description = "Keep controls minimal with icons only",
+  ),
+  ALWAYS_SHOW(
+    label = "Always Show",
+    shortLabel = "Always",
+    description = "Always show both icon and text label",
+  ),
+  ;
+
+  companion object {
+    fun fromKey(raw: String?): IconLabelBehavior =
+      entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: REVEAL_ON_TAP
+  }
+}
+
 data class EditorSettings(
   val darkTheme: Boolean = true,
   val dynamicColor: Boolean = false,
   val themePreset: String = "OLIVE_OBSIDIAN",
   val uiStyleVersion: String = "V1",
+  val iconLabelBehavior: IconLabelBehavior = IconLabelBehavior.REVEAL_ON_TAP,
   val editorBgPreset: String = "NONE",
   val editorBgImagePath: String = "",
   val editorBgOpacity: Float = 0.28f,
@@ -339,6 +368,7 @@ class AuthPreferencesStore(private val context: Context) {
     val DYNAMIC_COLOR = booleanPreferencesKey("editor_dynamic_color")
     val THEME_PRESET = stringPreferencesKey("editor_theme_preset")
     val UI_STYLE_VERSION = stringPreferencesKey("editor_ui_style_version")
+    val ICON_LABEL_BEHAVIOR = stringPreferencesKey("ui_icon_label_behavior")
     val EDITOR_BG_PRESET = stringPreferencesKey("editor_bg_preset")
     val EDITOR_BG_IMAGE_PATH = stringPreferencesKey("editor_bg_image_path")
     val EDITOR_BG_OPACITY = floatPreferencesKey("editor_bg_opacity")
@@ -411,6 +441,7 @@ class AuthPreferencesStore(private val context: Context) {
         dynamicColor = prefs[Keys.DYNAMIC_COLOR] ?: false,
         themePreset = prefs[Keys.THEME_PRESET]?.takeIf { it.isNotBlank() } ?: "OLIVE_OBSIDIAN",
         uiStyleVersion = prefs[Keys.UI_STYLE_VERSION]?.takeIf { it.isNotBlank() } ?: "V1",
+        iconLabelBehavior = IconLabelBehavior.fromKey(prefs[Keys.ICON_LABEL_BEHAVIOR]),
         editorBgPreset = prefs[Keys.EDITOR_BG_PRESET]?.takeIf { it.isNotBlank() } ?: "NONE",
         editorBgImagePath = prefs[Keys.EDITOR_BG_IMAGE_PATH].orEmpty(),
         editorBgOpacity = (prefs[Keys.EDITOR_BG_OPACITY] ?: 0.28f).coerceIn(0.05f, 1.0f),
@@ -520,6 +551,7 @@ class AuthPreferencesStore(private val context: Context) {
       prefs[Keys.DYNAMIC_COLOR] = next.dynamicColor
       prefs[Keys.THEME_PRESET] = next.themePreset.ifBlank { "OLIVE_OBSIDIAN" }
       prefs[Keys.UI_STYLE_VERSION] = next.uiStyleVersion.ifBlank { "V1" }
+      prefs[Keys.ICON_LABEL_BEHAVIOR] = next.iconLabelBehavior.name
       prefs[Keys.EDITOR_BG_PRESET] = next.editorBgPreset.ifBlank { "NONE" }
       prefs[Keys.EDITOR_BG_IMAGE_PATH] = next.editorBgImagePath
       prefs[Keys.EDITOR_BG_OPACITY] = next.editorBgOpacity.coerceIn(0.05f, 1.0f)

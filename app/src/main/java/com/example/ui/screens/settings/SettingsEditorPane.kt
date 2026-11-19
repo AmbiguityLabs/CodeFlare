@@ -26,6 +26,8 @@ import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.ContentCut
+import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.DataObject
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Difference
@@ -70,6 +72,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.remote.WorkerLanguage
 import com.example.data.security.DefaultEditorDragPolicy
 import com.example.data.security.EditorSettings
+import com.example.data.security.IconLabelBehavior
 import com.example.data.security.SelectionDragConfig
 import com.example.data.security.SmartSelectionHoldMode
 import com.example.editor.SyntaxHighlighter
@@ -387,6 +390,44 @@ fun SettingsEditorPane(
         checked = settings.softKeyboardSuggestions,
         onCheckedChange = { sug -> onUpdateSettings { it.copy(softKeyboardSuggestions = sug) } },
       )
+      SettingsHairlineDivider(startIndent = 54.dp)
+      Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Text(
+            text = "Toolbar & Icon Labels",
+            fontSize = 13.5.sp,
+            fontWeight = FontWeight.Medium,
+            color = palette.textPrimary,
+          )
+          Text(
+            text = settings.iconLabelBehavior.shortLabel,
+            fontFamily = JetBrainsMono,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = palette.activePillFg,
+          )
+        }
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          IconLabelBehavior.entries.forEach { behavior ->
+            SettingsChoiceChip(
+              label = behavior.shortLabel,
+              selected = settings.iconLabelBehavior == behavior,
+              onClick = { onUpdateSettings { it.copy(iconLabelBehavior = behavior) } },
+              modifier = Modifier.weight(1f).testTag("settings_editor_label_behavior_${behavior.name.lowercase()}"),
+            )
+          }
+        }
+      }
     }
 
     SettingsFoldableSection(
@@ -549,14 +590,15 @@ fun SettingsEditorPane(
               }
             }
 
-            // Simulated Floating Selection Toolbar reacting to all 7 switches
+            // Simulated minimal opaque icon-first Selection Toolbar reacting to switches
+            val previewBehavior = settings.iconLabelBehavior
             Surface(
-              color = palette.glassElevated,
+              color = palette.chromeSurface,
               shape = RoundedCornerShape(10.dp),
-              border = BorderStroke(0.75.dp, palette.glassBorderHighlight),
+              border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.75f)),
             ) {
               Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 6.dp, vertical = 5.dp),
+                modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 5.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
               ) {
@@ -565,13 +607,15 @@ fun SettingsEditorPane(
                     modifier =
                       Modifier
                         .clip(RoundedCornerShape(7.dp))
-                        .background(palette.activePillBg.copy(alpha = 0.7f))
+                        .background(palette.activePillBg.copy(alpha = 0.72f))
                         .padding(horizontal = 6.dp, vertical = 3.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(2.dp),
                   ) {
-                    Icon(Icons.Outlined.DragIndicator, contentDescription = null, tint = palette.activePillFg, modifier = Modifier.size(12.dp))
-                    Text("Drag", fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold, color = palette.activePillFg)
+                    Icon(Icons.Outlined.DragIndicator, contentDescription = null, tint = palette.activePillFg, modifier = Modifier.size(13.dp))
+                    if (previewBehavior == IconLabelBehavior.ALWAYS_SHOW) {
+                      Text("Drag", fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold, color = palette.activePillFg)
+                    }
                   }
                 }
                 if (selConfig.showScopeBadge) {
@@ -599,7 +643,7 @@ fun SettingsEditorPane(
                       Icons.Outlined.Remove,
                       contentDescription = "Shrink preview scope",
                       tint = if (previewState.canShrink) palette.textPrimary else palette.textMuted.copy(alpha = 0.35f),
-                      modifier = Modifier.padding(4.dp).size(14.dp),
+                      modifier = Modifier.padding(3.dp).size(14.dp),
                     )
                   }
                   Surface(
@@ -612,31 +656,46 @@ fun SettingsEditorPane(
                       Icons.Outlined.Add,
                       contentDescription = "Expand preview scope",
                       tint = if (previewState.canExpand) palette.activePillFg else palette.textMuted.copy(alpha = 0.35f),
-                      modifier = Modifier.padding(4.dp).size(14.dp),
+                      modifier = Modifier.padding(3.dp).size(14.dp),
                     )
                   }
                 }
                 if (selConfig.showModeToggle) {
                   val isMove = selConfig.defaultEditorDragMode != DefaultEditorDragPolicy.ALWAYS_COPY
                   val modeTint = if (isMove) palette.ctaBg else EmeraldLive
-                  Text(
-                    text = if (isMove) "Move" else "Copy",
-                    fontFamily = JetBrainsMono,
-                    fontSize = 9.5.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = modeTint,
+                  Row(
                     modifier =
                       Modifier
                         .clip(RoundedCornerShape(6.dp))
                         .background(modeTint.copy(alpha = 0.14f))
                         .padding(horizontal = 6.dp, vertical = 3.dp),
-                  )
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                  ) {
+                    Icon(
+                      imageVector = if (isMove) Icons.Outlined.OpenWith else Icons.Outlined.ContentCopy,
+                      contentDescription = null,
+                      tint = modeTint,
+                      modifier = Modifier.size(12.dp),
+                    )
+                    if (previewBehavior == IconLabelBehavior.ALWAYS_SHOW) {
+                      Text(
+                        text = if (isMove) "Move" else "Copy",
+                        fontFamily = JetBrainsMono,
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = modeTint,
+                      )
+                    }
+                  }
                 }
                 if (selConfig.showQuickActions) {
-                  Text("Copy · Cut", fontSize = 9.5.sp, color = palette.textPrimary, modifier = Modifier.padding(horizontal = 4.dp))
+                  Icon(Icons.Outlined.ContentCopy, contentDescription = null, tint = palette.textPrimary, modifier = Modifier.padding(horizontal = 3.dp).size(13.dp))
+                  Icon(Icons.Outlined.ContentCut, contentDescription = null, tint = palette.textPrimary, modifier = Modifier.padding(horizontal = 3.dp).size(13.dp))
+                  Icon(Icons.Outlined.ContentPaste, contentDescription = null, tint = palette.textPrimary, modifier = Modifier.padding(horizontal = 3.dp).size(13.dp))
                 }
                 if (selConfig.showCodeActions) {
-                  Text("// Rename", fontFamily = JetBrainsMono, fontSize = 9.5.sp, color = palette.textSecondary, modifier = Modifier.padding(horizontal = 4.dp))
+                  Text("//", fontFamily = JetBrainsMono, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = palette.textSecondary, modifier = Modifier.padding(horizontal = 3.dp))
                 }
                 if (selConfig.enabledOverlayCount == 0) {
                   Text("Overlay hidden", fontFamily = JetBrainsMono, fontSize = 9.5.sp, color = palette.textMuted)

@@ -89,7 +89,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -126,8 +126,6 @@ import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.RoseError
 import com.example.ui.theme.UiStyleVersion
-import com.example.ui.theme.edgeGlassDock
-import com.example.ui.theme.edgeGlassSurface
 import com.example.ui.theme.rememberGlassBorderStroke
 import com.example.ui.viewmodel.IdeUiState
 import kotlinx.coroutines.Dispatchers
@@ -371,216 +369,220 @@ fun CodeEditorPane(
       enter = slideInVertically(tween(170)) { -it } + fadeIn(tween(150)),
       exit = slideOutVertically(tween(140)) { -it } + fadeOut(tween(120)),
     ) {
-    Row(
-      modifier =
-        Modifier
-          .fillMaxWidth()
-          .background(palette.editorBg)
-          .padding(horizontal = 8.dp, vertical = 4.dp),
-      verticalAlignment = Alignment.CenterVertically,
-    ) {
-      IconButton(
-        onClick = { flushThen(onNavigateTabBack) },
-        enabled = uiState.canNavigateTabBack,
-        modifier = Modifier.size(30.dp).testTag("editor_nav_back"),
-      ) {
-        Icon(
-          imageVector = Icons.Outlined.KeyboardArrowLeft,
-          contentDescription = "Previous tab",
-          tint = if (uiState.canNavigateTabBack) palette.textPrimary else palette.textMuted.copy(alpha = 0.45f),
-          modifier = Modifier.size(18.dp),
-        )
-      }
-      IconButton(
-        onClick = { flushThen(onNavigateTabForward) },
-        enabled = uiState.canNavigateTabForward,
-        modifier = Modifier.size(30.dp).testTag("editor_nav_forward"),
-      ) {
-        Icon(
-          imageVector = Icons.Outlined.KeyboardArrowRight,
-          contentDescription = "Next tab",
-          tint = if (uiState.canNavigateTabForward) palette.textPrimary else palette.textMuted.copy(alpha = 0.45f),
-          modifier = Modifier.size(18.dp),
-        )
-      }
-      Spacer(Modifier.width(4.dp))
-
-      val segments =
-        remember(uiState.workspace?.scriptName, activeFile.path) {
-          buildList {
-            add(uiState.workspace?.scriptName ?: "worker")
-            addAll(activeFile.path.split('/'))
-          }
-        }
-      Row(
-        modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        segments.forEachIndexed { idx, seg ->
-          Text(
-            text = seg,
-            style = MaterialTheme.typography.labelSmall,
-            color = if (idx == segments.lastIndex) palette.textPrimary else palette.textSecondary,
-            fontWeight = if (idx == segments.lastIndex) FontWeight.Medium else FontWeight.Normal,
-          )
-          if (idx < segments.lastIndex) {
-            Icon(
-              imageVector = Icons.Outlined.KeyboardArrowRight,
-              contentDescription = null,
-              tint = palette.textMuted,
-              modifier = Modifier.size(14.dp),
-            )
-          }
-        }
-      }
-
-      if (uiState.diagnostics.isNotEmpty()) {
-        val hasErr = uiState.diagnostics.any { it.severity == DiagnosticSeverity.ERROR }
-        IconRevealButton(
-          icon = Icons.Outlined.WarningAmber,
-          revealedLabel = "${uiState.diagnostics.size}",
-          onClick = { flushThen(onOpenProblems) },
-          active = !hasErr,
-          statusDotColor = if (hasErr) RoseError else AmberWarn,
-          height = 28.dp,
-          modifier = Modifier.padding(end = 4.dp),
-        )
-      }
-
-      if (isWranglerConfig) {
-        IconRevealButton(
-          icon = Icons.Outlined.Sync,
-          revealedLabel = "Apply Config",
-          active = true,
-          onClick = { flushThen(onSyncWranglerToWorkspace) },
-          tag = "apply_wrangler_config_button",
-          height = 28.dp,
-          modifier = Modifier.padding(end = 4.dp),
-        )
-      } else if (!activeFile.isVirtualReadOnly) {
-        IconRevealButton(
-          icon = Icons.Outlined.PlayArrow,
-          revealedLabel = "Run CLI",
-          isBusy = uiState.isRunningLocalScript,
-          onClick = { flushThen(onRunLocalScript) },
-          tag = "editor_run_local_button",
-          height = 28.dp,
-          modifier = Modifier.padding(end = 4.dp),
-        )
-      }
-
-      if (symbols.isNotEmpty()) {
-        Box {
+      Column(modifier = Modifier.fillMaxWidth().background(palette.editorBg)) {
+        Row(
+          modifier =
+            Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 6.dp, vertical = 1.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
           IconButton(
-            onClick = { showSymbolOutlineMenu = true },
-            modifier = Modifier.size(32.dp).testTag("symbol_outline_button"),
+            onClick = { flushThen(onNavigateTabBack) },
+            enabled = uiState.canNavigateTabBack,
+            modifier = Modifier.size(26.dp).testTag("editor_nav_back"),
           ) {
             Icon(
-              Icons.Outlined.ListAlt,
-              contentDescription = "Symbol Outline",
-              tint = palette.textSecondary,
+              imageVector = Icons.Outlined.KeyboardArrowLeft,
+              contentDescription = "Previous tab",
+              tint = if (uiState.canNavigateTabBack) palette.textPrimary else palette.textMuted.copy(alpha = 0.45f),
               modifier = Modifier.size(16.dp),
             )
           }
-          EdgeMenu(
-            expanded = showSymbolOutlineMenu,
-            onDismissRequest = { showSymbolOutlineMenu = false },
-            minWidth = 224.dp,
-            maxWidth = 296.dp,
+          IconButton(
+            onClick = { flushThen(onNavigateTabForward) },
+            enabled = uiState.canNavigateTabForward,
+            modifier = Modifier.size(26.dp).testTag("editor_nav_forward"),
           ) {
-            EdgeMenuHeader(
-              title = "Outline",
-              badgeText = "${symbols.size}",
-              leadingIcon = Icons.Outlined.ListAlt,
+            Icon(
+              imageVector = Icons.Outlined.KeyboardArrowRight,
+              contentDescription = "Next tab",
+              tint = if (uiState.canNavigateTabForward) palette.textPrimary else palette.textMuted.copy(alpha = 0.45f),
+              modifier = Modifier.size(16.dp),
             )
-            symbols.forEach { sym ->
-              EdgeMenuItem(
-                label = sym.name,
-                monospaced = true,
-                badgeText = ":${sym.line}",
-                leadingContent = {
-                  Box(
-                    modifier =
-                      Modifier
-                        .clip(RoundedCornerShape(5.dp))
-                        .background(palette.activePillBg.copy(alpha = 0.85f))
-                        .border(0.5.dp, palette.activePillFg.copy(alpha = 0.25f), RoundedCornerShape(5.dp))
-                        .padding(horizontal = 5.dp, vertical = 2.dp),
-                  ) {
-                    Text(
-                      text = sym.kind,
-                      fontFamily = JetBrainsMono,
-                      fontSize = 8.5.sp,
-                      fontWeight = FontWeight.SemiBold,
-                      color = palette.activePillFg,
+          }
+
+          val segments =
+            remember(uiState.workspace?.scriptName, activeFile.path) {
+              buildList {
+                add(uiState.workspace?.scriptName ?: "worker")
+                addAll(activeFile.path.split('/'))
+              }
+            }
+          Row(
+            modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()).padding(horizontal = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            segments.forEachIndexed { idx, seg ->
+              Text(
+                text = seg,
+                style = MaterialTheme.typography.labelSmall,
+                fontSize = 11.sp,
+                color = if (idx == segments.lastIndex) palette.textPrimary else palette.textMuted,
+                fontWeight = if (idx == segments.lastIndex) FontWeight.Medium else FontWeight.Normal,
+                maxLines = 1,
+              )
+              if (idx < segments.lastIndex) {
+                Icon(
+                  imageVector = Icons.Outlined.KeyboardArrowRight,
+                  contentDescription = null,
+                  tint = palette.textMuted.copy(alpha = 0.7f),
+                  modifier = Modifier.size(12.dp),
+                )
+              }
+            }
+          }
+
+          Row(
+            modifier = Modifier.weight(1.25f, fill = false).horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            if (uiState.diagnostics.isNotEmpty()) {
+              val hasErr = uiState.diagnostics.any { it.severity == DiagnosticSeverity.ERROR }
+              IconRevealButton(
+                icon = Icons.Outlined.WarningAmber,
+                revealedLabel = "${uiState.diagnostics.size}",
+                minimal = true,
+                onClick = { flushThen(onOpenProblems) },
+                active = !hasErr,
+                statusDotColor = if (hasErr) RoseError else AmberWarn,
+                height = 24.dp,
+                iconSize = 14.dp,
+              )
+            }
+
+            if (isWranglerConfig) {
+              IconRevealButton(
+                icon = Icons.Outlined.Sync,
+                revealedLabel = "Apply Config",
+                minimal = true,
+                active = true,
+                onClick = { flushThen(onSyncWranglerToWorkspace) },
+                tag = "apply_wrangler_config_button",
+                height = 24.dp,
+                iconSize = 15.dp,
+              )
+            } else if (!activeFile.isVirtualReadOnly) {
+              IconRevealButton(
+                icon = Icons.Outlined.PlayArrow,
+                revealedLabel = "Run CLI",
+                minimal = true,
+                isBusy = uiState.isRunningLocalScript,
+                onClick = { flushThen(onRunLocalScript) },
+                tag = "editor_run_local_button",
+                height = 24.dp,
+                iconSize = 15.dp,
+              )
+            }
+
+            if (symbols.isNotEmpty()) {
+              Box {
+                IconRevealButton(
+                  icon = Icons.Outlined.ListAlt,
+                  revealedLabel = "Outline",
+                  minimal = true,
+                  onClick = { showSymbolOutlineMenu = true },
+                  height = 24.dp,
+                  iconSize = 15.dp,
+                  tag = "symbol_outline_button",
+                )
+                EdgeMenu(
+                  expanded = showSymbolOutlineMenu,
+                  onDismissRequest = { showSymbolOutlineMenu = false },
+                  minWidth = 224.dp,
+                  maxWidth = 296.dp,
+                ) {
+                  EdgeMenuHeader(
+                    title = "Outline",
+                    badgeText = "${symbols.size}",
+                    leadingIcon = Icons.Outlined.ListAlt,
+                  )
+                  symbols.forEach { sym ->
+                    EdgeMenuItem(
+                      label = sym.name,
+                      monospaced = true,
+                      badgeText = ":${sym.line}",
+                      leadingContent = {
+                        Box(
+                          modifier =
+                            Modifier
+                              .clip(RoundedCornerShape(5.dp))
+                              .background(palette.activePillBg.copy(alpha = 0.85f))
+                              .border(0.5.dp, palette.activePillFg.copy(alpha = 0.25f), RoundedCornerShape(5.dp))
+                              .padding(horizontal = 5.dp, vertical = 2.dp),
+                        ) {
+                          Text(
+                            text = sym.kind,
+                            fontFamily = JetBrainsMono,
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = palette.activePillFg,
+                          )
+                        }
+                      },
+                      onClick = {
+                        showSymbolOutlineMenu = false
+                        flushThen { onJumpToLine(activeFile.path, sym.line) }
+                      },
                     )
                   }
-                },
+                }
+              }
+            }
+
+            IconRevealButton(
+              icon = Icons.Outlined.History,
+              revealedLabel = "History",
+              minimal = true,
+              onClick = { flushThen(onOpenLocalHistory) },
+              height = 24.dp,
+              iconSize = 15.dp,
+              tag = "local_history_button",
+            )
+            if (!activeFile.isVirtualReadOnly &&
+              activeFile.language in setOf(WorkerLanguage.JAVASCRIPT, WorkerLanguage.TYPESCRIPT)
+            ) {
+              IconRevealButton(
+                icon = Icons.Outlined.DriveFileRenameOutline,
+                revealedLabel = "Rename",
+                minimal = true,
                 onClick = {
-                  showSymbolOutlineMenu = false
-                  flushThen { onJumpToLine(activeFile.path, sym.line) }
+                  val ident = editorController.currentIdentifierAtCursor()
+                  flushThen { onRequestSmartRename(ident) }
                 },
+                height = 24.dp,
+                iconSize = 15.dp,
+                tag = "rename_symbol_button",
+              )
+            }
+
+            IconRevealButton(
+              icon = Icons.Outlined.Search,
+              revealedLabel = "Find",
+              minimal = true,
+              active = uiState.showFindBar,
+              onClick = { flushThen(onToggleFindBar) },
+              height = 24.dp,
+              iconSize = 15.dp,
+              tag = "find_replace_toggle",
+            )
+            if (!activeFile.isVirtualReadOnly) {
+              IconRevealButton(
+                icon = Icons.AutoMirrored.Outlined.FormatIndentIncrease,
+                revealedLabel = "Format",
+                minimal = true,
+                onClick = { flushThen(onFormat) },
+                height = 24.dp,
+                iconSize = 15.dp,
+                tag = "format_code_button",
               )
             }
           }
         }
+        HorizontalDivider(color = palette.border.copy(alpha = 0.25f), thickness = 0.5.dp)
       }
-
-      IconButton(
-        onClick = { flushThen(onOpenLocalHistory) },
-        modifier = Modifier.size(32.dp).testTag("local_history_button"),
-      ) {
-        Icon(
-          Icons.Outlined.History,
-          contentDescription = "Local History",
-          tint = palette.textSecondary,
-          modifier = Modifier.size(16.dp),
-        )
-      }
-      if (!activeFile.isVirtualReadOnly &&
-        activeFile.language in setOf(WorkerLanguage.JAVASCRIPT, WorkerLanguage.TYPESCRIPT)
-      ) {
-        IconButton(
-          onClick = {
-            val ident = editorController.currentIdentifierAtCursor()
-            flushThen { onRequestSmartRename(ident) }
-          },
-          modifier = Modifier.size(32.dp).testTag("rename_symbol_button"),
-        ) {
-          Icon(
-            Icons.Outlined.DriveFileRenameOutline,
-            contentDescription = "Rename Symbol",
-            tint = palette.textSecondary,
-            modifier = Modifier.size(16.dp),
-          )
-        }
-      }
-
-      IconButton(
-        onClick = { flushThen(onToggleFindBar) },
-        modifier = Modifier.size(32.dp).testTag("find_replace_toggle"),
-      ) {
-        Icon(
-          Icons.Outlined.Search,
-          contentDescription = stringResource(R.string.cd_find_replace),
-          tint = palette.textSecondary,
-          modifier = Modifier.size(16.dp),
-        )
-      }
-      if (!activeFile.isVirtualReadOnly) {
-        IconButton(
-          onClick = { flushThen(onFormat) },
-          modifier = Modifier.size(32.dp).testTag("format_code_button"),
-        ) {
-          Icon(
-            Icons.AutoMirrored.Outlined.FormatIndentIncrease,
-            contentDescription = stringResource(R.string.cd_format_code),
-            tint = palette.textSecondary,
-            modifier = Modifier.size(16.dp),
-          )
-        }
-      }
-    }
     }
 
     val activeFindMatches =
@@ -1014,7 +1016,10 @@ fun CodeEditorPane(
         onJumpToLocation = { path, line, col ->
           flushThen { onJumpToLocation(path, line, col) }
         },
-        modifier = Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp),
+        modifier =
+          Modifier
+            .align(Alignment.TopEnd)
+            .padding(top = if (uiState.editorSettings.stickyHeaders) 28.dp else 6.dp, end = 8.dp),
       )
 
       EditorZoomHud(
@@ -1049,13 +1054,14 @@ fun CodeEditorPane(
       enter = slideInVertically(tween(180)) { it } + fadeIn(tween(160)),
       exit = slideOutVertically(tween(150)) { it } + fadeOut(tween(130)),
     ) {
-      Column(modifier = Modifier.fillMaxWidth()) {
+      Column(modifier = Modifier.fillMaxWidth().background(palette.editorBg)) {
+        HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.5.dp)
         Row(
           modifier =
             Modifier
               .fillMaxWidth()
-              .height(28.dp)
-              .edgeGlassDock(shape = RectangleShape)
+              .height(22.dp)
+              .background(palette.editorBg)
               .padding(horizontal = 8.dp),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1104,6 +1110,7 @@ fun CodeEditorPane(
                 warnCount > 0 -> "$warnCount warn"
                 else -> "Clean"
               },
+            minimal = true,
             statusDotColor =
               when {
                 errCount > 0 -> RoseError
@@ -1111,60 +1118,61 @@ fun CodeEditorPane(
                 else -> EmeraldLive
               },
             onClick = { flushThen(onOpenProblems) },
-            height = 24.dp,
+            height = 20.dp,
+            iconSize = 13.dp,
             tag = "editor_status_diagnostics_button",
           )
 
           IconButton(
             onClick = onHideEditorBottomBars,
-            modifier = Modifier.size(24.dp).testTag("hide_editor_bottom_bars_button"),
+            modifier = Modifier.size(20.dp).testTag("hide_editor_bottom_bars_button"),
           ) {
             Icon(
               imageVector = Icons.Outlined.KeyboardArrowDown,
               contentDescription = "Hide editor bottom bars",
               tint = palette.textMuted,
-              modifier = Modifier.size(15.dp),
+              modifier = Modifier.size(14.dp),
             )
           }
         }
 
         if (!activeFile.isVirtualReadOnly) {
-          HorizontalDivider(color = palette.glassBorderSubtle)
+          HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.5.dp)
           Row(
             modifier =
               Modifier
                 .fillMaxWidth()
-                .height(42.dp)
-                .background(palette.glassSurface)
-                .padding(horizontal = 6.dp, vertical = 4.dp),
+                .height(34.dp)
+                .background(palette.chromeBg)
+                .padding(horizontal = 6.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
           ) {
             Row(
               verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(2.dp),
+              horizontalArrangement = Arrangement.spacedBy(1.dp),
             ) {
               IconButton(
                 onClick = { if (!editorController.undo()) flushThen(onUndo) },
-                modifier = Modifier.size(34.dp).testTag("editor_undo"),
+                modifier = Modifier.size(26.dp).testTag("editor_undo"),
               ) {
-                Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = "Undo", tint = palette.textSecondary, modifier = Modifier.size(17.dp))
+                Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = "Undo", tint = palette.textSecondary, modifier = Modifier.size(16.dp))
               }
               IconButton(
                 onClick = { if (!editorController.redo()) flushThen(onRedo) },
-                modifier = Modifier.size(34.dp).testTag("editor_redo"),
+                modifier = Modifier.size(26.dp).testTag("editor_redo"),
               ) {
-                Icon(Icons.AutoMirrored.Outlined.Redo, contentDescription = "Redo", tint = palette.textSecondary, modifier = Modifier.size(17.dp))
+                Icon(Icons.AutoMirrored.Outlined.Redo, contentDescription = "Redo", tint = palette.textSecondary, modifier = Modifier.size(16.dp))
               }
             }
 
             VerticalDivider(
-              color = palette.glassBorderSubtle,
-              modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp),
+              color = palette.border.copy(alpha = 0.45f),
+              modifier = Modifier.height(16.dp).padding(horizontal = 4.dp),
             )
 
             Row(
               modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-              horizontalArrangement = Arrangement.spacedBy(5.dp),
+              horizontalArrangement = Arrangement.spacedBy(4.dp),
               verticalAlignment = Alignment.CenterVertically,
             ) {
               AccessoryKey("TAB") { editorController.insertTab(uiState.editorSettings.tabSize) }
@@ -1203,16 +1211,16 @@ private fun EditorLiveStatusTelemetry(
   val t = hudHolder.telemetry
   Row(
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(6.dp),
+    horizontalArrangement = Arrangement.spacedBy(4.dp),
   ) {
     Text(
-      text = "Ln ${t.line}, Col ${t.col}",
+      text = "Ln ${t.line}:${t.col}",
       fontFamily = JetBrainsMono,
-      fontSize = 10.sp,
+      fontSize = 9.5.sp,
       color = palette.textSecondary,
       maxLines = 1,
     )
-    Text("·", fontSize = 10.sp, color = palette.textMuted)
+    Text("·", fontSize = 9.5.sp, color = palette.textMuted)
     Text(
       text =
         when (language) {
@@ -1222,16 +1230,16 @@ private fun EditorLiveStatusTelemetry(
           WorkerLanguage.TEXT -> "TXT"
         },
       fontFamily = JetBrainsMono,
-      fontSize = 10.sp,
+      fontSize = 9.5.sp,
       fontWeight = FontWeight.SemiBold,
       color = palette.textMuted,
       maxLines = 1,
     )
-    Text("·", fontSize = 10.sp, color = palette.textMuted)
+    Text("·", fontSize = 9.5.sp, color = palette.textMuted)
     Text(
-      text = "${t.lineCount} lines",
+      text = "${t.lineCount}L",
       fontFamily = JetBrainsMono,
-      fontSize = 10.sp,
+      fontSize = 9.5.sp,
       color = palette.textMuted,
       maxLines = 1,
     )
@@ -1279,9 +1287,9 @@ private fun FloatingSyntaxDiagnosticPill(
       }
 
     Surface(
-      color = palette.chromeSurface.copy(alpha = 0.94f),
-      shape = RoundedCornerShape(10.dp),
-      border = BorderStroke(0.75.dp, accent.copy(alpha = 0.45f)),
+      color = palette.chromeSurface,
+      shape = RoundedCornerShape(8.dp),
+      border = BorderStroke(0.75.dp, accent.copy(alpha = 0.55f)),
       shadowElevation = 2.dp,
       modifier =
         Modifier
@@ -1419,20 +1427,21 @@ private fun FloatingAutocompleteOverlay(
 @Composable
 private fun AccessoryKey(label: String, onClick: () -> Unit) {
   val palette = LocalIdePalette.current
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   Surface(
     onClick = onClick,
-    shape = RoundedCornerShape(8.dp),
-    color = palette.glassElevated,
-    border = rememberGlassBorderStroke(1.dp),
+    shape = RoundedCornerShape(6.dp),
+    color = palette.chromeSurface,
+    border = if (isV2) null else BorderStroke(0.5.dp, palette.border.copy(alpha = 0.45f)),
   ) {
     Box(
-      modifier = Modifier.height(30.dp).padding(horizontal = 10.dp),
+      modifier = Modifier.height(24.dp).padding(horizontal = 8.dp),
       contentAlignment = Alignment.Center,
     ) {
       Text(
         text = label,
         fontFamily = JetBrainsMono,
-        fontSize = 11.5.sp,
+        fontSize = 11.sp,
         fontWeight = FontWeight.Medium,
         color = palette.textPrimary,
         maxLines = 1,
@@ -1559,15 +1568,17 @@ private fun EditorFileTabBar(
 
   Column(modifier = Modifier.fillMaxWidth().background(palette.tabBarBg)) {
     Row(
-      modifier = Modifier.fillMaxWidth().padding(start = 6.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+      modifier = Modifier.fillMaxWidth().padding(start = 6.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(4.dp),
+      horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
       IconRevealButton(
         icon = Icons.Outlined.FolderOpen,
         revealedLabel = "Files",
+        minimal = true,
         onClick = onOpenExplorer,
-        height = 30.dp,
+        height = 26.dp,
+        iconSize = 16.dp,
         tag = "editor_files_button",
       )
       if (uiState.openTabPaths.isEmpty()) {
@@ -1576,7 +1587,7 @@ private fun EditorFileTabBar(
         LazyRow(
           state = tabListState,
           modifier = Modifier.weight(1f),
-          horizontalArrangement = Arrangement.spacedBy(5.dp),
+          horizontalArrangement = Arrangement.spacedBy(3.dp),
           verticalAlignment = Alignment.CenterVertically,
         ) {
           items(uiState.openTabPaths, key = { it }) { path ->
@@ -1592,17 +1603,14 @@ private fun EditorFileTabBar(
 
             Box {
               Surface(
-                shape = RoundedCornerShape(if (isV2) 16.dp else 12.dp),
-                color = if (isActive) palette.tabActiveBg else if (isV2) palette.chromeSurface else palette.glassSurface,
+                shape = RoundedCornerShape(6.dp),
+                color = if (isActive) palette.editorBg else Color.Transparent,
                 border =
-                  when {
-                    isV2 -> null
-                    isActive -> BorderStroke(1.dp, palette.activePillFg.copy(alpha = 0.45f))
-                    else -> rememberGlassBorderStroke(1.dp)
-                  },
+                  if (isActive && !isV2) BorderStroke(0.5.dp, palette.border.copy(alpha = 0.55f))
+                  else null,
                 modifier =
                   Modifier
-                    .clip(RoundedCornerShape(if (isV2) 16.dp else 12.dp))
+                    .clip(RoundedCornerShape(6.dp))
                     .combinedClickable(
                       onClick = { onSelectTab(path) },
                       onLongClick = { contextMenuPath = path },
@@ -1611,64 +1619,64 @@ private fun EditorFileTabBar(
               ) {
                 Column {
                   Row(
-                    modifier = Modifier.padding(start = 9.dp, end = 4.dp, top = 5.dp, bottom = 4.dp),
+                    modifier = Modifier.padding(start = 8.dp, end = 3.dp, top = 3.dp, bottom = 3.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                   ) {
                     FileTypeBadge(path = path)
-                    Column {
-                      Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                      ) {
-                        if (parentHint.isNotEmpty()) {
-                          Text(
-                            text = parentHint,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = palette.textMuted,
-                            maxLines = 1,
-                          )
-                        }
+                    Row(
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                      if (parentHint.isNotEmpty()) {
                         Text(
-                          text = fileName,
-                          style = MaterialTheme.typography.labelMedium,
-                          fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
-                          color = if (isActive) palette.textPrimary else palette.textSecondary,
+                          text = parentHint,
+                          style = MaterialTheme.typography.labelSmall,
+                          fontSize = 10.sp,
+                          color = palette.textMuted,
                           maxLines = 1,
-                          overflow = TextOverflow.Ellipsis,
                         )
-                        if (file?.isEntryPoint == true) {
-                          Surface(color = palette.activePillBg, shape = RoundedCornerShape(4.dp)) {
-                            Text(
-                              text = "MAIN",
-                              fontSize = 8.sp,
-                              fontWeight = FontWeight.Bold,
-                              color = palette.activePillFg,
-                              modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                            )
-                          }
-                        }
-                        if (file?.isDirty == true) {
-                          Box(
-                            modifier =
-                              Modifier
-                                .size(7.dp)
-                                .clip(CircleShape)
-                                .background(palette.activePillFg)
-                                .testTag("dirty_dot_$path"),
+                      }
+                      Text(
+                        text = fileName,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontSize = 11.5.sp,
+                        fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (isActive) palette.textPrimary else palette.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                      )
+                      if (file?.isEntryPoint == true) {
+                        Surface(color = palette.activePillBg, shape = RoundedCornerShape(3.dp)) {
+                          Text(
+                            text = "MAIN",
+                            fontSize = 7.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = palette.activePillFg,
+                            modifier = Modifier.padding(horizontal = 3.dp, vertical = 0.5.dp),
                           )
                         }
+                      }
+                      if (file?.isDirty == true) {
+                        Box(
+                          modifier =
+                            Modifier
+                              .size(6.dp)
+                              .clip(CircleShape)
+                              .background(palette.activePillFg)
+                              .testTag("dirty_dot_$path"),
+                        )
                       }
                     }
                     IconButton(
                       onClick = { onCloseTab(path) },
-                      modifier = Modifier.size(22.dp).testTag("close_tab_$path"),
+                      modifier = Modifier.size(18.dp).testTag("close_tab_$path"),
                     ) {
                       Icon(
                         imageVector = Icons.Outlined.Close,
                         contentDescription = "${stringResource(R.string.cd_close_tab)} $fileName",
                         tint = palette.textMuted,
-                        modifier = Modifier.size(13.dp),
+                        modifier = Modifier.size(12.dp),
                       )
                     }
                   }
@@ -1677,7 +1685,7 @@ private fun EditorFileTabBar(
                       modifier =
                         Modifier
                           .fillMaxWidth()
-                          .height(2.5.dp)
+                          .height(1.5.dp)
                           .background(palette.ctaBg),
                     )
                   }
@@ -1771,23 +1779,23 @@ private fun EditorFileTabBar(
       if (uiState.openTabPaths.size > 1) {
         IconButton(
           onClick = { onSelectAdjacentTab(false) },
-          modifier = Modifier.size(26.dp).testTag("tab_cycle_prev"),
+          modifier = Modifier.size(24.dp).testTag("tab_cycle_prev"),
         ) {
-          Icon(Icons.Outlined.KeyboardArrowLeft, contentDescription = "Previous open tab", tint = palette.textSecondary, modifier = Modifier.size(16.dp))
+          Icon(Icons.Outlined.KeyboardArrowLeft, contentDescription = "Previous open tab", tint = palette.textSecondary, modifier = Modifier.size(15.dp))
         }
         IconButton(
           onClick = { onSelectAdjacentTab(true) },
-          modifier = Modifier.size(26.dp).testTag("tab_cycle_next"),
+          modifier = Modifier.size(24.dp).testTag("tab_cycle_next"),
         ) {
-          Icon(Icons.Outlined.KeyboardArrowRight, contentDescription = "Next open tab", tint = palette.textSecondary, modifier = Modifier.size(16.dp))
+          Icon(Icons.Outlined.KeyboardArrowRight, contentDescription = "Next open tab", tint = palette.textSecondary, modifier = Modifier.size(15.dp))
         }
       }
 
       IconButton(
         onClick = onCreateNewFile,
-        modifier = Modifier.size(28.dp).testTag("tab_bar_new_file"),
+        modifier = Modifier.size(24.dp).testTag("tab_bar_new_file"),
       ) {
-        Icon(Icons.Outlined.Add, contentDescription = "New file tab", tint = palette.textSecondary, modifier = Modifier.size(16.dp))
+        Icon(Icons.Outlined.Add, contentDescription = "New file tab", tint = palette.textSecondary, modifier = Modifier.size(15.dp))
       }
 
       Box {
@@ -1796,18 +1804,18 @@ private fun EditorFileTabBar(
             switcherQuery = ""
             tabSwitcherOpen = true
           },
-          shape = RoundedCornerShape(8.dp),
-          color = palette.chromePill,
+          shape = RoundedCornerShape(6.dp),
+          color = palette.chromeSurface,
           modifier = Modifier.testTag("tab_switcher_button"),
         ) {
           Row(
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(2.dp),
           ) {
             Text(
               text = "${uiState.openTabPaths.size}/${workspaceFiles.size}",
-              fontSize = 10.sp,
+              fontSize = 9.5.sp,
               fontWeight = FontWeight.Medium,
               color = palette.textPrimary,
             )
@@ -1815,7 +1823,7 @@ private fun EditorFileTabBar(
               Icons.Outlined.KeyboardArrowDown,
               contentDescription = "Open tabs and project file switcher",
               tint = palette.textSecondary,
-              modifier = Modifier.size(14.dp),
+              modifier = Modifier.size(13.dp),
             )
           }
         }
@@ -1961,7 +1969,7 @@ private fun EditorFileTabBar(
         }
       }
     }
-    HorizontalDivider(color = palette.border.copy(alpha = 0.4f))
+    HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.5.dp)
   }
 }
 
@@ -2109,29 +2117,25 @@ private fun EditorZoomControlCluster(
   val displayZoomPercent = zoomPercentProvider()
   Row(
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(2.dp),
-    modifier =
-      Modifier
-        .edgeGlassSurface(RoundedCornerShape(8.dp), elevated = true)
-        .padding(horizontal = 2.dp, vertical = 1.dp),
+    horizontalArrangement = Arrangement.spacedBy(1.dp),
   ) {
     IconButton(
       onClick = { onStepZoom(-10) },
       enabled = displayZoomPercent > 60,
-      modifier = Modifier.size(22.dp).testTag("editor_zoom_out"),
+      modifier = Modifier.size(20.dp).testTag("editor_zoom_out"),
     ) {
       Icon(
         Icons.Outlined.Remove,
         contentDescription = "Zoom out editor",
         tint = if (displayZoomPercent > 60) palette.textSecondary else palette.textMuted.copy(alpha = 0.4f),
-        modifier = Modifier.size(13.dp),
+        modifier = Modifier.size(12.dp),
       )
     }
     Box {
       Text(
         text = "${displayZoomPercent}%",
         fontFamily = JetBrainsMono,
-        fontSize = 10.sp,
+        fontSize = 9.5.sp,
         fontWeight = if (displayZoomPercent != 100) FontWeight.Bold else FontWeight.Medium,
         color = if (displayZoomPercent != 100) palette.activePillFg else palette.textSecondary,
         modifier =
@@ -2165,13 +2169,13 @@ private fun EditorZoomControlCluster(
     IconButton(
       onClick = { onStepZoom(10) },
       enabled = displayZoomPercent < 220,
-      modifier = Modifier.size(22.dp).testTag("editor_zoom_in"),
+      modifier = Modifier.size(20.dp).testTag("editor_zoom_in"),
     ) {
       Icon(
         Icons.Outlined.Add,
         contentDescription = "Zoom in editor",
         tint = if (displayZoomPercent < 220) palette.textSecondary else palette.textMuted.copy(alpha = 0.4f),
-        modifier = Modifier.size(13.dp),
+        modifier = Modifier.size(12.dp),
       )
     }
   }

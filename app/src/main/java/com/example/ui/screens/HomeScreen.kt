@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -559,7 +560,7 @@ fun HomeScreen(
           modifier =
             Modifier
               .fillMaxWidth()
-              .padding(horizontal = 18.dp, vertical = 12.dp),
+              .padding(horizontal = 16.dp, vertical = 10.dp),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -574,90 +575,98 @@ fun HomeScreen(
             fontWeight = FontWeight.Bold,
             letterSpacing = (-0.3).sp,
             color = palette.textPrimary,
-            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(min = 84.dp),
           )
 
-          if (!uiState.isLocalScratchpad && uiState.accounts.isNotEmpty()) {
-            Box {
-              IconRevealButton(
-                icon = Icons.Outlined.CloudQueue,
-                revealedLabel = uiState.selectedAccount?.name?.let(::formatAccountDisplayName) ?: "Account",
-                statusDotColor = EmeraldLive,
-                onClick = { accountMenuOpen = true },
-                tag = "home_account_button",
-              )
-              EdgeMenu(
-                expanded = accountMenuOpen,
-                onDismissRequest = { accountMenuOpen = false },
-                minWidth = 224.dp,
-                maxWidth = 280.dp,
-              ) {
-                EdgeMenuHeader(
-                  title = "Cloudflare Accounts",
-                  badgeText = "${uiState.accounts.size}",
-                  leadingIcon = Icons.Outlined.CloudQueue,
+          Row(
+            modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            if (!uiState.isLocalScratchpad && uiState.accounts.isNotEmpty()) {
+              Box {
+                IconRevealButton(
+                  icon = Icons.Outlined.CloudQueue,
+                  revealedLabel = uiState.selectedAccount?.name?.let(::formatAccountDisplayName) ?: "Account",
+                  statusDotColor = EmeraldLive,
+                  onClick = { accountMenuOpen = true },
+                  tag = "home_account_button",
                 )
-                uiState.accounts.forEach { acc ->
-                  EdgeMenuCompactItem(
-                    label = formatAccountDisplayName(acc.name),
-                    icon = Icons.Outlined.CloudQueue,
-                    selected = acc.id == uiState.selectedAccount?.id,
-                    onClick = {
-                      accountMenuOpen = false
-                      viewModel.selectAccount(acc)
-                    },
+                EdgeMenu(
+                  expanded = accountMenuOpen,
+                  onDismissRequest = { accountMenuOpen = false },
+                  minWidth = 224.dp,
+                  maxWidth = 280.dp,
+                ) {
+                  EdgeMenuHeader(
+                    title = "Cloudflare Accounts",
+                    badgeText = "${uiState.accounts.size}",
+                    leadingIcon = Icons.Outlined.CloudQueue,
                   )
+                  uiState.accounts.forEach { acc ->
+                    EdgeMenuCompactItem(
+                      label = formatAccountDisplayName(acc.name),
+                      icon = Icons.Outlined.CloudQueue,
+                      selected = acc.id == uiState.selectedAccount?.id,
+                      onClick = {
+                        accountMenuOpen = false
+                        viewModel.selectAccount(acc)
+                      },
+                    )
+                  }
                 }
               }
+
+              IconRevealButton(
+                icon = Icons.Outlined.Language,
+                revealedLabel =
+                  if (uiState.accountSubdomain.isNotBlank()) "${uiState.accountSubdomain}.workers.dev"
+                  else "Subdomain",
+                active = uiState.accountSubdomain.isNotBlank(),
+                onClick = { showChangeSubdomainDialog = true },
+                tag = "home_subdomain_chip",
+              )
+            } else {
+              IconRevealButton(
+                icon = Icons.Outlined.CloudQueue,
+                revealedLabel = "Connect",
+                statusDotColor = AmberWarn,
+                onClick = viewModel::exitScratchpadToAuth,
+                tag = "home_connect_cloudflare_button",
+              )
             }
 
             IconRevealButton(
-              icon = Icons.Outlined.Language,
-              revealedLabel =
-                if (uiState.accountSubdomain.isNotBlank()) "${uiState.accountSubdomain}.workers.dev"
-                else "Subdomain",
-              active = uiState.accountSubdomain.isNotBlank(),
-              onClick = { showChangeSubdomainDialog = true },
-              tag = "home_subdomain_chip",
+              icon = Icons.Outlined.Style,
+              revealedLabel = activeStyle.label,
+              active = isV2,
+              onClick = {
+                val next =
+                  if (activeStyle == UiStyleVersion.V1_DEFAULT) UiStyleVersion.V2_MINIMAL_OLED
+                  else UiStyleVersion.V1_DEFAULT
+                viewModel.updateSettings { it.copy(uiStyleVersion = next.key) }
+              },
+              tag = "home_style_toggle_button",
             )
-          } else {
+
             IconRevealButton(
-              icon = Icons.Outlined.CloudQueue,
-              revealedLabel = "Connect",
-              statusDotColor = AmberWarn,
-              onClick = viewModel::exitScratchpadToAuth,
-              tag = "home_connect_cloudflare_button",
+              icon = Icons.Outlined.AccountTree,
+              revealedLabel = uiState.gitHubCreds?.login?.let { "@$it" } ?: "GitHub",
+              active = uiState.gitHubCreds != null,
+              statusDotColor = if (uiState.gitHubCreds != null) EmeraldLive else null,
+              onClick = { viewModel.setShowHomeGitHubHub(true) },
+              tag = "home_github_hub_button",
+            )
+
+            IconRevealButton(
+              icon = Icons.Outlined.Settings,
+              revealedLabel = "Settings",
+              onClick = { viewModel.setShowHomeSettings(true) },
+              tag = "home_settings_button",
             )
           }
-
-          IconRevealButton(
-            icon = Icons.Outlined.Style,
-            revealedLabel = activeStyle.label,
-            active = isV2,
-            onClick = {
-              val next =
-                if (activeStyle == UiStyleVersion.V1_DEFAULT) UiStyleVersion.V2_MINIMAL_OLED
-                else UiStyleVersion.V1_DEFAULT
-              viewModel.updateSettings { it.copy(uiStyleVersion = next.key) }
-            },
-            tag = "home_style_toggle_button",
-          )
-
-          IconRevealButton(
-            icon = Icons.Outlined.AccountTree,
-            revealedLabel = uiState.gitHubCreds?.login?.let { "@$it" } ?: "GitHub",
-            active = uiState.gitHubCreds != null,
-            statusDotColor = if (uiState.gitHubCreds != null) EmeraldLive else null,
-            onClick = { viewModel.setShowHomeGitHubHub(true) },
-            tag = "home_github_hub_button",
-          )
-
-          IconRevealButton(
-            icon = Icons.Outlined.Settings,
-            revealedLabel = "Settings",
-            onClick = { viewModel.setShowHomeSettings(true) },
-            tag = "home_settings_button",
-          )
         }
 
         if (uiState.isOpeningWorker || uiState.isLoadingWorkers) {

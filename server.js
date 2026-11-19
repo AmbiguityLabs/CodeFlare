@@ -21,8 +21,8 @@ function resolvePort() {
       }
     }
   }
-  const nginxPort = Number(process.env.NGINX_PORT || 8080);
-  const cpPort = Number(process.env.CONTROL_PLANE_PORT || 8000);
+  const nginxPort = process.env.NGINX_PORT ? Number(process.env.NGINX_PORT) : null;
+  const cpPort = process.env.CONTROL_PLANE_PORT ? Number(process.env.CONTROL_PLANE_PORT) : null;
   const envPort = Number(process.env.PORT);
   if (Number.isInteger(envPort) && envPort > 0 && envPort < 65536 && envPort !== nginxPort && envPort !== cpPort) {
     return envPort;
