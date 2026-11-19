@@ -45,6 +45,10 @@ enum class SmartTextDomain {
         WorkerLanguage.JAVASCRIPT,
         WorkerLanguage.TYPESCRIPT -> CODE_JS_TS
         WorkerLanguage.JSON -> JSON
+        WorkerLanguage.HTML,
+        WorkerLanguage.CSS -> MARKUP_HTML_CSS
+        WorkerLanguage.MARKDOWN,
+        WorkerLanguage.CONFIG,
         WorkerLanguage.TEXT -> PLAIN_TEXT
       }
     }

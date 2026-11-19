@@ -415,6 +415,50 @@ object WranglerSyncParser {
           }
         }
       }
+      WorkerLanguage.MARKDOWN -> {
+        val headingRx = Regex("""^\s*(#{1,4})\s+(.+?)\s*$""")
+        lines.forEachIndexed { idx, line ->
+          headingRx.find(line)?.let { m ->
+            symbols.add(CodeSymbol("${m.groupValues[1]} ${m.groupValues[2]}", "h${m.groupValues[1].length}", idx + 1))
+          }
+        }
+      }
+      WorkerLanguage.HTML -> {
+        val idRx = Regex("""<([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*\bid=["']([^"']+)["']""")
+        val sectionRx = Regex("""^\s*<(head|body|header|nav|main|section|article|footer|script|style|h[1-3])\b""", RegexOption.IGNORE_CASE)
+        lines.forEachIndexed { idx, line ->
+          val idMatch = idRx.find(line)
+          if (idMatch != null) {
+            symbols.add(CodeSymbol("<${idMatch.groupValues[1]}#${idMatch.groupValues[2]}>", "id", idx + 1))
+          } else {
+            sectionRx.find(line)?.let { m ->
+              symbols.add(CodeSymbol("<${m.groupValues[1].lowercase()}>", "tag", idx + 1))
+            }
+          }
+        }
+      }
+      WorkerLanguage.CSS -> {
+        val ruleRx = Regex("""^\s*([.@#:*a-zA-Z\[][^{/;]{1,48})\s*\{""")
+        lines.forEachIndexed { idx, line ->
+          ruleRx.find(line)?.let { m ->
+            symbols.add(CodeSymbol(m.groupValues[1].trim(), "rule", idx + 1))
+          }
+        }
+      }
+      WorkerLanguage.CONFIG -> {
+        val secRx = Regex("""^\s*\[([^\]]+)]""")
+        val kvRx = Regex("""^\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*[:=]""")
+        lines.forEachIndexed { idx, line ->
+          val sec = secRx.find(line)
+          if (sec != null) {
+            symbols.add(CodeSymbol("[${sec.groupValues[1]}]", "section", idx + 1))
+          } else {
+            kvRx.find(line)?.let { kv ->
+              symbols.add(CodeSymbol(kv.groupValues[1], "key", idx + 1))
+            }
+          }
+        }
+      }
       WorkerLanguage.TEXT -> Unit
     }
     return symbols.take(60)

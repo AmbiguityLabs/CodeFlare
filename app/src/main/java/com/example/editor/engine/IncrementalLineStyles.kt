@@ -24,6 +24,8 @@ enum class LexState {
   CODE,
   BLOCK_COMMENT,
   TEMPLATE_STRING,
+  HTML_COMMENT,
+  MD_CODE_BLOCK,
 }
 
 /**
@@ -259,7 +261,12 @@ class IncrementalLineStyles(
       entryState: LexState,
       language: WorkerLanguage,
     ): Pair<List<LineTokenRun>, LexState> {
-      if (line.isEmpty() || language == WorkerLanguage.TEXT) return emptyList<LineTokenRun>() to entryState
+      if (language == WorkerLanguage.TEXT) return emptyList<LineTokenRun>() to entryState
+      if (language == WorkerLanguage.HTML) return lexMarkupLine(line, entryState)
+      if (language == WorkerLanguage.CSS) return lexCssLine(line, entryState)
+      if (language == WorkerLanguage.MARKDOWN) return lexMarkdownLine(line, entryState)
+      if (language == WorkerLanguage.CONFIG) return lexConfigLine(line, entryState)
+      if (line.isEmpty()) return emptyList<LineTokenRun>() to entryState
       val runs = ArrayList<LineTokenRun>(12)
       var state = entryState
       var i = 0
@@ -436,9 +443,317 @@ class IncrementalLineStyles(
 
             i++
           }
+          else -> {
+            state = LexState.CODE
+          }
         }
       }
       return runs to state
+    }
+
+    private fun lexMarkupLine(
+      line: String,
+      entryState: LexState,
+    ): Pair<List<LineTokenRun>, LexState> {
+      if (line.isEmpty()) return emptyList<LineTokenRun>() to entryState
+      val runs = ArrayList<LineTokenRun>(12)
+      var state = entryState
+      var i = 0
+      val len = line.length
+      while (i < len) {
+        if (state == LexState.HTML_COMMENT) {
+          val close = line.indexOf("-->", i)
+          if (close < 0) {
+            runs.add(LineTokenRun(i, len, EdgeTokenKind.COMMENT))
+            return runs to LexState.HTML_COMMENT
+          }
+          runs.add(LineTokenRun(i, close + 3, EdgeTokenKind.COMMENT))
+          i = close + 3
+          state = LexState.CODE
+          continue
+        }
+        val c = line[i]
+        if (c == '<') {
+          if (line.startsWith("<!--", i)) {
+            val close = line.indexOf("-->", i + 4)
+            if (close < 0) {
+              runs.add(LineTokenRun(i, len, EdgeTokenKind.COMMENT))
+              return runs to LexState.HTML_COMMENT
+            }
+            runs.add(LineTokenRun(i, close + 3, EdgeTokenKind.COMMENT))
+            i = close + 3
+            continue
+          }
+          if (i + 1 < len && (line[i + 1] == '!' || line[i + 1] == '?')) {
+            val gt = line.indexOf('>', i + 2).let { if (it < 0) len else it + 1 }
+            runs.add(LineTokenRun(i, gt, EdgeTokenKind.KEYWORD))
+            i = gt
+            continue
+          }
+          var j = i + 1
+          if (j < len && line[j] == '/') j++
+          val nameStart = j
+          while (j < len && (line[j].isLetterOrDigit() || line[j] == '-' || line[j] == '_' || line[j] == ':')) j++
+          if (j > nameStart) {
+            runs.add(LineTokenRun(i, nameStart, EdgeTokenKind.OPERATOR))
+            runs.add(LineTokenRun(nameStart, j, EdgeTokenKind.CONTROL))
+          }
+          while (j < len && line[j] != '>') {
+            val ac = line[j]
+            when {
+              ac == '"' || ac == '\'' -> {
+                var sEnd = j + 1
+                while (sEnd < len) {
+                  if (line[sEnd] == '\\' && sEnd + 1 < len) sEnd += 2
+                  else if (line[sEnd] == ac) {
+                    sEnd++
+                    break
+                  } else sEnd++
+                }
+                runs.add(LineTokenRun(j, sEnd, EdgeTokenKind.STRING))
+                j = sEnd
+              }
+              ac.isLetter() || ac == ':' || ac == '@' || ac == '_' -> {
+                val aStart = j
+                while (j < len && (line[j].isLetterOrDigit() || line[j] in charArrayOf('-', '_', ':', '.'))) j++
+                runs.add(LineTokenRun(aStart, j, EdgeTokenKind.PROPERTY))
+              }
+              ac == '/' || ac == '=' -> {
+                runs.add(LineTokenRun(j, j + 1, EdgeTokenKind.OPERATOR))
+                j++
+              }
+              else -> j++
+            }
+          }
+          if (j < len && line[j] == '>') {
+            runs.add(LineTokenRun(j, j + 1, EdgeTokenKind.OPERATOR))
+            j++
+          }
+          i = j
+          continue
+        }
+        i++
+      }
+      return runs to state
+    }
+
+    private fun lexCssLine(
+      line: String,
+      entryState: LexState,
+    ): Pair<List<LineTokenRun>, LexState> {
+      if (line.isEmpty()) return emptyList<LineTokenRun>() to entryState
+      val runs = ArrayList<LineTokenRun>(12)
+      var state = entryState
+      var i = 0
+      val len = line.length
+      while (i < len) {
+        if (state == LexState.BLOCK_COMMENT) {
+          val close = line.indexOf("*/", i)
+          if (close < 0) {
+            runs.add(LineTokenRun(i, len, EdgeTokenKind.COMMENT))
+            return runs to LexState.BLOCK_COMMENT
+          }
+          runs.add(LineTokenRun(i, close + 2, EdgeTokenKind.COMMENT))
+          i = close + 2
+          state = LexState.CODE
+          continue
+        }
+        val c = line[i]
+        val next = if (i + 1 < len) line[i + 1] else '\u0000'
+        if (c == '/' && next == '*') {
+          val close = line.indexOf("*/", i + 2)
+          if (close < 0) {
+            runs.add(LineTokenRun(i, len, EdgeTokenKind.COMMENT))
+            return runs to LexState.BLOCK_COMMENT
+          }
+          runs.add(LineTokenRun(i, close + 2, EdgeTokenKind.COMMENT))
+          i = close + 2
+          continue
+        }
+        if (c == '"' || c == '\'') {
+          var j = i + 1
+          while (j < len) {
+            if (line[j] == '\\' && j + 1 < len) j += 2
+            else if (line[j] == c) {
+              j++
+              break
+            } else j++
+          }
+          runs.add(LineTokenRun(i, j, EdgeTokenKind.STRING))
+          i = j
+          continue
+        }
+        if (c == '@' || c == '!') {
+          var j = i + 1
+          while (j < len && (line[j].isLetterOrDigit() || line[j] == '-')) j++
+          if (j > i + 1) runs.add(LineTokenRun(i, j, EdgeTokenKind.CONTROL))
+          i = j
+          continue
+        }
+        if (c == '#') {
+          var j = i + 1
+          while (j < len && (line[j].isLetterOrDigit() || line[j] == '-' || line[j] == '_')) j++
+          val token = line.substring(i + 1, j)
+          val isHex = token.length in setOf(3, 4, 6, 8) && token.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+          runs.add(LineTokenRun(i, j, if (isHex) EdgeTokenKind.NUMBER else EdgeTokenKind.TYPE))
+          i = j
+          continue
+        }
+        if (c in '0'..'9' && (i == 0 || !line[i - 1].isLetterOrDigit())) {
+          var j = i + 1
+          while (j < len && (line[j] in '0'..'9' || line[j] == '.' || line[j].isLetter() || line[j] == '%')) j++
+          runs.add(LineTokenRun(i, j, EdgeTokenKind.NUMBER))
+          i = j
+          continue
+        }
+        if (c == '.' && i + 1 < len && (line[i + 1].isLetter() || line[i + 1] == '_')) {
+          var j = i + 1
+          while (j < len && (line[j].isLetterOrDigit() || line[j] == '-' || line[j] == '_')) j++
+          runs.add(LineTokenRun(i, j, EdgeTokenKind.TYPE))
+          i = j
+          continue
+        }
+        if (c.isLetter() || c == '-') {
+          var j = i + 1
+          while (j < len && (line[j].isLetterOrDigit() || line[j] == '-' || line[j] == '_')) j++
+          val kind =
+            when {
+              j < len && line[j] == '(' -> EdgeTokenKind.FUNCTION
+              isFollowedByColon(line, j) -> EdgeTokenKind.PROPERTY
+              else -> EdgeTokenKind.PLAIN
+            }
+          if (kind != EdgeTokenKind.PLAIN) runs.add(LineTokenRun(i, j, kind))
+          i = j
+          continue
+        }
+        i++
+      }
+      return runs to state
+    }
+
+    private fun lexMarkdownLine(
+      line: String,
+      entryState: LexState,
+    ): Pair<List<LineTokenRun>, LexState> {
+      val trimmed = line.trimStart()
+      if (trimmed.startsWith("```")) {
+        val nextState = if (entryState == LexState.MD_CODE_BLOCK) LexState.CODE else LexState.MD_CODE_BLOCK
+        return listOf(LineTokenRun(0, line.length, EdgeTokenKind.CONTROL)) to nextState
+      }
+      if (entryState == LexState.MD_CODE_BLOCK) {
+        return (if (line.isNotEmpty()) listOf(LineTokenRun(0, line.length, EdgeTokenKind.STRING)) else emptyList()) to LexState.MD_CODE_BLOCK
+      }
+      if (line.isEmpty()) return emptyList<LineTokenRun>() to LexState.CODE
+      val runs = ArrayList<LineTokenRun>(8)
+      val lead = line.length - trimmed.length
+      when {
+        trimmed.startsWith("#") -> runs.add(LineTokenRun(lead, line.length, EdgeTokenKind.KEYWORD))
+        trimmed.startsWith(">") -> runs.add(LineTokenRun(lead, line.length, EdgeTokenKind.COMMENT))
+        (trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("+ ")) ->
+          runs.add(LineTokenRun(lead, lead + 1, EdgeTokenKind.CONTROL))
+      }
+      if (!trimmed.startsWith("#")) {
+        var i = 0
+        while (i < line.length) {
+          if (line[i] == '`') {
+            val close = line.indexOf('`', i + 1)
+            if (close > i) {
+              runs.add(LineTokenRun(i, close + 1, EdgeTokenKind.STRING))
+              i = close + 1
+              continue
+            }
+          } else if (line[i] == '*' && i + 1 < line.length && line[i + 1] == '*') {
+            val close = line.indexOf("**", i + 2)
+            if (close > i + 1) {
+              runs.add(LineTokenRun(i, close + 2, EdgeTokenKind.KEYWORD))
+              i = close + 2
+              continue
+            }
+          } else if (line[i] == '[' || (line[i] == '!' && i + 1 < line.length && line[i + 1] == '[')) {
+            val bStart = if (line[i] == '!') i + 1 else i
+            val closeB = line.indexOf(']', bStart + 1)
+            if (closeB > bStart && closeB + 1 < line.length && line[closeB + 1] == '(') {
+              val closeP = line.indexOf(')', closeB + 2)
+              if (closeP > closeB + 1) {
+                runs.add(LineTokenRun(i, closeB + 1, EdgeTokenKind.PROPERTY))
+                runs.add(LineTokenRun(closeB + 1, closeP + 1, EdgeTokenKind.STRING))
+                i = closeP + 1
+                continue
+              }
+            }
+          }
+          i++
+        }
+      }
+      return runs to LexState.CODE
+    }
+
+    private fun lexConfigLine(
+      line: String,
+      entryState: LexState,
+    ): Pair<List<LineTokenRun>, LexState> {
+      val trimmed = line.trimStart()
+      if (entryState == LexState.HTML_COMMENT || trimmed.startsWith("<")) {
+        return lexMarkupLine(line, entryState)
+      }
+      if (line.isEmpty()) return emptyList<LineTokenRun>() to LexState.CODE
+      val runs = ArrayList<LineTokenRun>(10)
+      var i = 0
+      val len = line.length
+      while (i < len) {
+        val c = line[i]
+        val next = if (i + 1 < len) line[i + 1] else '\u0000'
+        if (c == '#' || (c == '-' && next == '-') || (c == '/' && next == '/')) {
+          runs.add(LineTokenRun(i, len, EdgeTokenKind.COMMENT))
+          return runs to LexState.CODE
+        }
+        if (i == 0 && c == '[') {
+          val close = line.indexOf(']', 1)
+          if (close > 0) {
+            runs.add(LineTokenRun(0, close + 1, EdgeTokenKind.CONTROL))
+            i = close + 1
+            continue
+          }
+        }
+        if (c == '"' || c == '\'') {
+          var j = i + 1
+          while (j < len) {
+            if (line[j] == '\\' && j + 1 < len) j += 2
+            else if (line[j] == c) {
+              j++
+              break
+            } else j++
+          }
+          runs.add(LineTokenRun(i, j, EdgeTokenKind.STRING))
+          i = j
+          continue
+        }
+        if (c in '0'..'9' && (i == 0 || !line[i - 1].isLetterOrDigit())) {
+          var j = i + 1
+          while (j < len && (line[j].isLetterOrDigit() || line[j] == '.')) j++
+          runs.add(LineTokenRun(i, j, EdgeTokenKind.NUMBER))
+          i = j
+          continue
+        }
+        if (c.isLetter() || c == '_') {
+          var j = i + 1
+          while (j < len && (line[j].isLetterOrDigit() || line[j] == '_' || line[j] == '-')) j++
+          val word = line.substring(i, j).uppercase()
+          val kind =
+            when {
+              word in setOf("TRUE", "FALSE", "NULL", "YES", "NO", "ON", "OFF") -> EdgeTokenKind.KEYWORD
+              word in setOf("SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE", "CREATE", "TABLE", "INDEX", "ALTER", "DROP", "JOIN", "EXPORT", "ECHO", "IF", "THEN", "ELSE", "FI", "FOR", "DO", "DONE") ->
+                EdgeTokenKind.CONTROL
+              j < len && (line[j] == '=' || isFollowedByColon(line, j)) -> EdgeTokenKind.PROPERTY
+              else -> EdgeTokenKind.PLAIN
+            }
+          if (kind != EdgeTokenKind.PLAIN) runs.add(LineTokenRun(i, j, kind))
+          i = j
+          continue
+        }
+        i++
+      }
+      return runs to LexState.CODE
     }
 
     private fun isFollowedByColon(line: String, startIndex: Int): Boolean {

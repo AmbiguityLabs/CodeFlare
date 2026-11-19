@@ -99,15 +99,14 @@ enum class DiffReviewIntent(
   ),
 }
 
-private fun languageForPath(path: String): WorkerLanguage {
-  val lower = path.lowercase()
-  return when {
-    lower.endsWith(".ts") || lower.endsWith(".tsx") || lower.endsWith(".mts") -> WorkerLanguage.TYPESCRIPT
-    lower.endsWith(".js") || lower.endsWith(".mjs") || lower.endsWith(".cjs") || lower.endsWith(".jsx") -> WorkerLanguage.JAVASCRIPT
-    lower.endsWith(".json") || lower.endsWith(".jsonc") -> WorkerLanguage.JSON
-    else -> WorkerLanguage.TEXT
-  }
-}
+private fun languageForPath(path: String): WorkerLanguage =
+  com.example.data.remote.WorkerFile(
+    path = path,
+    content = "",
+    originalContent = "",
+    contentType = "",
+    isEntryPoint = false,
+  ).language
 
 @Composable
 fun DiffReviewModal(

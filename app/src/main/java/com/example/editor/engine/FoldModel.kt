@@ -194,7 +194,10 @@ object EdgeFoldDetector {
       val line = doc.lineText(lineIdx)
       val trimmed = line.trimStart()
 
-      if (language != WorkerLanguage.JSON && !inBlockComment && !inTemplate) {
+      if ((language == WorkerLanguage.JAVASCRIPT || language == WorkerLanguage.TYPESCRIPT) &&
+        !inBlockComment &&
+        !inTemplate
+      ) {
         if (trimmed.startsWith("import ") || trimmed.startsWith("import{")) {
           if (importStartLine < 0) importStartLine = lineIdx
           importLastLine = lineIdx

@@ -368,6 +368,143 @@ object SyntaxHighlighter {
     return result
   }
 
+  /**
+   * Highlights HTTP responses, API payloads, stack traces, and CLI logs cleanly based on MIME hint or content.
+   */
+  fun highlightResponse(
+    text: String,
+    contentTypeHint: String? = null,
+    palette: IdePalette,
+  ): AnnotatedString {
+    if (text.isEmpty() || text.length > MAX_HIGHLIGHT_CHARS) return AnnotatedString(text)
+    val hint = contentTypeHint.orEmpty().lowercase()
+    val trimmed = text.trimStart()
+    val detectedLang =
+      when {
+        hint.contains("json") || trimmed.startsWith("{") || trimmed.startsWith("[") -> WorkerLanguage.JSON
+        hint.contains("html") ||
+          trimmed.startsWith("<!doctype", ignoreCase = true) ||
+          trimmed.startsWith("<html", ignoreCase = true) ||
+          trimmed.startsWith("<head", ignoreCase = true) ||
+          trimmed.startsWith("<body", ignoreCase = true) -> WorkerLanguage.HTML
+        hint.contains("svg") || hint.contains("xml") || trimmed.startsWith("<?xml", ignoreCase = true) ||
+          trimmed.startsWith("<svg", ignoreCase = true) -> WorkerLanguage.CONFIG
+        hint.contains("css") -> WorkerLanguage.CSS
+        hint.contains("markdown") -> WorkerLanguage.MARKDOWN
+        hint.contains("javascript") || hint.contains("typescript") -> WorkerLanguage.JAVASCRIPT
+        else -> null
+      }
+    if (detectedLang != null) {
+      return highlight(text, detectedLang, palette)
+    }
+
+    val styles = stylesFor(palette)
+    val builder = AnnotatedString.Builder(text)
+    highlightTerminalOrLogText(text, styles, palette, builder)
+    return builder.toAnnotatedString()
+  }
+
+  private fun highlightTerminalOrLogText(
+    text: String,
+    styles: PaletteSpanStyles,
+    palette: IdePalette,
+    builder: AnnotatedString.Builder,
+  ) {
+    val errStyle = SpanStyle(color = RoseError, fontWeight = FontWeight.SemiBold)
+    val warnStyle = SpanStyle(color = AmberWarn, fontWeight = FontWeight.SemiBold)
+    val len = text.length
+    var i = 0
+    while (i < len) {
+      val c = text[i]
+      // Quoted strings
+      if (c == '"' || c == '\'') {
+        val quote = c
+        var j = i + 1
+        while (j < len && text[j] != '\n') {
+          if (text[j] == '\\' && j + 1 < len) {
+            j += 2
+            continue
+          }
+          if (text[j] == quote) {
+            j++
+            break
+          }
+          j++
+        }
+        builder.addStyle(styles.string, i, j)
+        i = j
+        continue
+      }
+
+      // URLs
+      if ((c == 'h' || c == 'H') &&
+        (text.regionMatches(i, "https://", 0, 8, ignoreCase = true) ||
+          text.regionMatches(i, "http://", 0, 7, ignoreCase = true))
+      ) {
+        var j = i + 7
+        while (j < len && !text[j].isWhitespace() && text[j] !in charArrayOf('"', '\'', ')', ']', '}')) j++
+        builder.addStyle(styles.string, i, j)
+        i = j
+        continue
+      }
+
+      // Line-leading key: value
+      if ((i == 0 || text[i - 1] == '\n') && (c.isLetter() || c == '_')) {
+        var j = i + 1
+        while (j < len && (text[j].isLetterOrDigit() || text[j] == '-' || text[j] == '_')) j++
+        if (j < len && text[j] == ':' && (j + 1 >= len || text[j + 1].isWhitespace())) {
+          builder.addStyle(styles.propertyBold, i, j)
+          i = j + 1
+          continue
+        }
+      }
+
+      // Numbers / timestamps / HTTP codes
+      if (c.isDigit() && (i == 0 || !text[i - 1].isLetterOrDigit())) {
+        var j = i + 1
+        while (j < len && (text[j].isDigit() || text[j] == '.' || text[j] == ':' || text[j] == '-')) j++
+        val token = text.substring(i, j)
+        val statusVal = if (token.length == 3 && token.all { it.isDigit() }) token.toIntOrNull() else null
+        val numStyle =
+          when {
+            statusVal != null && statusVal in 500..599 -> errStyle
+            statusVal != null && statusVal in 400..499 -> warnStyle
+            else -> styles.number
+          }
+        builder.addStyle(numStyle, i, j)
+        i = j
+        continue
+      }
+
+      // Words
+      if (c.isLetter() || c == '_') {
+        var j = i + 1
+        while (j < len && (text[j].isLetterOrDigit() || text[j] == '_')) j++
+        val word = text.substring(i, j)
+        val style =
+          when {
+            word.equals("ERROR", ignoreCase = true) ||
+              word.equals("ERR", ignoreCase = true) ||
+              word.equals("FAIL", ignoreCase = true) ||
+              word.equals("FAILED", ignoreCase = true) ||
+              word.endsWith("Error") ||
+              word.endsWith("Exception") -> errStyle
+            word.equals("WARN", ignoreCase = true) ||
+              word.equals("WARNING", ignoreCase = true) ||
+              word.equals("TIMEOUT", ignoreCase = true) -> warnStyle
+            word == "true" || word == "false" || word == "null" -> styles.keywordBold
+            word in setOf("GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "OK", "PASS", "PASSED", "LOG", "INFO") ->
+              styles.control
+            else -> null
+          }
+        if (style != null) builder.addStyle(style, i, j)
+        i = j
+        continue
+      }
+      i++
+    }
+  }
+
   private fun highlightRange(
     code: String,
     start: Int,
@@ -376,6 +513,26 @@ object SyntaxHighlighter {
     styles: PaletteSpanStyles,
     builder: AnnotatedString.Builder,
   ) {
+    when (language) {
+      WorkerLanguage.HTML -> {
+        highlightMarkupRange(code, start, endLimit, styles, builder)
+        return
+      }
+      WorkerLanguage.CSS -> {
+        highlightCssRange(code, start, endLimit, styles, builder)
+        return
+      }
+      WorkerLanguage.MARKDOWN -> {
+        highlightMarkdownRange(code, start, endLimit, styles, builder)
+        return
+      }
+      WorkerLanguage.CONFIG -> {
+        highlightConfigRange(code, start, endLimit, styles, builder)
+        return
+      }
+      else -> Unit
+    }
+
     var i = start
     while (i < endLimit) {
       val c = code[i]
@@ -524,6 +681,316 @@ object SyntaxHighlighter {
     }
   }
 
+  private fun highlightMarkupRange(
+    code: String,
+    start: Int,
+    endLimit: Int,
+    styles: PaletteSpanStyles,
+    builder: AnnotatedString.Builder,
+  ) {
+    var i = start
+    while (i < endLimit) {
+      val c = code[i]
+      if (c == '<') {
+        if (code.startsWith("<!--", i)) {
+          val end = code.indexOf("-->", i + 4).let { if (it == -1 || it + 3 > endLimit) endLimit else it + 3 }
+          builder.addStyle(styles.comment, i, end)
+          i = end
+          continue
+        }
+        if (code.startsWith("<!", i) || code.startsWith("<?", i)) {
+          val gt = code.indexOf('>', i + 2).let { if (it == -1 || it + 1 > endLimit) endLimit else it + 1 }
+          builder.addStyle(styles.keyword, i, gt)
+          i = gt
+          continue
+        }
+        var j = i + 1
+        if (j < endLimit && code[j] == '/') j++
+        val nameStart = j
+        while (j < endLimit && (code[j].isLetterOrDigit() || code[j] == '-' || code[j] == '_' || code[j] == ':')) j++
+        if (j > nameStart) {
+          builder.addStyle(styles.operator, i, nameStart)
+          builder.addStyle(styles.control, nameStart, j)
+        }
+        while (j < endLimit && code[j] != '>') {
+          val ac = code[j]
+          when {
+            ac == '"' || ac == '\'' -> {
+              val sEnd = findQuoteEnd(code, j, endLimit, ac)
+              builder.addStyle(styles.string, j, sEnd)
+              j = sEnd
+            }
+            ac.isLetter() || ac == ':' || ac == '@' || ac == '_' -> {
+              val aStart = j
+              while (j < endLimit && (code[j].isLetterOrDigit() || code[j] in charArrayOf('-', '_', ':', '.'))) j++
+              builder.addStyle(styles.property, aStart, j)
+            }
+            ac == '/' || ac == '=' -> {
+              builder.addStyle(styles.operator, j, j + 1)
+              j++
+            }
+            else -> j++
+          }
+        }
+        if (j < endLimit && code[j] == '>') {
+          builder.addStyle(styles.operator, j, j + 1)
+          j++
+        }
+        i = j
+        continue
+      }
+      i++
+    }
+  }
+
+  private fun highlightCssRange(
+    code: String,
+    start: Int,
+    endLimit: Int,
+    styles: PaletteSpanStyles,
+    builder: AnnotatedString.Builder,
+  ) {
+    var i = start
+    while (i < endLimit) {
+      val c = code[i]
+      if (c == '/' && i + 1 < endLimit && code[i + 1] == '*') {
+        val end = code.indexOf("*/", i + 2).let { if (it == -1 || it + 2 > endLimit) endLimit else it + 2 }
+        builder.addStyle(styles.comment, i, end)
+        i = end
+        continue
+      }
+      if (c == '"' || c == '\'') {
+        val end = findQuoteEnd(code, i, endLimit, c)
+        builder.addStyle(styles.string, i, end)
+        i = end
+        continue
+      }
+      if (c == '@' || c == '!') {
+        var j = i + 1
+        while (j < endLimit && (code[j].isLetterOrDigit() || code[j] == '-')) j++
+        if (j > i + 1) builder.addStyle(styles.control, i, j)
+        i = j
+        continue
+      }
+      if (c == '#') {
+        var j = i + 1
+        while (j < endLimit && (code[j].isLetterOrDigit() || code[j] == '-' || code[j] == '_')) j++
+        val token = code.substring(i + 1, j)
+        val isHex = token.length in setOf(3, 4, 6, 8) && token.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+        builder.addStyle(if (isHex) styles.number else styles.type, i, j)
+        i = j
+        continue
+      }
+      if (c.isDigit() && (i == start || !code[i - 1].isLetterOrDigit())) {
+        var j = i + 1
+        while (j < endLimit && (code[j].isDigit() || code[j] == '.' || code[j].isLetter() || code[j] == '%')) j++
+        builder.addStyle(styles.number, i, j)
+        i = j
+        continue
+      }
+      if (c == '.' && i + 1 < endLimit && (code[i + 1].isLetter() || code[i + 1] == '_')) {
+        var j = i + 1
+        while (j < endLimit && (code[j].isLetterOrDigit() || code[j] == '-' || code[j] == '_')) j++
+        builder.addStyle(styles.type, i, j)
+        i = j
+        continue
+      }
+      if (c.isLetter() || c == '-') {
+        var j = i + 1
+        while (j < endLimit && (code[j].isLetterOrDigit() || code[j] == '-' || code[j] == '_')) j++
+        val style =
+          when {
+            j < endLimit && code[j] == '(' -> styles.function
+            isFollowedByColon(code, j, endLimit) -> styles.property
+            else -> null
+          }
+        if (style != null) builder.addStyle(style, i, j)
+        i = j
+        continue
+      }
+      i++
+    }
+  }
+
+  private fun highlightMarkdownRange(
+    code: String,
+    start: Int,
+    endLimit: Int,
+    styles: PaletteSpanStyles,
+    builder: AnnotatedString.Builder,
+  ) {
+    var i = start
+    var inFence = false
+    while (i < endLimit) {
+      val lineEnd = code.indexOf('\n', i).let { if (it == -1 || it > endLimit) endLimit else it }
+      val trimmedStart = skipSpaces(code, i, lineEnd)
+      if (trimmedStart + 2 < lineEnd &&
+        code[trimmedStart] == '`' &&
+        code[trimmedStart + 1] == '`' &&
+        code[trimmedStart + 2] == '`'
+      ) {
+        builder.addStyle(styles.control, i, lineEnd)
+        inFence = !inFence
+        i = if (lineEnd < endLimit) lineEnd + 1 else endLimit
+        continue
+      }
+      if (inFence) {
+        builder.addStyle(styles.string, i, lineEnd)
+        i = if (lineEnd < endLimit) lineEnd + 1 else endLimit
+        continue
+      }
+      if (trimmedStart < lineEnd) {
+        val ch = code[trimmedStart]
+        when {
+          ch == '#' -> builder.addStyle(styles.keywordBold, trimmedStart, lineEnd)
+          ch == '>' -> builder.addStyle(styles.comment, trimmedStart, lineEnd)
+          (ch == '-' || ch == '*' || ch == '+') && trimmedStart + 1 < lineEnd && code[trimmedStart + 1] == ' ' -> {
+            builder.addStyle(styles.control, trimmedStart, trimmedStart + 1)
+            highlightMarkdownInline(code, trimmedStart + 2, lineEnd, styles, builder)
+          }
+          else -> highlightMarkdownInline(code, i, lineEnd, styles, builder)
+        }
+      }
+      i = if (lineEnd < endLimit) lineEnd + 1 else endLimit
+    }
+  }
+
+  private fun highlightMarkdownInline(
+    code: String,
+    start: Int,
+    lineEnd: Int,
+    styles: PaletteSpanStyles,
+    builder: AnnotatedString.Builder,
+  ) {
+    var k = start
+    while (k < lineEnd) {
+      val c = code[k]
+      if (c == '`') {
+        val close = code.indexOf('`', k + 1).let { if (it in (k + 1) until lineEnd) it + 1 else -1 }
+        if (close > 0) {
+          builder.addStyle(styles.string, k, close)
+          k = close
+          continue
+        }
+      }
+      if (c == '*' && k + 1 < lineEnd && code[k + 1] == '*') {
+        val close = code.indexOf("**", k + 2).let { if (it in (k + 2) until lineEnd) it + 2 else -1 }
+        if (close > 0) {
+          builder.addStyle(styles.keywordBold, k, close)
+          k = close
+          continue
+        }
+      }
+      if (c == '[' || (c == '!' && k + 1 < lineEnd && code[k + 1] == '[')) {
+        val bracketStart = if (c == '!') k + 1 else k
+        val closeBracket = code.indexOf(']', bracketStart + 1)
+        if (closeBracket in (bracketStart + 1) until lineEnd &&
+          closeBracket + 1 < lineEnd &&
+          code[closeBracket + 1] == '('
+        ) {
+          val closeParen = code.indexOf(')', closeBracket + 2)
+          if (closeParen in (closeBracket + 2) until lineEnd) {
+            builder.addStyle(styles.propertyBold, k, closeBracket + 1)
+            builder.addStyle(styles.string, closeBracket + 1, closeParen + 1)
+            k = closeParen + 1
+            continue
+          }
+        }
+      }
+      k++
+    }
+  }
+
+  private fun highlightConfigRange(
+    code: String,
+    start: Int,
+    endLimit: Int,
+    styles: PaletteSpanStyles,
+    builder: AnnotatedString.Builder,
+  ) {
+    val trimmed = code.substring(start, minOf(endLimit, start + 200)).trimStart()
+    if (trimmed.startsWith("<")) {
+      highlightMarkupRange(code, start, endLimit, styles, builder)
+      return
+    }
+    var i = start
+    while (i < endLimit) {
+      val c = code[i]
+      if (c == '#' || (c == '-' && i + 1 < endLimit && code[i + 1] == '-') ||
+        (c == '/' && i + 1 < endLimit && code[i + 1] == '/')
+      ) {
+        val end = code.indexOf('\n', i).let { if (it == -1 || it > endLimit) endLimit else it }
+        builder.addStyle(styles.comment, i, end)
+        i = end
+        continue
+      }
+      if (c == '[' && (i == start || code[i - 1] == '\n')) {
+        val close = code.indexOf(']', i + 1)
+        val nl = code.indexOf('\n', i + 1).let { if (it < 0) endLimit else it }
+        if (close in (i + 1) until nl) {
+          builder.addStyle(styles.control, i, close + 1)
+          i = close + 1
+          continue
+        }
+      }
+      if (c == '"' || c == '\'') {
+        val end = findQuoteEnd(code, i, endLimit, c)
+        builder.addStyle(styles.string, i, end)
+        i = end
+        continue
+      }
+      if (c.isDigit() && (i == start || !code[i - 1].isLetterOrDigit())) {
+        var j = i + 1
+        while (j < endLimit && (code[j].isLetterOrDigit() || code[j] == '.')) j++
+        builder.addStyle(styles.number, i, j)
+        i = j
+        continue
+      }
+      if (c.isLetter() || c == '_') {
+        var j = i + 1
+        while (j < endLimit && (code[j].isLetterOrDigit() || code[j] == '_' || code[j] == '-')) j++
+        val word = code.substring(i, j)
+        val upper = word.uppercase()
+        val style =
+          when {
+            upper in setOf("TRUE", "FALSE", "NULL", "YES", "NO", "ON", "OFF") -> styles.keywordBold
+            upper in setOf("SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE", "CREATE", "TABLE", "INDEX", "ALTER", "DROP", "JOIN", "LEFT", "INNER", "ON", "AND", "OR", "NOT", "ORDER", "BY", "GROUP", "LIMIT", "EXPORT", "ECHO", "IF", "THEN", "ELSE", "FI", "FOR", "DO", "DONE", "CASE", "ESAC", "LOCAL", "RETURN") ->
+              styles.control
+            j < endLimit && (code[j] == '=' || isFollowedByColon(code, j, endLimit)) -> styles.propertyBold
+            else -> null
+          }
+        if (style != null) builder.addStyle(style, i, j)
+        i = j
+        continue
+      }
+      i++
+    }
+  }
+
+  private fun findQuoteEnd(code: CharSequence, start: Int, endLimit: Int, quote: Char): Int {
+    var j = start + 1
+    while (j < endLimit) {
+      val ch = code[j]
+      if (ch == '\n') break
+      if (ch == '\\' && j + 1 < endLimit) {
+        j += 2
+        continue
+      }
+      if (ch == quote) {
+        j++
+        break
+      }
+      j++
+    }
+    return j
+  }
+
+  private fun skipSpaces(code: CharSequence, start: Int, limit: Int): Int {
+    var k = start
+    while (k < limit && (code[k] == ' ' || code[k] == '\t')) k++
+    return k
+  }
+
   private fun isFollowedByColon(code: CharSequence, startIndex: Int, endLimit: Int): Boolean {
     var k = startIndex
     while (k < endLimit && code[k].isWhitespace()) k++
@@ -577,6 +1044,23 @@ object SyntaxHighlighter {
     colors: PaletteIntColors,
     onToken: (start: Int, end: Int, colorArgb: Int) -> Unit,
   ) {
+    if (language == WorkerLanguage.HTML) {
+      tokenizeMarkupCharRange(code, start, endLimit, emitStart, emitEnd, colors, onToken)
+      return
+    }
+    if (language == WorkerLanguage.CSS) {
+      tokenizeCssCharRange(code, start, endLimit, emitStart, emitEnd, colors, onToken)
+      return
+    }
+    if (language == WorkerLanguage.MARKDOWN) {
+      tokenizeMarkdownCharRange(code, start, endLimit, emitStart, emitEnd, colors, onToken)
+      return
+    }
+    if (language == WorkerLanguage.CONFIG) {
+      tokenizeConfigCharRange(code, start, endLimit, emitStart, emitEnd, colors, onToken)
+      return
+    }
+
     var i = start
     while (i < endLimit) {
       val c = code[i]
@@ -653,20 +1137,7 @@ object SyntaxHighlighter {
 
       if (c == '"' || c == '\'') {
         val quote = c
-        var j = i + 1
-        while (j < endLimit) {
-          val ch = code[j]
-          if (ch == '\n') break
-          if (ch == '\\' && j + 1 < endLimit) {
-            j += 2
-            continue
-          }
-          if (ch == quote) {
-            j++
-            break
-          }
-          j++
-        }
+        val j = findQuoteEnd(code, i, endLimit, quote)
         if (j > emitStart && i < emitEnd) {
           val isJsonKey =
             language == WorkerLanguage.JSON && quote == '"' && isFollowedByColon(code, j, endLimit)
@@ -718,6 +1189,254 @@ object SyntaxHighlighter {
         continue
       }
 
+      i++
+    }
+  }
+
+  private fun tokenizeMarkupCharRange(
+    code: CharSequence,
+    start: Int,
+    endLimit: Int,
+    emitStart: Int,
+    emitEnd: Int,
+    colors: PaletteIntColors,
+    onToken: (Int, Int, Int) -> Unit,
+  ) {
+    var i = start
+    while (i < endLimit) {
+      if (code[i] == '<') {
+        if (i + 3 < endLimit && code[i + 1] == '!' && code[i + 2] == '-' && code[i + 3] == '-') {
+          var end = i + 4
+          while (end + 2 < endLimit && !(code[end] == '-' && code[end + 1] == '-' && code[end + 2] == '>')) end++
+          end = if (end + 2 < endLimit) end + 3 else endLimit
+          emitClipped(i, end, emitStart, emitEnd, colors.comment, onToken)
+          i = end
+          continue
+        }
+        if (i + 1 < endLimit && (code[i + 1] == '!' || code[i + 1] == '?')) {
+          var end = i + 2
+          while (end < endLimit && code[end] != '>') end++
+          if (end < endLimit) end++
+          emitClipped(i, end, emitStart, emitEnd, colors.keyword, onToken)
+          i = end
+          continue
+        }
+        var j = i + 1
+        if (j < endLimit && code[j] == '/') j++
+        val nameStart = j
+        while (j < endLimit && (code[j].isLetterOrDigit() || code[j] == '-' || code[j] == '_' || code[j] == ':')) j++
+        if (j > nameStart) {
+          emitClipped(nameStart, j, emitStart, emitEnd, colors.control, onToken)
+        }
+        while (j < endLimit && code[j] != '>') {
+          val ac = code[j]
+          when {
+            ac == '"' || ac == '\'' -> {
+              val sEnd = findQuoteEnd(code, j, endLimit, ac)
+              emitClipped(j, sEnd, emitStart, emitEnd, colors.string, onToken)
+              j = sEnd
+            }
+            ac.isLetter() || ac == ':' || ac == '@' || ac == '_' -> {
+              val aStart = j
+              while (j < endLimit && (code[j].isLetterOrDigit() || code[j] in charArrayOf('-', '_', ':', '.'))) j++
+              emitClipped(aStart, j, emitStart, emitEnd, colors.property, onToken)
+            }
+            else -> j++
+          }
+        }
+        if (j < endLimit && code[j] == '>') j++
+        i = j
+        continue
+      }
+      i++
+    }
+  }
+
+  private fun tokenizeCssCharRange(
+    code: CharSequence,
+    start: Int,
+    endLimit: Int,
+    emitStart: Int,
+    emitEnd: Int,
+    colors: PaletteIntColors,
+    onToken: (Int, Int, Int) -> Unit,
+  ) {
+    var i = start
+    while (i < endLimit) {
+      val c = code[i]
+      if (c == '/' && i + 1 < endLimit && code[i + 1] == '*') {
+        var end = i + 2
+        while (end + 1 < endLimit && !(code[end] == '*' && code[end + 1] == '/')) end++
+        end = if (end + 1 < endLimit) end + 2 else endLimit
+        emitClipped(i, end, emitStart, emitEnd, colors.comment, onToken)
+        i = end
+        continue
+      }
+      if (c == '"' || c == '\'') {
+        val end = findQuoteEnd(code, i, endLimit, c)
+        emitClipped(i, end, emitStart, emitEnd, colors.string, onToken)
+        i = end
+        continue
+      }
+      if (c == '@' || c == '!') {
+        var j = i + 1
+        while (j < endLimit && (code[j].isLetterOrDigit() || code[j] == '-')) j++
+        if (j > i + 1) emitClipped(i, j, emitStart, emitEnd, colors.control, onToken)
+        i = j
+        continue
+      }
+      if (c == '#') {
+        var j = i + 1
+        while (j < endLimit && (code[j].isLetterOrDigit() || code[j] == '-' || code[j] == '_')) j++
+        val token = code.subSequence(i + 1, j).toString()
+        val isHex = token.length in setOf(3, 4, 6, 8) && token.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+        emitClipped(i, j, emitStart, emitEnd, if (isHex) colors.number else colors.type, onToken)
+        i = j
+        continue
+      }
+      if (c in '0'..'9' && (i == start || !code[i - 1].isLetterOrDigit())) {
+        var j = i + 1
+        while (j < endLimit && (code[j] in '0'..'9' || code[j] == '.' || code[j].isLetter() || code[j] == '%')) j++
+        emitClipped(i, j, emitStart, emitEnd, colors.number, onToken)
+        i = j
+        continue
+      }
+      if (c == '.' && i + 1 < endLimit && (code[i + 1].isLetter() || code[i + 1] == '_')) {
+        var j = i + 1
+        while (j < endLimit && (code[j].isLetterOrDigit() || code[j] == '-' || code[j] == '_')) j++
+        emitClipped(i, j, emitStart, emitEnd, colors.type, onToken)
+        i = j
+        continue
+      }
+      if (c.isLetter() || c == '-') {
+        var j = i + 1
+        while (j < endLimit && (code[j].isLetterOrDigit() || code[j] == '-' || code[j] == '_')) j++
+        val color =
+          when {
+            j < endLimit && code[j] == '(' -> colors.function
+            isFollowedByColon(code, j, endLimit) -> colors.property
+            else -> 0
+          }
+        if (color != 0) emitClipped(i, j, emitStart, emitEnd, color, onToken)
+        i = j
+        continue
+      }
+      i++
+    }
+  }
+
+  private fun tokenizeMarkdownCharRange(
+    code: CharSequence,
+    start: Int,
+    endLimit: Int,
+    emitStart: Int,
+    emitEnd: Int,
+    colors: PaletteIntColors,
+    onToken: (Int, Int, Int) -> Unit,
+  ) {
+    var i = start
+    var inFence = false
+    while (i < endLimit) {
+      var lineEnd = i
+      while (lineEnd < endLimit && code[lineEnd] != '\n') lineEnd++
+      val trimmedStart = skipSpaces(code, i, lineEnd)
+      if (trimmedStart + 2 < lineEnd &&
+        code[trimmedStart] == '`' &&
+        code[trimmedStart + 1] == '`' &&
+        code[trimmedStart + 2] == '`'
+      ) {
+        emitClipped(i, lineEnd, emitStart, emitEnd, colors.control, onToken)
+        inFence = !inFence
+        i = if (lineEnd < endLimit) lineEnd + 1 else endLimit
+        continue
+      }
+      if (inFence) {
+        emitClipped(i, lineEnd, emitStart, emitEnd, colors.string, onToken)
+        i = if (lineEnd < endLimit) lineEnd + 1 else endLimit
+        continue
+      }
+      if (trimmedStart < lineEnd) {
+        val ch = code[trimmedStart]
+        when {
+          ch == '#' -> emitClipped(trimmedStart, lineEnd, emitStart, emitEnd, colors.keyword, onToken)
+          ch == '>' -> emitClipped(trimmedStart, lineEnd, emitStart, emitEnd, colors.comment, onToken)
+          (ch == '-' || ch == '*' || ch == '+') && trimmedStart + 1 < lineEnd && code[trimmedStart + 1] == ' ' -> {
+            emitClipped(trimmedStart, trimmedStart + 1, emitStart, emitEnd, colors.control, onToken)
+          }
+        }
+        var k = i
+        while (k < lineEnd) {
+          if (code[k] == '`') {
+            var close = k + 1
+            while (close < lineEnd && code[close] != '`') close++
+            if (close < lineEnd) {
+              emitClipped(k, close + 1, emitStart, emitEnd, colors.string, onToken)
+              k = close + 1
+              continue
+            }
+          }
+          k++
+        }
+      }
+      i = if (lineEnd < endLimit) lineEnd + 1 else endLimit
+    }
+  }
+
+  private fun tokenizeConfigCharRange(
+    code: CharSequence,
+    start: Int,
+    endLimit: Int,
+    emitStart: Int,
+    emitEnd: Int,
+    colors: PaletteIntColors,
+    onToken: (Int, Int, Int) -> Unit,
+  ) {
+    val headStart = skipSpaces(code, start, minOf(endLimit, start + 120))
+    if (headStart < endLimit && code[headStart] == '<') {
+      tokenizeMarkupCharRange(code, start, endLimit, emitStart, emitEnd, colors, onToken)
+      return
+    }
+    var i = start
+    while (i < endLimit) {
+      val c = code[i]
+      if (c == '#' || (c == '-' && i + 1 < endLimit && code[i + 1] == '-') ||
+        (c == '/' && i + 1 < endLimit && code[i + 1] == '/')
+      ) {
+        var end = i + 1
+        while (end < endLimit && code[end] != '\n') end++
+        emitClipped(i, end, emitStart, emitEnd, colors.comment, onToken)
+        i = end
+        continue
+      }
+      if (c == '"' || c == '\'') {
+        val end = findQuoteEnd(code, i, endLimit, c)
+        emitClipped(i, end, emitStart, emitEnd, colors.string, onToken)
+        i = end
+        continue
+      }
+      if (c in '0'..'9' && (i == start || !code[i - 1].isLetterOrDigit())) {
+        var j = i + 1
+        while (j < endLimit && (code[j].isLetterOrDigit() || code[j] == '.')) j++
+        emitClipped(i, j, emitStart, emitEnd, colors.number, onToken)
+        i = j
+        continue
+      }
+      if (c.isLetter() || c == '_') {
+        var j = i + 1
+        while (j < endLimit && (code[j].isLetterOrDigit() || code[j] == '_' || code[j] == '-')) j++
+        val word = code.subSequence(i, j).toString().uppercase()
+        val color =
+          when {
+            word in setOf("TRUE", "FALSE", "NULL", "YES", "NO", "ON", "OFF") -> colors.keyword
+            word in setOf("SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE", "CREATE", "TABLE", "INDEX", "ALTER", "DROP", "JOIN", "EXPORT", "ECHO", "IF", "THEN", "ELSE", "FI", "FOR", "DO", "DONE") ->
+              colors.control
+            j < endLimit && (code[j] == '=' || isFollowedByColon(code, j, endLimit)) -> colors.property
+            else -> 0
+          }
+        if (color != 0) emitClipped(i, j, emitStart, emitEnd, color, onToken)
+        i = j
+        continue
+      }
       i++
     }
   }

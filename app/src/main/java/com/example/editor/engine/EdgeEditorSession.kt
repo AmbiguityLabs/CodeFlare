@@ -536,28 +536,74 @@ class EdgeEditorSession(
   }
 
   fun toggleLineComment() {
-    if (readOnly || language == WorkerLanguage.JSON || language == WorkerLanguage.TEXT) return
+    if (readOnly || language == WorkerLanguage.JSON || language == WorkerLanguage.TEXT || language == WorkerLanguage.MARKDOWN) return
     val startLine = doc.lineForOffset(selection.min)
     val endLine = doc.lineForOffset(if (selection.collapsed) selection.min else (selection.max - 1).coerceAtLeast(selection.min))
     val blockStart = doc.lineStart(startLine)
     val blockEnd = doc.lineEnd(endLine)
     val lines = doc.substring(blockStart, blockEnd).split('\n')
-    val allCommented = lines.filter { it.isNotBlank() }.all { it.trimStart().startsWith("//") }
     val updated =
-      lines.joinToString("\n") { line ->
-        if (allCommented) {
-          val idx = line.indexOf("//")
-          if (idx >= 0) {
-            val after = if (idx + 2 < line.length && line[idx + 2] == ' ') idx + 3 else idx + 2
-            line.substring(0, idx) + line.substring(after)
-          } else {
-            line
+      when (language) {
+        WorkerLanguage.HTML -> {
+          val allCommented = lines.filter { it.isNotBlank() }.all {
+            val t = it.trim()
+            t.startsWith("<!--") && t.endsWith("-->")
           }
-        } else {
-          if (line.isBlank()) line
-          else {
-            val lead = line.indexOfFirst { !it.isWhitespace() }.coerceAtLeast(0)
-            line.substring(0, lead) + "// " + line.substring(lead)
+          lines.joinToString("\n") { line ->
+            if (line.isBlank()) line
+            else if (allCommented) {
+              line.replaceFirst("<!-- ", "").replaceFirst("<!--", "").replace(" -->", "").replace("-->", "")
+            } else {
+              val lead = line.indexOfFirst { !it.isWhitespace() }.coerceAtLeast(0)
+              line.substring(0, lead) + "<!-- " + line.substring(lead) + " -->"
+            }
+          }
+        }
+        WorkerLanguage.CSS -> {
+          val allCommented = lines.filter { it.isNotBlank() }.all {
+            val t = it.trim()
+            t.startsWith("/*") && t.endsWith("*/")
+          }
+          lines.joinToString("\n") { line ->
+            if (line.isBlank()) line
+            else if (allCommented) {
+              line.replaceFirst("/* ", "").replaceFirst("/*", "").replace(" */", "").replace("*/", "")
+            } else {
+              val lead = line.indexOfFirst { !it.isWhitespace() }.coerceAtLeast(0)
+              line.substring(0, lead) + "/* " + line.substring(lead) + " */"
+            }
+          }
+        }
+        WorkerLanguage.CONFIG -> {
+          val allCommented = lines.filter { it.isNotBlank() }.all { it.trimStart().startsWith("#") }
+          lines.joinToString("\n") { line ->
+            if (allCommented) {
+              val idx = line.indexOf('#')
+              if (idx >= 0) {
+                val after = if (idx + 1 < line.length && line[idx + 1] == ' ') idx + 2 else idx + 1
+                line.substring(0, idx) + line.substring(after)
+              } else line
+            } else if (line.isBlank()) line
+            else {
+              val lead = line.indexOfFirst { !it.isWhitespace() }.coerceAtLeast(0)
+              line.substring(0, lead) + "# " + line.substring(lead)
+            }
+          }
+        }
+        else -> {
+          val allCommented = lines.filter { it.isNotBlank() }.all { it.trimStart().startsWith("//") }
+          lines.joinToString("\n") { line ->
+            if (allCommented) {
+              val idx = line.indexOf("//")
+              if (idx >= 0) {
+                val after = if (idx + 2 < line.length && line[idx + 2] == ' ') idx + 3 else idx + 2
+                line.substring(0, idx) + line.substring(after)
+              } else line
+            } else if (line.isBlank()) line
+            else {
+              val lead = line.indexOfFirst { !it.isWhitespace() }.coerceAtLeast(0)
+              line.substring(0, lead) + "// " + line.substring(lead)
+            }
           }
         }
       }

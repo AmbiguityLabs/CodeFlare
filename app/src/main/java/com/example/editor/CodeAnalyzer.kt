@@ -21,6 +21,10 @@ object CodeAnalyzer {
       WorkerLanguage.JSON -> analyzeJson(file)
       WorkerLanguage.JAVASCRIPT,
       WorkerLanguage.TYPESCRIPT -> analyzeJsWorker(file)
+      WorkerLanguage.HTML,
+      WorkerLanguage.CSS,
+      WorkerLanguage.MARKDOWN,
+      WorkerLanguage.CONFIG,
       WorkerLanguage.TEXT -> emptyList()
     }.sortedWith(compareBy<DiagnosticItem>({ it.severity.ordinal }, { it.line }, { it.column }))
   }

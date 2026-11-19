@@ -537,6 +537,10 @@ enum class WorkerLanguage {
   JAVASCRIPT,
   TYPESCRIPT,
   JSON,
+  HTML,
+  CSS,
+  MARKDOWN,
+  CONFIG,
   TEXT,
 }
 
@@ -552,16 +556,23 @@ data class WorkerFile(
     get() = !isVirtualReadOnly && content != originalContent
 
   val language: WorkerLanguage
-    get() =
-      when {
-        path.endsWith(".ts", ignoreCase = true) || path.endsWith(".mts", ignoreCase = true) ->
-          WorkerLanguage.TYPESCRIPT
-        path.endsWith(".json", ignoreCase = true) || path.endsWith(".jsonc", ignoreCase = true) ->
-          WorkerLanguage.JSON
-        path.endsWith(".js", ignoreCase = true) || path.endsWith(".mjs", ignoreCase = true) ->
-          WorkerLanguage.JAVASCRIPT
+    get() {
+      val lower = path.lowercase()
+      val ext = lower.substringAfterLast('.', "")
+      val base = lower.substringAfterLast('/')
+      return when {
+        ext in setOf("ts", "mts", "cts", "tsx") -> WorkerLanguage.TYPESCRIPT
+        ext in setOf("js", "mjs", "cjs", "jsx") -> WorkerLanguage.JAVASCRIPT
+        ext in setOf("json", "jsonc") -> WorkerLanguage.JSON
+        ext in setOf("html", "htm", "xhtml") -> WorkerLanguage.HTML
+        ext in setOf("css", "scss") -> WorkerLanguage.CSS
+        ext in setOf("md", "markdown", "mdx") -> WorkerLanguage.MARKDOWN
+        ext in setOf("xml", "svg", "yaml", "yml", "toml", "sql", "sh", "bash", "ini", "conf", "env", "properties") ||
+          base == ".env" ||
+          base.startsWith(".env.") -> WorkerLanguage.CONFIG
         else -> WorkerLanguage.TEXT
       }
+    }
 
   val fileName: String
     get() = path.substringAfterLast('/')
