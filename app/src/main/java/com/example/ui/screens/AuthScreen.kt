@@ -1,7 +1,6 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,13 +27,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.AccountTree
-import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
@@ -65,12 +64,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -84,8 +81,10 @@ import coil.compose.AsyncImage
 import com.example.R
 import com.example.data.auth.CloudflareOAuthManager
 import com.example.data.auth.GitHubOAuthManager
+import com.example.ui.components.CodeflareAnimatedLogoView
 import com.example.ui.components.EdgeLoadingIndicator
 import com.example.ui.theme.JetBrainsMono
+import com.example.ui.theme.LocalIdePalette
 import com.example.ui.viewmodel.IdeUiState
 
 @Composable
@@ -117,6 +116,8 @@ fun AuthScreen(
   var showGhClientIdField by rememberSaveable { mutableStateOf(false) }
   var showAuthInfo by rememberSaveable { mutableStateOf(false) }
   var showGhInfo by rememberSaveable { mutableStateOf(false) }
+  var heroReplayNonce by remember { mutableIntStateOf(0) }
+  val palette = LocalIdePalette.current
 
   val clipboard = LocalClipboardManager.current
   val globalKeyFocusRequester = remember { FocusRequester() }
@@ -146,58 +147,64 @@ fun AuthScreen(
           .padding(horizontal = 20.dp, vertical = 16.dp),
       verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-      Box(
+      Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = if (palette.isDark) Color(0xFF0B0D1E) else Color(0xFFF4F5FB),
+        tonalElevation = 2.dp,
         modifier =
           Modifier
             .fillMaxWidth()
-            .height(116.dp)
-            .clip(RoundedCornerShape(24.dp)),
+            .height(208.dp),
       ) {
-        Image(
-          painter = painterResource(id = R.drawable.img_auth_hero),
-          contentDescription = stringResource(R.string.cd_auth_hero),
-          contentScale = ContentScale.Crop,
-          modifier = Modifier.fillMaxSize(),
-        )
-        Box(
-          modifier =
-            Modifier
-              .fillMaxSize()
-              .background(
-                Brush.verticalGradient(
-                  listOf(Color(0x550E1015), Color(0xDD0E1015))
-                )
-              )
-              .padding(18.dp),
-          contentAlignment = Alignment.BottomStart,
-        ) {
-          Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Surface(
-              color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.92f),
-              shape = RoundedCornerShape(999.dp),
+        Box(modifier = Modifier.fillMaxSize()) {
+          Row(
+            modifier =
+              Modifier
+                .fillMaxSize()
+                .padding(start = 20.dp, end = 10.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            Column(
+              modifier = Modifier.weight(1f),
+              verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-              Row(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
-              ) {
-                Icon(
-                  imageVector = Icons.Outlined.CloudDone,
-                  contentDescription = null,
-                  tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                  modifier = Modifier.size(13.dp),
-                )
-                Text(
-                  text = stringResource(R.string.app_name),
-                  style = MaterialTheme.typography.labelSmall,
-                  color = MaterialTheme.colorScheme.onPrimaryContainer,
-                )
-              }
+              Text(
+                text = stringResource(R.string.app_name),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+              )
+              Text(
+                text = stringResource(R.string.auth_title),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = if (palette.isDark) Color(0xFFEEF0FF) else Color(0xFF10122E),
+              )
             }
-            Text(
-              text = stringResource(R.string.auth_title),
-              style = MaterialTheme.typography.headlineMedium,
-              color = Color.White,
+            CodeflareAnimatedLogoView(
+              embedOnly = true,
+              tapToReplay = true,
+              replayTrigger = heroReplayNonce,
+              modifier = Modifier.size(182.dp),
+              testTag = "auth_animated_logo",
+            )
+          }
+
+          IconButton(
+            onClick = { heroReplayNonce += 1 },
+            modifier =
+              Modifier
+                .align(Alignment.TopEnd)
+                .padding(4.dp)
+                .size(32.dp)
+                .testTag("auth_logo_replay"),
+          ) {
+            Icon(
+              imageVector = Icons.Outlined.Refresh,
+              contentDescription = "Replay logo animation",
+              tint = if (palette.isDark) Color(0xFFA3A8D0) else Color(0xFF5A5F86),
+              modifier = Modifier.size(16.dp),
             )
           }
         }

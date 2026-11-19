@@ -99,6 +99,7 @@ import com.example.data.local.RamWorkspaceRecord
 import com.example.data.local.ZipImportTargetMode
 import com.example.data.remote.CfWorkerScript
 import com.example.ui.components.ChangeSubdomainDialog
+import com.example.ui.components.CodeflareEmblemDialog
 import com.example.ui.components.EdgeMenu
 import com.example.ui.components.EdgeMenuCompactItem
 import com.example.ui.components.EdgeMenuHeader
@@ -147,6 +148,7 @@ fun HomeScreen(
   var pendingDeleteLocalKey by remember { mutableStateOf<Pair<String, String>?>(null) }
   var pendingRenameTarget by remember { mutableStateOf<HomeRenameTarget?>(null) }
   var showChangeSubdomainDialog by remember { mutableStateOf(false) }
+  var showCodeflareEmblemDialog by remember { mutableStateOf(false) }
 
   val newWorkerFilesLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -356,6 +358,10 @@ fun HomeScreen(
         viewModel.updateAccountWorkersSubdomain(newSub)
       },
     )
+  }
+
+  if (showCodeflareEmblemDialog) {
+    CodeflareEmblemDialog(onDismiss = { showCodeflareEmblemDialog = false })
   }
 
   if (uiState.showHomeSettings) {
@@ -590,7 +596,15 @@ fun HomeScreen(
             color = palette.textPrimary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(min = 84.dp),
+            modifier =
+              Modifier
+                .widthIn(min = 84.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(enabled = uiState.homeTab == HomeTab.PROJECTS) {
+                  showCodeflareEmblemDialog = true
+                }
+                .padding(horizontal = 4.dp, vertical = 2.dp)
+                .testTag("home_emblem_trigger"),
           )
 
           Row(
