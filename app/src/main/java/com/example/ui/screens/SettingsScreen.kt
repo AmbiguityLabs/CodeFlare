@@ -100,6 +100,7 @@ fun SettingsScreen(
   onDisconnectCloudflare: () -> Unit,
   onOpenGitHubHub: (() -> Unit)? = null,
   onClearAutoSavedDrafts: (() -> Unit)? = null,
+  onClearApiCache: (() -> Unit)? = null,
   onRequestStorageAccess: (() -> Unit)? = null,
   onPickEditorBackgroundImage: (Uri) -> Unit = {},
   onClearEditorBackgroundImage: () -> Unit = {},
@@ -285,6 +286,8 @@ fun SettingsScreen(
             SettingsCategory.STORAGE -> {
               SettingsStorageAndSessionPane(
                 uiState = uiState,
+                onUpdateSettings = onUpdateSettings,
+                onClearApiCache = onClearApiCache,
                 onOpenGitHubHub = onOpenGitHubHub,
                 onRequestStorageAccess = onRequestStorageAccess,
                 onRequestDisconnect = { confirmDisconnect = true },

@@ -1841,32 +1841,36 @@ private fun GitCloneAndReposTab(
           else uiState.gitHubRepos.filter { it.fullName.lowercase().contains(q) || it.description.orEmpty().lowercase().contains(q) }
         }
 
-      filteredRepos.forEach { repo ->
-        Surface(
-          onClick = { onSelectRepo(repo) },
-          shape = RoundedCornerShape(12.dp),
-          color = palette.chromePill,
-          modifier = Modifier.fillMaxWidth().testTag("github_repo_${repo.name}"),
-        ) {
-          Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.AccountTree, contentDescription = null, tint = palette.activePillFg, modifier = Modifier.size(17.dp))
-            Spacer(Modifier.width(8.dp))
-            Column(modifier = Modifier.weight(1f)) {
-              Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(repo.fullName, style = MaterialTheme.typography.bodyMedium, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                if (repo.private) {
-                  Icon(Icons.Outlined.Lock, contentDescription = "Private repo", tint = palette.textSecondary, modifier = Modifier.size(13.dp))
+      if (uiState.isGitHubBusy && uiState.gitHubRepos.isEmpty()) {
+        EdgeSkeletonRepoList(count = 5)
+      } else {
+        filteredRepos.forEach { repo ->
+          Surface(
+            onClick = { onSelectRepo(repo) },
+            shape = RoundedCornerShape(12.dp),
+            color = palette.chromePill,
+            modifier = Modifier.fillMaxWidth().testTag("github_repo_${repo.name}"),
+          ) {
+            Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+              Icon(Icons.Outlined.AccountTree, contentDescription = null, tint = palette.activePillFg, modifier = Modifier.size(17.dp))
+              Spacer(Modifier.width(8.dp))
+              Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                  Text(repo.fullName, style = MaterialTheme.typography.bodyMedium, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                  if (repo.private) {
+                    Icon(Icons.Outlined.Lock, contentDescription = "Private repo", tint = palette.textSecondary, modifier = Modifier.size(13.dp))
+                  }
                 }
+                Text("branch: ${repo.defaultBranch}", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
               }
-              Text("branch: ${repo.defaultBranch}", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
-            }
-            FilledTonalButton(
-              onClick = { onCloneRepository(repo.fullName, repo.defaultBranch, false) },
-              enabled = !uiState.isGitHubBusy,
-              shape = RoundedCornerShape(8.dp),
-              modifier = Modifier.height(34.dp),
-            ) {
-              Text("Clone", fontSize = 11.sp)
+              FilledTonalButton(
+                onClick = { onCloneRepository(repo.fullName, repo.defaultBranch, false) },
+                enabled = !uiState.isGitHubBusy,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.height(34.dp),
+              ) {
+                Text("Clone", fontSize = 11.sp)
+              }
             }
           }
         }

@@ -30,6 +30,7 @@ import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.UploadFile
+import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -70,6 +71,7 @@ import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.RoseError
+import com.example.ui.viewmodel.PendingUnsavedWarning
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -546,7 +548,12 @@ fun ZipImportPreviewDialog(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                  text = "${((plan.totalArchiveBytes + 1023L) / 1024L).coerceAtLeast(1L)} KB",
+                  text =
+                    if (plan.totalArchiveBytes >= 1024L * 1024L) {
+                      String.format("%.1f MB", plan.totalArchiveBytes / (1024.0 * 1024.0))
+                    } else {
+                      "${((plan.totalArchiveBytes + 1023L) / 1024L).coerceAtLeast(1L)} KB"
+                    },
                   fontFamily = JetBrainsMono,
                   fontSize = 10.5.sp,
                   color = palette.textMuted,
@@ -1363,6 +1370,116 @@ fun ChangeSubdomainDialog(
       }
     },
     dismissButton = {
+      TextButton(onClick = onDismiss) { Text("Cancel") }
+    },
+  )
+}
+
+@Composable
+fun UnsavedChangesWarningDialog(
+  warning: PendingUnsavedWarning,
+  onKeepDraft: () -> Unit,
+  onDeployNow: () -> Unit,
+  onDiscard: () -> Unit,
+  onDismiss: () -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    icon = {
+      Icon(
+        imageVector = Icons.Outlined.WarningAmber,
+        contentDescription = null,
+        tint = AmberWarn,
+      )
+    },
+    title = {
+      Text(
+        text = warning.title,
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.SemiBold,
+      )
+    },
+    text = {
+      Column(
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth().testTag("unsaved_changes_warning_dialog"),
+      ) {
+        Text(
+          text = warning.message,
+          style = MaterialTheme.typography.bodySmall,
+          color = palette.textSecondary,
+        )
+        if (warning.dirtyFilePaths.isNotEmpty()) {
+          Surface(
+            color = palette.chromePill,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Column(
+              modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+              verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+              Text(
+                text = "Modified files (${warning.dirtyFilePaths.size})",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = palette.textMuted,
+              )
+              warning.dirtyFilePaths.take(6).forEach { path ->
+                Text(
+                  text = "• $path",
+                  fontFamily = JetBrainsMono,
+                  fontSize = 11.sp,
+                  color = palette.textPrimary,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+              }
+              if (warning.dirtyFilePaths.size > 6) {
+                Text(
+                  text = "+ ${warning.dirtyFilePaths.size - 6} more file(s)",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = palette.textMuted,
+                )
+              }
+            }
+          }
+        }
+        Column(
+          verticalArrangement = Arrangement.spacedBy(6.dp),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          if (warning.allowKeepLocalDraft) {
+            FilledTonalButton(
+              onClick = onKeepDraft,
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier.fillMaxWidth().testTag("unsaved_keep_draft_button"),
+            ) {
+              Text("Keep Local Draft")
+            }
+          }
+          if (warning.allowDeployNow) {
+            OutlinedButton(
+              onClick = onDeployNow,
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier.fillMaxWidth().testTag("unsaved_deploy_now_button"),
+            ) {
+              Text("Deploy Now")
+            }
+          }
+          OutlinedButton(
+            onClick = onDiscard,
+            shape = RoundedCornerShape(10.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = RoseError),
+            modifier = Modifier.fillMaxWidth().testTag("unsaved_discard_button"),
+          ) {
+            Text(if (warning.allowKeepLocalDraft) "Discard Changes" else "Overwrite / Discard")
+          }
+        }
+      }
+    },
+    confirmButton = {
       TextButton(onClick = onDismiss) { Text("Cancel") }
     },
   )

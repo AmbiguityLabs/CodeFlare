@@ -8,6 +8,8 @@ import com.example.data.remote.MultipartWorkerParser
 import com.example.data.remote.WorkerFile
 import com.example.editor.WranglerSyncParser
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.util.zip.ZipInputStream
 import org.json.JSONObject
@@ -54,9 +56,11 @@ data class ZipPreviewState(
 )
 
 object ZipWorkspaceImporter {
-  private const val DEFAULT_MAX_FILE_BYTES = 25L * 1024L * 1024L
+  const val DEFAULT_MAX_ARCHIVE_BYTES = 500L * 1024L * 1024L
+  const val DEFAULT_MAX_FILE_BYTES = 500L * 1024L * 1024L
   private const val MAX_EDITOR_TEXT_FILE_BYTES = 2L * 1024L * 1024L
-  private const val DEFAULT_MAX_ENTRIES = 2000
+  private const val DEFAULT_MAX_ENTRIES = 20_000
+  private const val STREAM_BUFFER_BYTES = 64 * 1024
 
   private val IGNORED_SEGMENTS = setOf(".git", "node_modules", ".wrangler", "__MACOSX", ".idea", ".gradle")
   private val IGNORED_FILES = setOf(".DS_Store", "Thumbs.db", "desktop.ini")
@@ -107,12 +111,21 @@ object ZipWorkspaceImporter {
     archiveName: String,
     maxFileBytes: Long = DEFAULT_MAX_FILE_BYTES,
     maxEntries: Int = DEFAULT_MAX_ENTRIES,
+    maxTotalBytes: Long = DEFAULT_MAX_ARCHIVE_BYTES,
+    stagingDir: File? = null,
   ): Result<ZipArchiveReadResult> =
     runCatching {
       val rawEntries = mutableListOf<RawPickedAsset>()
       var skippedIgnored = 0
       var totalBytes = 0L
-      ZipInputStream(input.buffered()).use { zis ->
+      val canonicalRoot =
+        stagingDir?.let { dir ->
+          dir.mkdirs()
+          dir.canonicalPath + File.separator
+        }
+      val chunk = ByteArray(STREAM_BUFFER_BYTES)
+
+      ZipInputStream(input.buffered(STREAM_BUFFER_BYTES)).use { zis ->
         while (true) {
           val entry = zis.nextEntry ?: break
           try {
@@ -130,11 +143,50 @@ object ZipWorkspaceImporter {
                 skippedIgnored++
               } else {
                 if (entry.size > maxFileBytes) {
-                  error("ZIP entry '${entry.name}' exceeds 25 MiB limit")
+                  error("ZIP entry '${entry.name}' exceeds ${maxFileBytes / (1024 * 1024)} MiB limit")
                 }
-                val bytes = readBoundedBytes(zis, maxFileBytes)
-                totalBytes += bytes.size
-                rawEntries.add(RawPickedAsset(cleanSegments.joinToString("/"), bytes))
+                val relPath = cleanSegments.joinToString("/")
+                if (stagingDir != null && canonicalRoot != null) {
+                  val targetFile = File(stagingDir, relPath)
+                  if (!targetFile.canonicalPath.startsWith(canonicalRoot)) {
+                    skippedIgnored++
+                  } else {
+                    targetFile.parentFile?.mkdirs()
+                    var entryBytes = 0L
+                    FileOutputStream(targetFile).use { fos ->
+                      while (true) {
+                        val read = zis.read(chunk)
+                        if (read <= 0) break
+                        entryBytes += read
+                        totalBytes += read
+                        if (entryBytes > maxFileBytes) {
+                          error("ZIP entry '${entry.name}' exceeds ${maxFileBytes / (1024 * 1024)} MiB limit")
+                        }
+                        if (totalBytes > maxTotalBytes) {
+                          error("ZIP archive exceeds ${maxTotalBytes / (1024 * 1024)} MiB uncompressed limit")
+                        }
+                        fos.write(chunk, 0, read)
+                      }
+                    }
+                    rawEntries.add(
+                      RawPickedAsset(
+                        relativePath = relPath,
+                        diskFile = targetFile,
+                        byteSize = entryBytes,
+                      ),
+                    )
+                  }
+                } else {
+                  val (bytes, entryBytes) = readBoundedInMemoryOrSample(zis, maxFileBytes, maxTotalBytes - totalBytes)
+                  totalBytes += entryBytes
+                  rawEntries.add(
+                    RawPickedAsset(
+                      relativePath = relPath,
+                      bytes = bytes,
+                      byteSize = entryBytes,
+                    ),
+                  )
+                }
                 if (rawEntries.size > maxEntries) {
                   error("ZIP archive exceeds $maxEntries files limit")
                 }
@@ -206,16 +258,17 @@ object ZipWorkspaceImporter {
         val cleanPath = ProjectDirectoryManager.normalizeRelativePath(stripped, fallbackFolder = "")
         if (cleanPath.isBlank()) continue
 
-        if (isBinaryAsset(cleanPath, asset.bytes)) {
+        val sampleBytes = asset.readSampleBytes(4096)
+        if (isBinaryAsset(cleanPath, sampleBytes)) {
           skippedBinary.add(cleanPath)
           continue
         }
-        if (asset.bytes.size > MAX_EDITOR_TEXT_FILE_BYTES) {
+        if (asset.byteSize > MAX_EDITOR_TEXT_FILE_BYTES) {
           skippedLarge.add(cleanPath)
           continue
         }
 
-        val text = asset.bytes.toString(Charsets.UTF_8)
+        val text = asset.readBytes().toString(Charsets.UTF_8)
         candidateFiles.add(
           WorkerFile(
             path = cleanPath,
@@ -319,22 +372,37 @@ object ZipWorkspaceImporter {
       name to main
     }.getOrNull()
 
-  private fun readBoundedBytes(
+  private fun readBoundedInMemoryOrSample(
     input: InputStream,
-    maxBytes: Long,
-  ): ByteArray {
+    maxFileBytes: Long,
+    remainingArchiveBytes: Long,
+  ): Pair<ByteArray, Long> {
     val buffer = ByteArrayOutputStream()
-    val chunk = ByteArray(8192)
+    val chunk = ByteArray(STREAM_BUFFER_BYTES)
     var total = 0L
+    var exceededEditorTextCap = false
     while (true) {
       val read = input.read(chunk)
       if (read <= 0) break
       total += read
-      if (total > maxBytes) {
-        error("ZIP entry exceeds 25 MiB per-file limit")
+      if (total > maxFileBytes) {
+        error("ZIP entry exceeds ${maxFileBytes / (1024 * 1024)} MiB per-file limit")
       }
-      buffer.write(chunk, 0, read)
+      if (total > remainingArchiveBytes) {
+        error("ZIP archive exceeds 500 MiB uncompressed limit")
+      }
+      if (!exceededEditorTextCap) {
+        if (total <= MAX_EDITOR_TEXT_FILE_BYTES) {
+          buffer.write(chunk, 0, read)
+        } else {
+          // Retain only first 4 KB sample in memory for binary detection; avoid OOM for huge entries
+          val sample = buffer.toByteArray().copyOf(buffer.size().coerceAtMost(4096))
+          buffer.reset()
+          buffer.write(sample)
+          exceededEditorTextCap = true
+        }
+      }
     }
-    return buffer.toByteArray()
+    return buffer.toByteArray() to total
   }
 }

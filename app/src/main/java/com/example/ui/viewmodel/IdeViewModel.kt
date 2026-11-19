@@ -14,6 +14,7 @@ import java.io.FileOutputStream
 import com.example.data.auth.CloudflareOAuthManager
 import com.example.data.auth.GitHubDeviceCodeResponse
 import com.example.data.auth.GitHubOAuthManager
+import com.example.data.local.ApiResponseCacheStore
 import com.example.data.local.AutoSaveDraftStore
 import com.example.data.local.AutoSaveSessionPointer
 import com.example.data.local.AutoSavedWorkspaceDraft
@@ -209,6 +210,27 @@ data class SearchMatchItem(
   val preview: String,
 )
 
+sealed interface PendingUnsavedAction {
+  data class CloseTab(val path: String) : PendingUnsavedAction
+  data object LeaveWorkspace : PendingUnsavedAction
+  data class SwitchWorker(val script: CfWorkerScript, val forceRefreshFromCloudflare: Boolean) : PendingUnsavedAction
+  data class SwitchRamWorkspace(val key: String) : PendingUnsavedAction
+  data class SwitchAccount(val account: CfAccount) : PendingUnsavedAction
+  data object SignOut : PendingUnsavedAction
+  data object ReimportFromCloudflare : PendingUnsavedAction
+  data object PullLinkedGitRepo : PendingUnsavedAction
+  data class PullGitHubPaths(val paths: List<String>) : PendingUnsavedAction
+}
+
+data class PendingUnsavedWarning(
+  val action: PendingUnsavedAction,
+  val title: String,
+  val message: String,
+  val dirtyFilePaths: List<String>,
+  val allowKeepLocalDraft: Boolean,
+  val allowDeployNow: Boolean,
+)
+
 data class IdeUiState(
   val isBootstrapping: Boolean = true,
   val credentials: StoredCredentials? = null,
@@ -367,6 +389,7 @@ data class IdeUiState(
   val consoleLogs: List<ConsoleLogEntry> = emptyList(),
   val lastUndoableFileOpLabel: String? = null,
   val zipImportPreview: ZipPreviewState? = null,
+  val pendingUnsavedWarning: PendingUnsavedWarning? = null,
   val statusMessage: String? = null,
 ) {
   val activeFile: WorkerFile?
@@ -452,6 +475,8 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   private val projectDirManager = ProjectDirectoryManager(application)
   private val draftManager = DraftPersistenceManager(application)
   private val autoSaveStore = AutoSaveDraftStore(application)
+  private val apiCacheStore =
+    ApiResponseCacheStore(File(application.filesDir, "api_response_cache"), clientFactory.moshi)
   private val autoSaveIoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
   private val ramDb = RamWorkspaceDatabase()
 
@@ -602,7 +627,7 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
       prefsStore.gitHubCredentialsFlow.collect { ghCreds ->
         _uiState.update { it.copy(gitHubCreds = ghCreds) }
         if (ghCreds != null && _uiState.value.gitHubRepos.isEmpty()) {
-          refreshGitHubReposInternal(ghCreds.token)
+          refreshGitHubReposInternal(ghCreds.token, forceRefresh = false)
         }
       }
     }
@@ -702,6 +727,38 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
 
   private fun bootstrapAccountAndWorkers(creds: StoredCredentials) {
     viewModelScope.launch {
+      val ttlHours = _uiState.value.editorSettings.apiCacheTtlHours
+      val savedAccountId = creds.selectedAccountId
+      if (savedAccountId.isNotBlank()) {
+        val cachedWorkers = withContext(Dispatchers.IO) { apiCacheStore.loadWorkers(savedAccountId) }
+        if (cachedWorkers != null) {
+          val cachedAccount =
+            CfAccount(
+              id = savedAccountId,
+              name = creds.selectedAccountName.ifBlank { "Cloudflare Account" },
+            )
+          ramDb.updateInfraCache(savedAccountId) {
+            it.copy(
+              workers = cachedWorkers.workers,
+              subdomain = cachedWorkers.subdomain.ifBlank { it.subdomain },
+            )
+          }
+          _uiState.update { state ->
+            state.copy(
+              accounts = state.accounts.ifEmpty { listOf(cachedAccount) },
+              selectedAccount = state.selectedAccount ?: cachedAccount,
+              workers = cachedWorkers.workers,
+              accountSubdomain = cachedWorkers.subdomain.ifBlank { state.accountSubdomain },
+              isLoadingWorkers = false,
+            )
+          }
+          if (ApiResponseCacheStore.isFresh(cachedWorkers.fetchedAtEpochMs, ttlHours)) {
+            maybeAutoReopenPendingCloudDraft(savedAccountId, cachedWorkers.workers)
+            return@launch
+          }
+        }
+      }
+
       _uiState.update { it.copy(isLoadingWorkers = true) }
       repository
         .loadAccounts()
@@ -711,7 +768,7 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
           _uiState.update { it.copy(accounts = accounts, selectedAccount = chosen) }
           if (chosen != null) {
             prefsStore.saveSelectedAccount(chosen.id, chosen.name)
-            refreshWorkersInternal(chosen.id)
+            refreshWorkersInternal(chosen.id, forceRefresh = false)
           } else {
             _uiState.update { it.copy(isLoadingWorkers = false) }
           }
@@ -848,11 +905,27 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun signOut() {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    if (state.workspace != null && state.editorSettings.warnOnLeaveDirtyWorkspace && state.hasUnsavedChanges) {
+      showUnsavedWarning(
+        action = PendingUnsavedAction.SignOut,
+        title = "Unsaved Changes Before Sign Out",
+        message = "Signing out clears local unsaved drafts for '${state.workspace.scriptName}'. Deploy first or discard changes to sign out.",
+        allowKeepLocalDraft = false,
+      )
+      return
+    }
+    signOutInternal()
+  }
+
+  private fun signOutInternal() {
     oauthJob?.cancel()
     stopTailIfRunning()
     viewModelScope.launch {
       prefsStore.clearCredentials()
       autoSaveStore.clearAllDrafts()
+      withContext(Dispatchers.IO) { apiCacheStore.clearAll() }
       lastPersistedDraftDigests.clear()
       pendingCloudDrafts.clear()
       periodicAutoSaveJob?.cancel()
@@ -1173,6 +1246,28 @@ export default {
   }
 
   fun openRamWorkspace(key: String) {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val activeKey = activeWorkspaceKey(state)
+    if (
+      state.workspace != null &&
+        activeKey != null &&
+        activeKey != key &&
+        state.editorSettings.warnOnLeaveDirtyWorkspace &&
+        state.hasUnsavedChanges
+    ) {
+      showUnsavedWarning(
+        action = PendingUnsavedAction.SwitchRamWorkspace(key),
+        title = "Unsaved Changes in ${state.workspace.scriptName}",
+        message = "You have modified files before switching projects. Keep a local draft, deploy, or discard edits.",
+        allowKeepLocalDraft = true,
+      )
+      return
+    }
+    openRamWorkspaceInternal(key)
+  }
+
+  private fun openRamWorkspaceInternal(key: String) {
     val record = ramDb.getWorkspace(key) ?: return
     stopTailIfRunning()
     flushAutoSaveNow()
@@ -1255,6 +1350,21 @@ export default {
 
   fun closeWorkspaceToHome() {
     flushActiveEditorBuffer()
+    val state = _uiState.value
+    if (state.workspace != null && state.editorSettings.warnOnLeaveDirtyWorkspace && state.hasUnsavedChanges) {
+      showUnsavedWarning(
+        action = PendingUnsavedAction.LeaveWorkspace,
+        title = "Unsaved Changes in ${state.workspace.scriptName}",
+        message = "Modified files have not been deployed or reverted. Keep a local draft or discard changes before leaving.",
+        allowKeepLocalDraft = true,
+      )
+      return
+    }
+    closeWorkspaceToHomeInternal()
+  }
+
+  private fun closeWorkspaceToHomeInternal() {
+    flushActiveEditorBuffer()
     stopTailIfRunning()
     flushAutoSaveNow(clearSessionPointer = true)
     periodicAutoSaveJob?.cancel()
@@ -1288,7 +1398,7 @@ export default {
     if (!_uiState.value.isLocalScratchpad && _uiState.value.credentials != null) {
       when (tab) {
         HomeTab.INFRA -> loadCloudflareInfra(forceRefresh = false)
-        HomeTab.PAGES -> if (_uiState.value.pagesProjects.isEmpty()) loadPagesProjects()
+        HomeTab.PAGES -> loadPagesProjectsInternal(forceRefresh = false)
         HomeTab.PROJECTS -> Unit
       }
     }
@@ -1362,6 +1472,26 @@ export default {
   }
 
   fun selectAccount(account: CfAccount) {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    if (
+      state.workspace != null &&
+        account.id != state.selectedAccount?.id &&
+        state.editorSettings.warnOnLeaveDirtyWorkspace &&
+        state.hasUnsavedChanges
+    ) {
+      showUnsavedWarning(
+        action = PendingUnsavedAction.SwitchAccount(account),
+        title = "Unsaved Changes Before Account Switch",
+        message = "Switching to '${account.name}' will close '${state.workspace.scriptName}'. Keep a local draft or discard changes.",
+        allowKeepLocalDraft = true,
+      )
+      return
+    }
+    selectAccountInternal(account)
+  }
+
+  private fun selectAccountInternal(account: CfAccount) {
     stopTailIfRunning()
     viewModelScope.launch {
       prefsStore.saveSelectedAccount(account.id, account.name)
@@ -1378,16 +1508,91 @@ export default {
           zones = emptyList(),
         )
       }
-      refreshWorkersInternal(account.id)
+      refreshWorkersInternal(account.id, forceRefresh = false)
     }
   }
 
   fun refreshWorkers() {
     val accountId = _uiState.value.selectedAccount?.id ?: return
-    viewModelScope.launch { refreshWorkersInternal(accountId) }
+    viewModelScope.launch {
+      if (_uiState.value.accounts.size <= 1) {
+        repository.loadAccounts().onSuccess { list ->
+          if (list.isNotEmpty()) {
+            _uiState.update { st ->
+              st.copy(
+                accounts = list,
+                selectedAccount = list.firstOrNull { it.id == accountId } ?: st.selectedAccount,
+              )
+            }
+          }
+        }
+      }
+      refreshWorkersInternal(accountId, forceRefresh = true)
+    }
   }
 
-  private suspend fun refreshWorkersInternal(accountId: String) {
+  fun clearApiResponseCache() {
+    viewModelScope.launch {
+      val removed = withContext(Dispatchers.IO) { apiCacheStore.clearAll() }
+      _uiState.value.selectedAccount?.id?.let { accId ->
+        ramDb.updateInfraCache(accId) { prev -> prev.copy(fetchedAtEpochMs = 0L) }
+      }
+      _uiState.update {
+        it.copy(
+          statusMessage =
+            if (removed > 0) "Cleared $removed cached API snapshot(s)"
+            else "API cache is already clean",
+        )
+      }
+    }
+  }
+
+  private fun maybeAutoReopenPendingCloudDraft(accountId: String, list: List<CfWorkerScript>) {
+    val pointer = pendingRestoreSessionPointer
+    if (!hasAttemptedAutoReopen &&
+      _uiState.value.workspace == null &&
+      pointer != null &&
+      !pointer.isLocalScratchpad &&
+      pointer.accountId == accountId &&
+      pendingCloudDrafts.containsKey(pointer.workspaceKey)
+    ) {
+      hasAttemptedAutoReopen = true
+      pendingRestoreSessionPointer = null
+      val targetScript = list.firstOrNull { it.id == pointer.scriptName }
+      if (targetScript != null) {
+        openWorkerInternal(targetScript, forceRefreshFromCloudflare = false)
+      }
+    }
+  }
+
+  private suspend fun refreshWorkersInternal(
+    accountId: String,
+    forceRefresh: Boolean = true,
+  ) {
+    val ttlHours = _uiState.value.editorSettings.apiCacheTtlHours
+    if (!forceRefresh) {
+      val cached = withContext(Dispatchers.IO) { apiCacheStore.loadWorkers(accountId) }
+      if (cached != null) {
+        ramDb.updateInfraCache(accountId) {
+          it.copy(
+            workers = cached.workers,
+            subdomain = cached.subdomain.ifBlank { it.subdomain },
+          )
+        }
+        _uiState.update {
+          it.copy(
+            workers = cached.workers,
+            accountSubdomain = cached.subdomain.ifBlank { it.accountSubdomain },
+            isLoadingWorkers = false,
+          )
+        }
+        if (ApiResponseCacheStore.isFresh(cached.fetchedAtEpochMs, ttlHours)) {
+          maybeAutoReopenPendingCloudDraft(accountId, cached.workers)
+          return
+        }
+      }
+    }
+
     _uiState.update { it.copy(isLoadingWorkers = true) }
     repository
       .loadWorkers(accountId)
@@ -1402,6 +1607,9 @@ export default {
             subdomain = cachedSub.ifBlank { it.subdomain },
           )
         }
+        withContext(Dispatchers.IO) {
+          apiCacheStore.saveWorkers(accountId, list, cachedSub)
+        }
         _uiState.update {
           it.copy(
             workers = list,
@@ -1410,22 +1618,7 @@ export default {
           )
         }
         appendLog("INFO", "Loaded ${list.size} Worker(s) from Cloudflare")
-
-        val pointer = pendingRestoreSessionPointer
-        if (!hasAttemptedAutoReopen &&
-          _uiState.value.workspace == null &&
-          pointer != null &&
-          !pointer.isLocalScratchpad &&
-          pointer.accountId == accountId &&
-          pendingCloudDrafts.containsKey(pointer.workspaceKey)
-        ) {
-          hasAttemptedAutoReopen = true
-          pendingRestoreSessionPointer = null
-          val targetScript = list.firstOrNull { it.id == pointer.scriptName }
-          if (targetScript != null) {
-            openWorker(targetScript, forceRefreshFromCloudflare = false)
-          }
-        }
+        maybeAutoReopenPendingCloudDraft(accountId, list)
       }
       .onFailure { err ->
         _uiState.update {
@@ -1439,6 +1632,36 @@ export default {
   }
 
   fun openWorker(
+    script: CfWorkerScript,
+    forceRefreshFromCloudflare: Boolean = false,
+  ) {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val activeWs = state.workspace
+    if (activeWs != null && state.hasUnsavedChanges) {
+      val sameWorkerForceReimport = forceRefreshFromCloudflare && activeWs.scriptName == script.id
+      if (sameWorkerForceReimport && state.editorSettings.warnOnCloudOverwrite) {
+        showUnsavedWarning(
+          action = PendingUnsavedAction.SwitchWorker(script, forceRefreshFromCloudflare = true),
+          title = "Overwrite Local Changes?",
+          message = "Re-importing '${script.id}' from Cloudflare will overwrite unsaved edits in this workspace.",
+          allowKeepLocalDraft = false,
+        )
+        return
+      } else if (activeWs.scriptName != script.id && state.editorSettings.warnOnLeaveDirtyWorkspace) {
+        showUnsavedWarning(
+          action = PendingUnsavedAction.SwitchWorker(script, forceRefreshFromCloudflare = forceRefreshFromCloudflare),
+          title = "Unsaved Changes in ${activeWs.scriptName}",
+          message = "You have unsaved edits before opening '${script.id}'. Keep a local draft, deploy, or discard edits.",
+          allowKeepLocalDraft = true,
+        )
+        return
+      }
+    }
+    openWorkerInternal(script, forceRefreshFromCloudflare)
+  }
+
+  private fun openWorkerInternal(
     script: CfWorkerScript,
     forceRefreshFromCloudflare: Boolean = false,
   ) {
@@ -1632,10 +1855,27 @@ export default {
   }
 
   fun reimportActiveWorkerFromCloudflare() {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val ws = state.workspace ?: return
+    if (state.isLocalScratchpad) return
+    if (state.editorSettings.warnOnCloudOverwrite && state.hasUnsavedChanges) {
+      showUnsavedWarning(
+        action = PendingUnsavedAction.ReimportFromCloudflare,
+        title = "Overwrite Local Changes?",
+        message = "Re-importing '${ws.scriptName}' from Cloudflare will discard unsaved local edits.",
+        allowKeepLocalDraft = false,
+      )
+      return
+    }
+    reimportActiveWorkerInternal()
+  }
+
+  private fun reimportActiveWorkerInternal() {
     val ws = _uiState.value.workspace ?: return
     if (_uiState.value.isLocalScratchpad) return
     val script = _uiState.value.workers.firstOrNull { it.id == ws.scriptName } ?: CfWorkerScript(id = ws.scriptName)
-    openWorker(script, forceRefreshFromCloudflare = true)
+    openWorkerInternal(script, forceRefreshFromCloudflare = true)
   }
 
   fun revertWorkspaceToImportedBaseline() {
@@ -2571,6 +2811,23 @@ export default {
   }
 
   fun closeFileTab(path: String) {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val targetDirty = state.workspace?.files?.firstOrNull { it.path == path }?.isDirty == true
+    if (targetDirty && state.editorSettings.warnOnCloseDirtyTab) {
+      showUnsavedWarning(
+        action = PendingUnsavedAction.CloseTab(path),
+        title = "Unsaved File: ${path.substringAfterLast('/')}",
+        message = "This file has unsaved modifications. Keep changes in workspace draft or discard edits to this file.",
+        dirtyPathsOverride = listOf(path),
+        allowKeepLocalDraft = true,
+      )
+      return
+    }
+    closeFileTabInternal(path)
+  }
+
+  private fun closeFileTabInternal(path: String) {
     _uiState.update { state ->
       val nextTabs = state.openTabPaths.filterNot { it == path }
       val nextActive =
@@ -2579,6 +2836,102 @@ export default {
     }
     syncActiveStateToRamDb()
     scheduleDraftSave()
+  }
+
+  private fun revertSingleFileToOriginal(path: String) {
+    val state = _uiState.value
+    val ws = state.workspace ?: return
+    val target = ws.files.firstOrNull { it.path == path } ?: return
+    if (!target.isDirty) return
+    val updatedFiles = ws.files.map { f -> if (f.path == path) f.copy(content = f.originalContent) else f }
+    val updatedWs = ws.copy(files = updatedFiles)
+    val nextFields = state.editorFieldValues.toMutableMap().apply {
+      put(path, TextFieldValue(target.originalContent))
+    }
+    val key = activeWorkspaceKey(state)
+    if (key != null) {
+      ramDb.updateWorkspace(key) { rec ->
+        rec.copy(workingWorkspace = updatedWs, fieldValues = nextFields)
+      }
+      persistWorkspaceToProjectDirAsync(key)
+    }
+    _uiState.update { cur ->
+      cur.copy(
+        workspace = updatedWs,
+        editorFieldValues = nextFields,
+        editorRevision = cur.editorRevision + 1L,
+        diagnostics = rebuildDiagnosticsFull(updatedFiles),
+        ramDbStats = if (key != null) ramDb.computeStats(key) else cur.ramDbStats,
+      )
+    }
+  }
+
+  private fun showUnsavedWarning(
+    action: PendingUnsavedAction,
+    title: String,
+    message: String,
+    dirtyPathsOverride: List<String>? = null,
+    allowKeepLocalDraft: Boolean,
+  ) {
+    val state = _uiState.value
+    val dirtyPaths =
+      dirtyPathsOverride
+        ?: state.workspace?.files?.filter { it.isDirty }?.map { it.path }.orEmpty()
+    val canDeploy = !state.isLocalScratchpad && state.credentials != null && state.workspace != null
+    _uiState.update {
+      it.copy(
+        pendingUnsavedWarning =
+          PendingUnsavedWarning(
+            action = action,
+            title = title,
+            message = message,
+            dirtyFilePaths = dirtyPaths,
+            allowKeepLocalDraft = allowKeepLocalDraft,
+            allowDeployNow = canDeploy,
+          ),
+      )
+    }
+  }
+
+  fun dismissUnsavedWarning() {
+    _uiState.update { it.copy(pendingUnsavedWarning = null) }
+  }
+
+  fun resolveUnsavedWarningDeployNow() {
+    _uiState.update { it.copy(pendingUnsavedWarning = null) }
+    deployActiveWorker()
+  }
+
+  fun resolveUnsavedWarningKeepDraft() {
+    val warning = _uiState.value.pendingUnsavedWarning ?: return
+    _uiState.update { it.copy(pendingUnsavedWarning = null) }
+    flushActiveEditorBuffer()
+    flushAutoSaveNow(clearSessionPointer = false)
+    executePendingUnsavedAction(warning.action)
+  }
+
+  fun resolveUnsavedWarningDiscard() {
+    val warning = _uiState.value.pendingUnsavedWarning ?: return
+    _uiState.update { it.copy(pendingUnsavedWarning = null) }
+    when (val action = warning.action) {
+      is PendingUnsavedAction.CloseTab -> revertSingleFileToOriginal(action.path)
+      else -> revertWorkspaceToImportedBaseline()
+    }
+    executePendingUnsavedAction(warning.action)
+  }
+
+  private fun executePendingUnsavedAction(action: PendingUnsavedAction) {
+    when (action) {
+      is PendingUnsavedAction.CloseTab -> closeFileTabInternal(action.path)
+      PendingUnsavedAction.LeaveWorkspace -> closeWorkspaceToHomeInternal()
+      is PendingUnsavedAction.SwitchWorker -> openWorkerInternal(action.script, action.forceRefreshFromCloudflare)
+      is PendingUnsavedAction.SwitchRamWorkspace -> openRamWorkspaceInternal(action.key)
+      is PendingUnsavedAction.SwitchAccount -> selectAccountInternal(action.account)
+      PendingUnsavedAction.SignOut -> signOutInternal()
+      PendingUnsavedAction.ReimportFromCloudflare -> reimportActiveWorkerInternal()
+      PendingUnsavedAction.PullLinkedGitRepo -> syncPullLinkedGitRepoInternal()
+      is PendingUnsavedAction.PullGitHubPaths -> pullGitHubPathsIntoWorkerInternal(action.paths)
+    }
   }
 
   fun syncTypedEditorValue(newValue: TextFieldValue) {
@@ -4484,7 +4837,7 @@ export default {
     if (!_uiState.value.isLocalScratchpad) {
       when (section) {
         SidebarSection.BINDINGS -> loadCloudflareInfra(forceRefresh = false)
-        SidebarSection.PAGES -> if (_uiState.value.pagesProjects.isEmpty()) loadPagesProjects()
+        SidebarSection.PAGES -> loadPagesProjectsInternal(forceRefresh = false)
         else -> Unit
       }
     }
@@ -5330,12 +5683,14 @@ export default {
   // Comprehensive Cloudflare Workers Infra: Bindings (KV/D1/R2/Service), Custom Domains, D1, R2, DO, Queues
   fun loadCloudflareInfra(forceRefresh: Boolean = false) {
     val accountId = _uiState.value.selectedAccount?.id ?: return
+    val ttlHours = _uiState.value.editorSettings.apiCacheTtlHours
     if (!forceRefresh) {
       val cached = ramDb.getInfraCache(accountId)
       val hasAny =
         cached != null &&
+          cached.fetchedAtEpochMs > 0L &&
           (cached.kvNamespaces.isNotEmpty() || cached.zones.isNotEmpty() || cached.d1Databases.isNotEmpty() || cached.r2Buckets.isNotEmpty())
-      if (hasAny && cached != null) {
+      if (hasAny && cached != null && ApiResponseCacheStore.isFresh(cached.fetchedAtEpochMs, ttlHours)) {
         _uiState.update {
           it.copy(
             kvNamespaces = cached.kvNamespaces,
@@ -5352,6 +5707,38 @@ export default {
     }
 
     viewModelScope.launch {
+      if (!forceRefresh) {
+        val diskCached = withContext(Dispatchers.IO) { apiCacheStore.loadInfra(accountId) }
+        if (diskCached != null) {
+          ramDb.updateInfraCache(accountId) { prev ->
+            prev.copy(
+              kvNamespaces = diskCached.kvNamespaces,
+              zones = diskCached.zones,
+              d1Databases = diskCached.d1Databases,
+              r2Buckets = diskCached.r2Buckets,
+              durableObjects = diskCached.durableObjects,
+              queues = diskCached.queues,
+              fetchedAtEpochMs = diskCached.fetchedAtEpochMs,
+            )
+          }
+          _uiState.update {
+            it.copy(
+              kvNamespaces = diskCached.kvNamespaces,
+              zones = diskCached.zones,
+              d1Databases = diskCached.d1Databases,
+              r2Buckets = diskCached.r2Buckets,
+              durableObjects = diskCached.durableObjects,
+              queues = diskCached.queues,
+              isKvBusy = false,
+              isInfraBusy = false,
+            )
+          }
+          if (ApiResponseCacheStore.isFresh(diskCached.fetchedAtEpochMs, ttlHours)) {
+            return@launch
+          }
+        }
+      }
+
       _uiState.update { it.copy(isInfraBusy = true, isKvBusy = true) }
       val kvList = repository.listKvNamespaces(accountId).getOrDefault(_uiState.value.kvNamespaces)
       val zoneList = repository.listZones(accountId).getOrDefault(_uiState.value.zones)
@@ -5359,6 +5746,7 @@ export default {
       val r2List = repository.listR2Buckets(accountId).getOrDefault(_uiState.value.r2Buckets)
       val doList = repository.listDurableObjects(accountId).getOrDefault(_uiState.value.durableObjects)
       val qList = repository.listQueues(accountId).getOrDefault(_uiState.value.queues)
+      val nowMs = System.currentTimeMillis()
 
       ramDb.updateInfraCache(accountId) { prev ->
         prev.copy(
@@ -5368,7 +5756,19 @@ export default {
           r2Buckets = r2List,
           durableObjects = doList,
           queues = qList,
-          fetchedAtEpochMs = System.currentTimeMillis(),
+          fetchedAtEpochMs = nowMs,
+        )
+      }
+      withContext(Dispatchers.IO) {
+        apiCacheStore.saveInfra(
+          accountId = accountId,
+          kvNamespaces = kvList,
+          zones = zoneList,
+          d1Databases = d1List,
+          r2Buckets = r2List,
+          durableObjects = doList,
+          queues = qList,
+          nowEpochMs = nowMs,
         )
       }
 
@@ -5759,12 +6159,28 @@ export default {
 
   // Cloudflare Pages Management
   fun loadPagesProjects() {
+    loadPagesProjectsInternal(forceRefresh = true)
+  }
+
+  private fun loadPagesProjectsInternal(forceRefresh: Boolean) {
     val accountId = _uiState.value.selectedAccount?.id ?: return
+    val ttlHours = _uiState.value.editorSettings.apiCacheTtlHours
     viewModelScope.launch {
+      if (!forceRefresh) {
+        val cached = withContext(Dispatchers.IO) { apiCacheStore.loadPages(accountId) }
+        if (cached != null) {
+          _uiState.update { it.copy(pagesProjects = cached.projects, isPagesBusy = false) }
+          if (ApiResponseCacheStore.isFresh(cached.fetchedAtEpochMs, ttlHours)) {
+            return@launch
+          }
+        }
+      }
+
       _uiState.update { it.copy(isPagesBusy = true) }
       repository
         .listPagesProjects(accountId)
         .onSuccess { list ->
+          withContext(Dispatchers.IO) { apiCacheStore.savePages(accountId, list) }
           _uiState.update { it.copy(pagesProjects = list, isPagesBusy = false) }
         }
         .onFailure { err ->
@@ -6419,8 +6835,10 @@ export default {
 
   fun disconnectGitHub() {
     gitHubOAuthJob?.cancel()
+    val scopeKey = _uiState.value.gitHubCreds?.login?.ifBlank { "default" } ?: "default"
     viewModelScope.launch {
       gitHubRepository.signOut()
+      withContext(Dispatchers.IO) { apiCacheStore.invalidateGitHub(scopeKey) }
       _uiState.update {
         it.copy(
           gitHubCreds = null,
@@ -6448,21 +6866,56 @@ export default {
 
   fun refreshGitHubRepos() {
     val token = _uiState.value.gitHubCreds?.token ?: return
-    viewModelScope.launch { refreshGitHubReposInternal(token) }
+    viewModelScope.launch { refreshGitHubReposInternal(token, forceRefresh = true) }
   }
 
-  private suspend fun refreshGitHubReposInternal(token: String) {
+  private suspend fun refreshGitHubReposInternal(
+    token: String,
+    forceRefresh: Boolean = true,
+  ) {
+    val scopeKey = _uiState.value.gitHubCreds?.login?.ifBlank { "default" } ?: "default"
+    val ttlHours = _uiState.value.editorSettings.apiCacheTtlHours
+    if (!forceRefresh) {
+      val cached = withContext(Dispatchers.IO) { apiCacheStore.loadGitHubRepos(scopeKey) }
+      if (cached != null) {
+        _uiState.update { state ->
+          state.copy(
+            gitHubRepos = cached.repos,
+            gitHubUser = cached.user ?: state.gitHubUser,
+            gitHubRateLimitLabel = cached.rateLimitLabel ?: state.gitHubRateLimitLabel,
+            isGitHubBusy = false,
+          )
+        }
+        if (ApiResponseCacheStore.isFresh(cached.fetchedAtEpochMs, ttlHours)) {
+          return
+        }
+      }
+    }
+
     _uiState.update { it.copy(isGitHubBusy = true, gitHubError = null) }
+    var fetchedUser = _uiState.value.gitHubUser
+    var fetchedRateLabel = _uiState.value.gitHubRateLimitLabel
     gitHubRepository.fetchSessionInfo(token).onSuccess { info ->
       val rateLabel =
         if (info.rateLimitRemaining != null && info.rateLimitLimit != null) {
           "${info.rateLimitRemaining}/${info.rateLimitLimit} req"
         } else null
+      fetchedUser = info.user
+      fetchedRateLabel = rateLabel
       _uiState.update { it.copy(gitHubUser = info.user, gitHubRateLimitLabel = rateLabel) }
     }
     gitHubRepository
       .listRepos(token)
       .onSuccess { repos ->
+        val cacheScope = fetchedUser?.login?.ifBlank { scopeKey } ?: scopeKey
+        withContext(Dispatchers.IO) {
+          apiCacheStore.saveGitHubRepos(
+            scopeKey = cacheScope,
+            repos = repos,
+            user = fetchedUser,
+            rateLimitLabel = fetchedRateLabel,
+          )
+        }
         _uiState.update { it.copy(gitHubRepos = repos, isGitHubBusy = false) }
       }
       .onFailure { err ->
@@ -7390,6 +7843,22 @@ jobs:
   }
 
   fun syncPullLinkedGitRepo() {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    if (state.linkedGitRepo == null) return
+    if (state.workspace != null && state.editorSettings.warnOnCloudOverwrite && state.hasUnsavedChanges) {
+      showUnsavedWarning(
+        action = PendingUnsavedAction.PullLinkedGitRepo,
+        title = "Pull Over Unsaved Changes?",
+        message = "Pulling '${state.linkedGitRepo.fullName}' may overwrite local unsaved modifications.",
+        allowKeepLocalDraft = false,
+      )
+      return
+    }
+    syncPullLinkedGitRepoInternal()
+  }
+
+  private fun syncPullLinkedGitRepoInternal() {
     val linked = _uiState.value.linkedGitRepo ?: return
     cloneGitHubRepository(
       repoUrlOrSlug = linked.fullName,
@@ -7399,6 +7868,22 @@ jobs:
   }
 
   fun pullGitHubPathsIntoWorker(paths: List<String>) {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    if (state.selectedGitHubRepo == null || paths.isEmpty()) return
+    if (state.workspace != null && state.editorSettings.warnOnCloudOverwrite && state.hasUnsavedChanges) {
+      showUnsavedWarning(
+        action = PendingUnsavedAction.PullGitHubPaths(paths),
+        title = "Pull Over Unsaved Changes?",
+        message = "Pulling ${paths.size} file(s) from GitHub may overwrite unsaved local edits.",
+        allowKeepLocalDraft = false,
+      )
+      return
+    }
+    pullGitHubPathsIntoWorkerInternal(paths)
+  }
+
+  private fun pullGitHubPathsIntoWorkerInternal(paths: List<String>) {
     val token = _uiState.value.gitHubCreds?.token
     val repo = _uiState.value.selectedGitHubRepo ?: return
     if (paths.isEmpty()) return

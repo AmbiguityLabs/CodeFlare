@@ -14,7 +14,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.AccountTree
+import androidx.compose.material.icons.outlined.Cached
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Memory
@@ -166,6 +168,8 @@ fun SettingsDeployPane(
 @Composable
 fun SettingsStorageAndSessionPane(
   uiState: IdeUiState,
+  onUpdateSettings: ((EditorSettings) -> EditorSettings) -> Unit,
+  onClearApiCache: (() -> Unit)?,
   onOpenGitHubHub: (() -> Unit)?,
   onRequestStorageAccess: (() -> Unit)?,
   onRequestDisconnect: () -> Unit,
@@ -178,6 +182,7 @@ fun SettingsStorageAndSessionPane(
   val clipboard = LocalClipboardManager.current
   val storage = uiState.projectStorageSummary
   val creds = uiState.credentials
+  val settings = uiState.editorSettings
   val resolvedPath =
     storage.rootAbsolutePath.ifBlank {
       storage.rootDisplayPath.ifBlank { "EdgeCodeProjects/" }
@@ -260,6 +265,65 @@ fun SettingsStorageAndSessionPane(
             SettingsMetricTile(label = "Imports", value = storage.importedFilesCount.toString(), modifier = Modifier.weight(1f))
             SettingsMetricTile(label = "Exports", value = storage.exportedFilesCount.toString(), modifier = Modifier.weight(1f))
             SettingsMetricTile(label = "Disk", value = "${storage.totalDiskKb} KB", modifier = Modifier.weight(1f))
+          }
+        }
+      }
+    }
+
+    val cacheSummary =
+      if (settings.apiCacheTtlHours <= 0) "Manual" else "${settings.apiCacheTtlHours}h"
+    SettingsFoldableSection(
+      title = "API Sync & Cache",
+      icon = Icons.Outlined.Cached,
+      summary = cacheSummary,
+      initiallyExpanded = false,
+      contentPadding = 14.dp,
+      modifier = Modifier.testTag("settings_api_cache_section"),
+    ) {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+          text = "Auto-Refresh Interval",
+          fontSize = 13.5.sp,
+          fontWeight = FontWeight.Medium,
+          color = palette.textPrimary,
+        )
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+          listOf(1 to "1h", 2 to "2h", 4 to "4h").forEach { (hours, label) ->
+            SettingsChoiceChip(
+              label = label,
+              selected = settings.apiCacheTtlHours == hours,
+              onClick = { onUpdateSettings { it.copy(apiCacheTtlHours = hours) } },
+              monospace = true,
+              modifier = Modifier.weight(1f).testTag("settings_api_cache_ttl_$hours"),
+            )
+          }
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+          listOf(6 to "6h", 12 to "12h", 0 to "Manual").forEach { (hours, label) ->
+            SettingsChoiceChip(
+              label = label,
+              selected = settings.apiCacheTtlHours == hours,
+              onClick = { onUpdateSettings { it.copy(apiCacheTtlHours = hours) } },
+              monospace = hours > 0,
+              modifier = Modifier.weight(1f).testTag("settings_api_cache_ttl_$hours"),
+            )
+          }
+        }
+        if (onClearApiCache != null) {
+          SettingsHairlineDivider()
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text("Cached API Data", fontSize = 14.sp, color = palette.textPrimary)
+            IconRevealButton(
+              icon = Icons.Outlined.DeleteSweep,
+              revealedLabel = "Clear Cache",
+              onClick = onClearApiCache,
+              height = 36.dp,
+              tag = "settings_clear_api_cache_button",
+            )
           }
         }
       }

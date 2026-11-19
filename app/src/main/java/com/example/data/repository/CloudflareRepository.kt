@@ -605,6 +605,14 @@ class CloudflareRepository(
   ): Result<CfWorkerScript> =
     withContext(Dispatchers.IO) {
       runCatching {
+        val uncompressedBytes =
+          workspace.files
+            .filterNot { it.isVirtualReadOnly }
+            .sumOf { it.content.toByteArray(Charsets.UTF_8).size.toLong() }
+        if (uncompressedBytes > com.example.data.local.DeviceFileHelper.CLOUDFLARE_WORKER_MAX_UNCOMPRESSED_BYTES) {
+          val sizeMb = String.format("%.1f", uncompressedBytes / (1024.0 * 1024.0))
+          error("Worker bundle ($sizeMb MiB) exceeds Cloudflare Workers 64 MiB uncompressed upload limit")
+        }
         val body =
           MultipartWorkerParser.buildUploadMultipartBody(
             files = workspace.files,
@@ -1625,10 +1633,17 @@ class CloudflareRepository(
     }
 
   suspend fun preparePagesAssets(rawAssets: List<RawPickedAsset>): List<PagesPreparedAsset> =
-    withContext(Dispatchers.Default) {
+    withContext(Dispatchers.IO) {
       val deduped = linkedMapOf<String, PagesPreparedAsset>()
       for (raw in rawAssets) {
-        val prepared = PagesDirectUploadHasher.prepareAsset(raw.relativePath, raw.bytes) ?: continue
+        val prepared =
+          PagesDirectUploadHasher.prepareAssetLazy(
+            rawPath = raw.relativePath,
+            diskFile = raw.diskFile,
+            inMemoryBytes = raw.bytes,
+            byteSize = raw.byteSize,
+            maxCloudflareSingleFileBytes = com.example.data.local.DeviceFileHelper.CLOUDFLARE_PAGES_MAX_SINGLE_FILE_BYTES,
+          ) ?: continue
         deduped[prepared.normalizedPath] = prepared
       }
       deduped.values.toList()
@@ -1646,10 +1661,19 @@ class CloudflareRepository(
       runCatching {
         require(preparedAssets.isNotEmpty()) { "Select at least one file or folder to deploy" }
 
+        val cfLimit = com.example.data.local.DeviceFileHelper.CLOUDFLARE_PAGES_MAX_SINGLE_FILE_BYTES
+        val oversized = preparedAssets.firstOrNull { it.actualByteSize > cfLimit }
+        if (oversized != null) {
+          val mb = String.format("%.1f", oversized.actualByteSize / (1024.0 * 1024.0))
+          error(
+            "File '${oversized.normalizedPath}' ($mb MiB) exceeds Cloudflare Pages' 25 MiB per-file deploy limit. Remove or compress it before deploying.",
+          )
+        }
+
         val workerEntry = preparedAssets.firstOrNull { it.normalizedPath == "/_worker.js" }
         val staticAssets = preparedAssets.filterNot { it.normalizedPath == "/_worker.js" }
         val totalAssetCount = staticAssets.size
-        val totalAssetBytes = staticAssets.sumOf { it.bytes.size.toLong() }
+        val totalAssetBytes = staticAssets.sumOf { it.actualByteSize }
 
         onProgress(
           PagesDirectUploadProgress(
@@ -1692,30 +1716,30 @@ class CloudflareRepository(
           val toUpload = uniqueByHash.values.filter { it.hash in missingSet }
 
           val cachedBytes =
-            staticAssets.filter { it.hash !in missingSet }.sumOf { it.bytes.size.toLong() }
+            staticAssets.filter { it.hash !in missingSet }.sumOf { it.actualByteSize }
           var uploadedBytesSoFar = cachedBytes
           var uploadedFilesSoFar = staticAssets.count { it.hash !in missingSet }
 
           if (toUpload.isNotEmpty()) {
             // Chunk into <= 12 MiB base64 payload and <= 150 files per batch
-            val maxBatchBase64Bytes = 12 * 1024 * 1024
+            val maxBatchBase64Bytes = 12L * 1024L * 1024L
             val maxBatchItems = 150
             val batches = mutableListOf<List<PagesPreparedAsset>>()
             var currentBatch = mutableListOf<PagesPreparedAsset>()
-            var currentBatchBytes = 0
+            var currentBatchBytes = 0L
 
             for (asset in toUpload) {
-              val itemSize = asset.base64Content.length
+              val estBase64Size = ((asset.actualByteSize + 2L) / 3L) * 4L
               if (
                 currentBatch.isNotEmpty() &&
-                  (currentBatchBytes + itemSize > maxBatchBase64Bytes || currentBatch.size >= maxBatchItems)
+                  (currentBatchBytes + estBase64Size > maxBatchBase64Bytes || currentBatch.size >= maxBatchItems)
               ) {
                 batches.add(currentBatch)
                 currentBatch = mutableListOf()
-                currentBatchBytes = 0
+                currentBatchBytes = 0L
               }
               currentBatch.add(asset)
-              currentBatchBytes += itemSize
+              currentBatchBytes += estBase64Size
             }
             if (currentBatch.isNotEmpty()) {
               batches.add(currentBatch)
@@ -1735,7 +1759,7 @@ class CloudflareRepository(
                 batch.map { asset ->
                   CfPagesUploadPayloadItem(
                     key = asset.hash,
-                    value = asset.base64Content,
+                    value = asset.resolveBase64Content(),
                     metadata = CfPagesAssetMetadata(contentType = asset.contentType),
                     base64 = true,
                   )
@@ -1745,7 +1769,7 @@ class CloudflareRepository(
                 error(extractCfError(uploadResp) ?: "Pages asset batch upload failed (HTTP ${uploadResp.code()})")
               }
               val batchHashSet = batch.mapTo(hashSetOf()) { it.hash }
-              uploadedBytesSoFar += staticAssets.filter { it.hash in batchHashSet }.sumOf { it.bytes.size.toLong() }
+              uploadedBytesSoFar += staticAssets.filter { it.hash in batchHashSet }.sumOf { it.actualByteSize }
               uploadedFilesSoFar += staticAssets.count { it.hash in batchHashSet }
             }
           }
@@ -1803,7 +1827,7 @@ class CloudflareRepository(
           multipartBuilder.addFormDataPart(
             "_worker.js",
             "_worker.js",
-            workerEntry.bytes.toRequestBody("application/javascript+module".toMediaType()),
+            workerEntry.resolveBytes().toRequestBody("application/javascript+module".toMediaType()),
           )
         }
 

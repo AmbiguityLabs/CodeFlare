@@ -39,20 +39,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Android "Open With" for all file types (including unknown extensions) -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <action android:name="android.intent.action.EDIT" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-
-                <data android:scheme="content" />
-                <data android:scheme="file" />
-                <data android:mimeType="*/*" />
-            </intent-filter>
-
-            <!-- Standard scheme+MIME fallback for strict file managers -->
+            <!-- Android "Open With" strictly scoped to supported text, code, config, and ZIP files -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.EDIT" />
@@ -61,34 +48,94 @@
 
                 <data android:scheme="content" />
                 <data android:scheme="file" />
-                <data android:mimeType="text/*" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="text/javascript" />
                 <data android:mimeType="application/javascript" />
+                <data android:mimeType="text/x-javascript" />
                 <data android:mimeType="application/x-javascript" />
+                <data android:mimeType="text/typescript" />
+                <data android:mimeType="application/typescript" />
                 <data android:mimeType="application/json" />
-                <data android:mimeType="application/xml" />
+                <data android:mimeType="text/html" />
                 <data android:mimeType="application/xhtml+xml" />
+                <data android:mimeType="text/css" />
+                <data android:mimeType="text/markdown" />
+                <data android:mimeType="text/x-markdown" />
+                <data android:mimeType="text/xml" />
+                <data android:mimeType="application/xml" />
+                <data android:mimeType="image/svg+xml" />
+                <data android:mimeType="text/csv" />
+                <data android:mimeType="application/toml" />
+                <data android:mimeType="text/x-toml" />
+                <data android:mimeType="application/yaml" />
+                <data android:mimeType="application/x-yaml" />
+                <data android:mimeType="text/yaml" />
                 <data android:mimeType="application/zip" />
                 <data android:mimeType="application/x-zip-compressed" />
-                <data android:mimeType="application/octet-stream" />
-                <data android:mimeType="image/svg+xml" />
             </intent-filter>
 
-            <!-- Android Share Sheet single file & shared text snippet -->
+            <!-- Android Share Sheet strictly scoped to supported text snippets, code/config, and ZIP files -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
 
                 <category android:name="android.intent.category.DEFAULT" />
 
-                <data android:mimeType="*/*" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="text/javascript" />
+                <data android:mimeType="application/javascript" />
+                <data android:mimeType="text/x-javascript" />
+                <data android:mimeType="application/x-javascript" />
+                <data android:mimeType="text/typescript" />
+                <data android:mimeType="application/typescript" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="text/html" />
+                <data android:mimeType="application/xhtml+xml" />
+                <data android:mimeType="text/css" />
+                <data android:mimeType="text/markdown" />
+                <data android:mimeType="text/x-markdown" />
+                <data android:mimeType="text/xml" />
+                <data android:mimeType="application/xml" />
+                <data android:mimeType="image/svg+xml" />
+                <data android:mimeType="text/csv" />
+                <data android:mimeType="application/toml" />
+                <data android:mimeType="text/x-toml" />
+                <data android:mimeType="application/yaml" />
+                <data android:mimeType="application/x-yaml" />
+                <data android:mimeType="text/yaml" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
             </intent-filter>
 
-            <!-- Android Share Sheet multiple files -->
+            <!-- Android Share Sheet multiple supported code/text/config and ZIP files -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
 
                 <category android:name="android.intent.category.DEFAULT" />
 
-                <data android:mimeType="*/*" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="text/javascript" />
+                <data android:mimeType="application/javascript" />
+                <data android:mimeType="text/x-javascript" />
+                <data android:mimeType="application/x-javascript" />
+                <data android:mimeType="text/typescript" />
+                <data android:mimeType="application/typescript" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="text/html" />
+                <data android:mimeType="application/xhtml+xml" />
+                <data android:mimeType="text/css" />
+                <data android:mimeType="text/markdown" />
+                <data android:mimeType="text/x-markdown" />
+                <data android:mimeType="text/xml" />
+                <data android:mimeType="application/xml" />
+                <data android:mimeType="image/svg+xml" />
+                <data android:mimeType="text/csv" />
+                <data android:mimeType="application/toml" />
+                <data android:mimeType="text/x-toml" />
+                <data android:mimeType="application/yaml" />
+                <data android:mimeType="application/x-yaml" />
+                <data android:mimeType="text/yaml" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
             </intent-filter>
         </activity>
     </application>

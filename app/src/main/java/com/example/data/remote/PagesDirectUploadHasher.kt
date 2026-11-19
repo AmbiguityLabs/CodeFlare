@@ -1,18 +1,31 @@
 package com.example.data.remote
 
+import java.io.File
 import okio.ByteString.Companion.toByteString
 
 data class PagesPreparedAsset(
   val normalizedPath: String, // Always starts with '/', e.g. "/index.html"
-  val bytes: ByteArray,
-  val base64Content: String,
+  val bytes: ByteArray = ByteArray(0),
+  val base64Content: String = "",
   val contentType: String,
   val hash: String, // 32-char lowercase hex BLAKE3(base64 + ext)
+  val actualByteSize: Long = bytes.size.toLong(),
+  val diskFile: File? = null,
 ) {
+  fun resolveBytes(): ByteArray =
+    diskFile?.let { file -> if (file.exists()) file.readBytes() else bytes } ?: bytes
+
+  fun resolveBase64Content(): String =
+    if (base64Content.isNotEmpty() || actualByteSize == 0L) {
+      base64Content
+    } else {
+      resolveBytes().toByteString().base64()
+    }
+
   override fun equals(other: Any?): Boolean {
     if (this === other) return true
     if (other !is PagesPreparedAsset) return false
-    return normalizedPath == other.normalizedPath && hash == other.hash
+    return normalizedPath == other.normalizedPath && hash == other.hash && actualByteSize == other.actualByteSize
   }
 
   override fun hashCode(): Int = 31 * normalizedPath.hashCode() + hash.hashCode()
@@ -127,7 +140,49 @@ object PagesDirectUploadHasher {
       base64Content = base64Str,
       contentType = guessContentType(normalized),
       hash = hash,
+      actualByteSize = bytes.size.toLong(),
     )
+  }
+
+  fun prepareAssetLazy(
+    rawPath: String,
+    diskFile: File?,
+    inMemoryBytes: ByteArray,
+    byteSize: Long,
+    maxCloudflareSingleFileBytes: Long = 25L * 1024L * 1024L,
+  ): PagesPreparedAsset? {
+    val normalized = normalizeAssetPath(rawPath)
+    if (normalized.isBlank()) return null
+    val mime = guessContentType(normalized)
+    if (byteSize > maxCloudflareSingleFileBytes) {
+      // Do not load oversized files into heap during staging; Cloudflare deploy check surfaces clear error
+      return PagesPreparedAsset(
+        normalizedPath = normalized,
+        bytes = ByteArray(0),
+        base64Content = "",
+        contentType = mime,
+        hash = "",
+        actualByteSize = byteSize,
+        diskFile = diskFile,
+      )
+    }
+    if (diskFile != null && diskFile.exists()) {
+      val fileBytes = diskFile.readBytes()
+      val base64Str = fileBytes.toByteString().base64()
+      val ext = extractExtensionWithoutDot(normalized)
+      val hash = Blake3.hashHex((base64Str + ext).toByteArray(Charsets.UTF_8), outputBytes = 16)
+      // Keep disk reference rather than retaining bytes/base64 strings in JVM heap for large archives
+      return PagesPreparedAsset(
+        normalizedPath = normalized,
+        bytes = ByteArray(0),
+        base64Content = "",
+        contentType = mime,
+        hash = hash,
+        actualByteSize = fileBytes.size.toLong(),
+        diskFile = diskFile,
+      )
+    }
+    return prepareAsset(rawPath, inMemoryBytes)
   }
 }
 

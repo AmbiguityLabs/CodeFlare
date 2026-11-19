@@ -1138,9 +1138,9 @@ fun ApiTesterPane(
               html = res.body,
               modifier = Modifier.fillMaxWidth().height(if (responseExpanded) 440.dp else 260.dp).clip(RoundedCornerShape(8.dp)),
             )
-          } else {
-            val boxScrollModifier =
-              if (!wrapResponse && (responseSubTab == 0 || responseSubTab == 1)) {
+          } else if (responseSubTab == 2) {
+            Box(
+              modifier =
                 Modifier
                   .fillMaxWidth()
                   .heightIn(min = 120.dp, max = if (responseExpanded) 540.dp else 360.dp)
@@ -1148,114 +1148,62 @@ fun ApiTesterPane(
                   .background(palette.editorBg)
                   .border(0.5.dp, palette.border.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
                   .verticalScroll(rememberScrollState())
-                  .horizontalScroll(rememberScrollState())
-                  .padding(10.dp)
-              } else {
-                Modifier
-                  .fillMaxWidth()
-                  .heightIn(min = 120.dp, max = if (responseExpanded) 540.dp else 360.dp)
-                  .clip(RoundedCornerShape(8.dp))
-                  .background(palette.editorBg)
-                  .border(0.5.dp, palette.border.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
-                  .verticalScroll(rememberScrollState())
-                  .padding(10.dp)
-              }
-            Box(modifier = boxScrollModifier) {
-              when (responseSubTab) {
-                0 -> {
-                  val pretty = remember(res.body, res.errorMessage) {
-                    res.errorMessage ?: ApiRequestUtils.prettyPrintIfJson(res.body)
-                  }
-                  val effectiveText = pretty.ifBlank { "(empty body)" }
-                  val highlighted =
-                    remember(effectiveText, contentTypeHint, palette, res.errorMessage) {
-                      if (res.errorMessage != null || effectiveText == "(empty body)") {
-                        null
-                      } else {
-                        SyntaxHighlighter.highlightResponse(effectiveText, contentTypeHint, palette)
-                      }
+                  .padding(10.dp),
+            ) {
+              val displayedHeaders =
+                remember(res.headers, showResponseSearch, responseSearchQuery) {
+                  if (!showResponseSearch || responseSearchQuery.isBlank()) {
+                    res.headers.entries.toList()
+                  } else {
+                    res.headers.entries.filter { (k, v) ->
+                      k.contains(responseSearchQuery, ignoreCase = true) ||
+                        v.contains(responseSearchQuery, ignoreCase = true)
                     }
-                  val highlightedWithSearch =
-                    remember(highlighted, effectiveText, activeSearchMatches, palette) {
-                      applySearchMatchHighlight(
-                        base = highlighted,
-                        plainText = effectiveText,
-                        matches = activeSearchMatches,
-                        matchBg = palette.searchMatchBg,
-                        matchFg = palette.textPrimary,
+                  }
+                }
+              Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (displayedHeaders.isEmpty()) {
+                  Text("(no matching response headers)", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+                } else {
+                  displayedHeaders.forEach { (k, v) ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                      Text("$k:", style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold), color = palette.activePillFg)
+                      SmartDraggableText(
+                        text = v,
+                        surfaceId = "api_res_header_$k",
+                        domain = SmartTextDomain.TERMINAL_OR_LOG,
+                        style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
+                        color = palette.textPrimary,
+                        onCopied = { onNotifyStatus("Copied header value") },
                       )
                     }
-                  SmartDraggableText(
-                    text = effectiveText,
-                    annotatedText = highlightedWithSearch,
-                    surfaceId = "api_res_pretty",
-                    domain = if (res.errorMessage == null && formatBadge == "JSON") SmartTextDomain.JSON else SmartTextDomain.TERMINAL_OR_LOG,
-                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 16.sp),
-                    color = if (res.errorMessage != null) RoseError else palette.textPrimary,
-                    onCopied = { onNotifyStatus("Copied response snippet") },
+                  }
+                }
+              }
+            }
+          } else {
+            val resViewerHeight = if (responseExpanded) 480.dp else 300.dp
+            val (viewerKey, viewerText, viewerLang) =
+              when (responseSubTab) {
+                0 -> {
+                  val pretty =
+                    remember(res.body, res.errorMessage) {
+                      res.errorMessage ?: ApiRequestUtils.prettyPrintIfJson(res.body)
+                    }
+                  val effectiveText = pretty.ifBlank { "(empty body)" }
+                  Triple(
+                    "api_res_pretty_${res.url.hashCode()}",
+                    effectiveText,
+                    if (res.errorMessage != null) WorkerLanguage.TEXT else detectSharedEditorLanguage(effectiveText, contentTypeHint),
                   )
                 }
                 1 -> {
                   val rawText = (res.errorMessage ?: res.body).ifBlank { "(empty body)" }
-                  val highlighted =
-                    remember(rawText, contentTypeHint, palette, res.errorMessage) {
-                      if (res.errorMessage != null || rawText == "(empty body)") {
-                        null
-                      } else {
-                        SyntaxHighlighter.highlightResponse(rawText, contentTypeHint, palette)
-                      }
-                    }
-                  val highlightedWithSearch =
-                    remember(highlighted, rawText, activeSearchMatches, palette) {
-                      applySearchMatchHighlight(
-                        base = highlighted,
-                        plainText = rawText,
-                        matches = activeSearchMatches,
-                        matchBg = palette.searchMatchBg,
-                        matchFg = palette.textPrimary,
-                      )
-                    }
-                  SmartDraggableText(
-                    text = rawText,
-                    annotatedText = highlightedWithSearch,
-                    surfaceId = "api_res_raw",
-                    domain = SmartTextDomain.TERMINAL_OR_LOG,
-                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 16.sp),
-                    color = if (res.errorMessage != null) RoseError else palette.textPrimary,
-                    onCopied = { onNotifyStatus("Copied raw response") },
+                  Triple(
+                    "api_res_raw_${res.url.hashCode()}",
+                    rawText,
+                    if (res.errorMessage != null) WorkerLanguage.TEXT else detectSharedEditorLanguage(rawText, contentTypeHint),
                   )
-                }
-                2 -> {
-                  val displayedHeaders =
-                    remember(res.headers, showResponseSearch, responseSearchQuery) {
-                      if (!showResponseSearch || responseSearchQuery.isBlank()) {
-                        res.headers.entries.toList()
-                      } else {
-                        res.headers.entries.filter { (k, v) ->
-                          k.contains(responseSearchQuery, ignoreCase = true) ||
-                            v.contains(responseSearchQuery, ignoreCase = true)
-                        }
-                      }
-                    }
-                  Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (displayedHeaders.isEmpty()) {
-                      Text("(no matching response headers)", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
-                    } else {
-                      displayedHeaders.forEach { (k, v) ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                          Text("$k:", style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold), color = palette.activePillFg)
-                          SmartDraggableText(
-                            text = v,
-                            surfaceId = "api_res_header_$k",
-                            domain = SmartTextDomain.TERMINAL_OR_LOG,
-                            style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
-                            color = palette.textPrimary,
-                            onCopied = { onNotifyStatus("Copied header value") },
-                          )
-                        }
-                      }
-                    }
-                  }
                 }
                 else -> {
                   val previewText =
@@ -1263,36 +1211,26 @@ fun ApiTesterPane(
                       res.errorMessage ?: ApiRequestUtils.prettyPrintIfJson(res.body)
                     }
                   val effectivePreview = previewText.ifBlank { "(no preview content)" }
-                  val highlighted =
-                    remember(effectivePreview, contentTypeHint, palette, res.errorMessage) {
-                      if (res.errorMessage != null || effectivePreview == "(no preview content)") {
-                        null
-                      } else {
-                        SyntaxHighlighter.highlightResponse(effectivePreview, contentTypeHint, palette)
-                      }
-                    }
-                  val highlightedWithSearch =
-                    remember(highlighted, effectivePreview, activeSearchMatches, palette) {
-                      applySearchMatchHighlight(
-                        base = highlighted,
-                        plainText = effectivePreview,
-                        matches = activeSearchMatches,
-                        matchBg = palette.searchMatchBg,
-                        matchFg = palette.textPrimary,
-                      )
-                    }
-                  SmartDraggableText(
-                    text = effectivePreview,
-                    annotatedText = highlightedWithSearch,
-                    surfaceId = "api_res_preview",
-                    domain = SmartTextDomain.TERMINAL_OR_LOG,
-                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 16.sp),
-                    color = if (res.errorMessage != null) RoseError else palette.textPrimary,
-                    onCopied = { onNotifyStatus("Copied preview snippet") },
+                  Triple(
+                    "api_res_preview_${res.url.hashCode()}",
+                    effectivePreview,
+                    if (res.errorMessage != null) WorkerLanguage.TEXT else detectSharedEditorLanguage(effectivePreview, contentTypeHint),
                   )
                 }
               }
-            }
+            EdgeSharedTextEditor(
+              surfaceKey = viewerKey,
+              value = viewerText,
+              onValueChange = {},
+              language = viewerLang,
+              readOnly = true,
+              wordWrap = wrapResponse,
+              height = resViewerHeight,
+              findMatches = activeSearchMatches,
+              contentTypeHint = contentTypeHint,
+              isErrorText = res.errorMessage != null,
+              onCopiedFallback = { onNotifyStatus("Copied response snippet") },
+            )
           }
         }
       }
@@ -1604,22 +1542,15 @@ private fun ApiBodyEditor(
         onRowsChange = { next -> onUpdateRequest { it.copy(formRows = next) } },
       )
     ApiBodyType.JSON, ApiBodyType.RAW -> {
-      OutlinedTextField(
+      EdgeSharedTextEditor(
+        surfaceKey = "api_tester_body_${req.id}_${req.bodyType.name}",
         value = req.rawBody,
         onValueChange = { body -> onUpdateRequest { it.copy(rawBody = body) } },
-        label = { Text(if (req.bodyType == ApiBodyType.JSON) "JSON Payload" else "Raw Text Body") },
-        maxLines = 8,
-        textStyle = TextStyle(fontFamily = JetBrainsMono, fontSize = 12.sp),
-        modifier =
-          Modifier
-            .fillMaxWidth()
-            .edgeTextDropTarget(
-              targetSurfaceId = "API Body",
-              currentValue = req.rawBody,
-              onValueChange = { body -> onUpdateRequest { it.copy(rawBody = body) } },
-              singleLine = false,
-            )
-            .testTag("api_body_input"),
+        label = if (req.bodyType == ApiBodyType.JSON) "JSON Payload" else "Raw Text Body",
+        placeholder = if (req.bodyType == ApiBodyType.JSON) "{\n  \"key\": \"value\"\n}" else "Raw request payload...",
+        language = if (req.bodyType == ApiBodyType.JSON) WorkerLanguage.JSON else WorkerLanguage.TEXT,
+        height = 168.dp,
+        testTagName = "api_body_input",
       )
       if (req.bodyType == ApiBodyType.JSON) {
         TextButton(onClick = { onUpdateRequest { it.copy(rawBody = ApiRequestUtils.prettyPrintIfJson(it.rawBody)) } }) {

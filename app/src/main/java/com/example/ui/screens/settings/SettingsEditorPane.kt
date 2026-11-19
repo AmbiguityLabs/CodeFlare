@@ -45,7 +45,11 @@ import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.CloudSync
+import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.UnfoldLess
+import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material.icons.outlined.ZoomIn
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
@@ -106,6 +110,7 @@ fun SettingsEditorPane(
       settings.gutterDiffMarkers,
       settings.autoCloseBrackets,
       settings.softKeyboardSuggestions,
+      settings.useUnifiedEditorEverywhere,
     ).count { it }
 
   Column(
@@ -332,7 +337,7 @@ fun SettingsEditorPane(
     SettingsFoldableSection(
       title = "Editor",
       icon = Icons.Outlined.Tune,
-      summary = "$enabledEditorFlags/8",
+      summary = "$enabledEditorFlags/9",
       initiallyExpanded = false,
     ) {
       SettingsToggleRow(
@@ -389,6 +394,14 @@ fun SettingsEditorPane(
         leadingIcon = Icons.Outlined.Keyboard,
         checked = settings.softKeyboardSuggestions,
         onCheckedChange = { sug -> onUpdateSettings { it.copy(softKeyboardSuggestions = sug) } },
+      )
+      SettingsHairlineDivider(startIndent = 54.dp)
+      SettingsToggleRow(
+        title = "Unified Editor Everywhere",
+        leadingIcon = Icons.Outlined.Code,
+        checked = settings.useUnifiedEditorEverywhere,
+        onCheckedChange = { unified -> onUpdateSettings { it.copy(useUnifiedEditorEverywhere = unified) } },
+        modifier = Modifier.testTag("settings_toggle_unified_editor"),
       )
       SettingsHairlineDivider(startIndent = 54.dp)
       Column(
@@ -484,6 +497,44 @@ fun SettingsEditorPane(
           )
         }
       }
+    }
+
+    val enabledWarningFlags =
+      listOf(
+        settings.warnOnCloseDirtyTab,
+        settings.warnOnLeaveDirtyWorkspace,
+        settings.warnOnCloudOverwrite,
+      ).count { it }
+    SettingsFoldableSection(
+      title = "Unsaved File Warnings",
+      icon = Icons.Outlined.WarningAmber,
+      summary = "$enabledWarningFlags/3",
+      initiallyExpanded = false,
+      modifier = Modifier.testTag("settings_unsaved_warnings_section"),
+    ) {
+      SettingsToggleRow(
+        title = "Closing Modified Tab",
+        leadingIcon = Icons.Outlined.Close,
+        checked = settings.warnOnCloseDirtyTab,
+        onCheckedChange = { enabled -> onUpdateSettings { it.copy(warnOnCloseDirtyTab = enabled) } },
+        modifier = Modifier.testTag("settings_warn_close_dirty_tab"),
+      )
+      SettingsHairlineDivider(startIndent = 54.dp)
+      SettingsToggleRow(
+        title = "Leaving or Switching Project",
+        leadingIcon = Icons.Outlined.SwapHoriz,
+        checked = settings.warnOnLeaveDirtyWorkspace,
+        onCheckedChange = { enabled -> onUpdateSettings { it.copy(warnOnLeaveDirtyWorkspace = enabled) } },
+        modifier = Modifier.testTag("settings_warn_leave_workspace"),
+      )
+      SettingsHairlineDivider(startIndent = 54.dp)
+      SettingsToggleRow(
+        title = "Cloud / Git Overwrite",
+        leadingIcon = Icons.Outlined.CloudSync,
+        checked = settings.warnOnCloudOverwrite,
+        onCheckedChange = { enabled -> onUpdateSettings { it.copy(warnOnCloudOverwrite = enabled) } },
+        modifier = Modifier.testTag("settings_warn_cloud_overwrite"),
+      )
     }
 
     val selConfig = settings.selectionDragConfig.normalized()

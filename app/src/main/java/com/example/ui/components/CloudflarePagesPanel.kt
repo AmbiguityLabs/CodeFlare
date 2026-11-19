@@ -162,11 +162,14 @@ fun CloudflarePagesPanel(
         }
       }
 
-      if (uiState.isPagesBusy) {
-        EdgeLoadingIndicator(size = 24.dp)
+      if (uiState.isPagesBusy && uiState.pagesProjects.isEmpty()) {
+        EdgeSkeletonProjectList(count = 4)
       } else if (uiState.pagesProjects.isEmpty()) {
         Text("No Pages projects found. Tap + to create one.", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
       } else {
+        if (uiState.isPagesBusy) {
+          EdgeLoadingIndicator(size = 20.dp)
+        }
         uiState.pagesProjects.forEach { proj ->
           Surface(
             onClick = { onSelectProject(proj) },
@@ -362,7 +365,11 @@ private fun PagesProjectDetailView(
 
         val stagedAssets = uiState.pagesStagedPreparedAssets
         if (stagedAssets.isNotEmpty()) {
-          val totalBytes = stagedAssets.sumOf { it.bytes.size.toLong() }
+          val totalBytes = stagedAssets.sumOf { it.actualByteSize }
+          val oversizedCount =
+            stagedAssets.count {
+              it.actualByteSize > com.example.data.local.DeviceFileHelper.CLOUDFLARE_PAGES_MAX_SINGLE_FILE_BYTES
+            }
           val hasIndexHtml = stagedAssets.any { it.normalizedPath.equals("/index.html", ignoreCase = true) }
           val hasWorkerBundle = stagedAssets.any { it.normalizedPath == "/_worker.js" }
 
@@ -382,9 +389,14 @@ private fun PagesProjectDetailView(
                     overflow = TextOverflow.Ellipsis,
                   )
                   Text(
-                    text = "${stagedAssets.size} files • ${formatReadableBytes(totalBytes)}",
+                    text =
+                      if (oversizedCount > 0) {
+                        "${stagedAssets.size} files • ${formatReadableBytes(totalBytes)} • $oversizedCount file(s) > 25 MiB Pages deploy limit"
+                      } else {
+                        "${stagedAssets.size} files • ${formatReadableBytes(totalBytes)}"
+                      },
                     style = MaterialTheme.typography.labelSmall,
-                    color = palette.textSecondary,
+                    color = if (oversizedCount > 0) AmberWarn else palette.textSecondary,
                   )
                 }
                 if (!uiState.isPagesDirectUploading) {

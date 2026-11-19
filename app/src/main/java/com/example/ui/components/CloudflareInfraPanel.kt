@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.remote.CfD1Database
 import com.example.data.remote.CfKvNamespace
 import com.example.data.remote.CfWorkerBinding
+import com.example.data.remote.WorkerLanguage
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
@@ -299,11 +300,21 @@ fun CloudflareInfraPanel(
 
     Spacer(Modifier.height(8.dp))
 
+    val isColdInfraLoading =
+      uiState.isInfraBusy &&
+        uiState.kvNamespaces.isEmpty() &&
+        uiState.d1Databases.isEmpty() &&
+        uiState.r2Buckets.isEmpty() &&
+        uiState.queues.isEmpty() &&
+        uiState.zones.isEmpty()
+
     Column(
       modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
       verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-      when (subTab) {
+      if (isColdInfraLoading && subTab != InfraSubTab.BINDINGS) {
+        EdgeSkeletonInfraCards(count = 3)
+      } else when (subTab) {
         InfraSubTab.BINDINGS ->
           BindingsSection(
             uiState = uiState,
@@ -578,13 +589,14 @@ private fun KvSection(
       onDismissRequest = { showBulkImportDialog = false },
       title = { Text("Bulk Import KV Entries (JSON)") },
       text = {
-        OutlinedTextField(
+        EdgeSharedTextEditor(
+          surfaceKey = "kv_bulk_import_json",
           value = bulkJson,
           onValueChange = { bulkJson = it },
-          label = { Text("JSON Array or Key-Value Object") },
-          maxLines = 8,
-          shape = RoundedCornerShape(12.dp),
-          modifier = Modifier.fillMaxWidth().testTag("kv_bulk_json_input"),
+          label = "JSON Array or Key-Value Object",
+          language = WorkerLanguage.JSON,
+          height = 180.dp,
+          testTagName = "kv_bulk_json_input",
         )
       },
       confirmButton = {
@@ -681,18 +693,29 @@ private fun KvSection(
     }
 
     uiState.selectedKvKeyValue?.let { (k, v) ->
-      Surface(color = palette.activePillBg, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-        SelectionContainer {
-          Column(modifier = Modifier.padding(10.dp)) {
-            Text(k, style = MaterialTheme.typography.labelMedium, color = palette.activePillFg, fontWeight = FontWeight.Bold)
-            Text(v, style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
-          }
-        }
+      Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+        Text(k, style = MaterialTheme.typography.labelMedium, color = palette.activePillFg, fontWeight = FontWeight.Bold)
+        EdgeSharedTextEditor(
+          surfaceKey = "kv_inspect_${k.hashCode()}",
+          value = v,
+          onValueChange = {},
+          language = detectSharedEditorLanguage(v),
+          readOnly = true,
+          height = 112.dp,
+        )
       }
     }
 
     OutlinedTextField(value = kvKey, onValueChange = { kvKey = it }, label = { Text("Put KV Key") }, singleLine = true, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
-    OutlinedTextField(value = kvVal, onValueChange = { kvVal = it }, label = { Text("Value") }, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
+    EdgeSharedTextEditor(
+      surfaceKey = "kv_put_value",
+      value = kvVal,
+      onValueChange = { kvVal = it },
+      label = "Value",
+      placeholder = "String or JSON payload...",
+      language = detectSharedEditorLanguage(kvVal),
+      height = 108.dp,
+    )
     OutlinedTextField(value = kvTtlInput, onValueChange = { kvTtlInput = it.filter { ch -> ch.isDigit() } }, label = { Text("Optional TTL (seconds >= 60)") }, singleLine = true, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
     FilledTonalButton(
       onClick = {
@@ -797,38 +820,38 @@ private fun D1Section(
         FilledTonalButton(onClick = { onBindD1(d1BindVar.trim(), db) }, enabled = d1BindVar.isNotBlank()) { Text("Bind") }
       }
     }
-    OutlinedTextField(
+    EdgeSharedTextEditor(
+      surfaceKey = "d1_sql_console_${db.uuid}",
       value = sqlInput,
       onValueChange = { sqlInput = it },
-      label = { Text("SQL Console (${db.name})") },
-      maxLines = 4,
-      shape = RoundedCornerShape(12.dp),
-      modifier = Modifier.fillMaxWidth(),
+      label = "SQL Console (${db.name})",
+      placeholder = "SELECT * FROM table_name LIMIT 25;",
+      language = WorkerLanguage.CONFIG,
+      height = 128.dp,
     )
     FilledTonalButton(onClick = { onRunSql(db.uuid, sqlInput) }, enabled = sqlInput.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
       Text("Execute SQL Query")
     }
     if (uiState.d1QueryResults.isNotEmpty()) {
-      SelectionContainer {
-        Surface(color = palette.editorBg, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) {
-          Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            uiState.d1QueryResults.forEach { res ->
-              Text(
-                text = "Rows: ${res.results.size} • ${res.meta?.duration?.let { "%.2fms".format(it) } ?: ""}",
-                style = MaterialTheme.typography.labelSmall,
-                color = palette.activePillFg,
-              )
-              res.results.take(25).forEach { row ->
-                Text(
-                  text = row.toString(),
-                  style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMono),
-                  color = palette.textPrimary,
-                )
-              }
+      val formattedResults =
+        remember(uiState.d1QueryResults) {
+          buildString {
+            uiState.d1QueryResults.forEachIndexed { idx, res ->
+              if (idx > 0) appendLine()
+              val dur = res.meta?.duration?.let { " (%.2fms)".format(it) }.orEmpty()
+              appendLine("-- Result ${idx + 1}: ${res.results.size} rows$dur")
+              res.results.take(50).forEach { row -> appendLine(row.toString()) }
             }
-          }
+          }.trimEnd()
         }
-      }
+      EdgeSharedTextEditor(
+        surfaceKey = "d1_results_${db.uuid}_${uiState.d1QueryResults.hashCode()}",
+        value = formattedResults,
+        onValueChange = {},
+        language = WorkerLanguage.JSON,
+        readOnly = true,
+        height = 168.dp,
+      )
     }
   }
 }

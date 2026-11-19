@@ -108,10 +108,12 @@ import com.example.ui.components.CloudflarePagesPanel
 import com.example.ui.components.EdgeBottomDock
 import com.example.ui.components.EdgeBottomDockItem
 import com.example.ui.components.EdgeLoadingIndicator
+import com.example.ui.components.EdgeSkeletonProjectList
 import com.example.ui.components.GitHubAndDiffPanel
 import com.example.ui.components.IconRevealButton
 import com.example.ui.components.NewWorkerDialog
 import com.example.ui.components.RenameWorkerDialog
+import com.example.ui.components.UnsavedChangesWarningDialog
 import com.example.ui.components.ZipImportPreviewDialog
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
@@ -268,6 +270,16 @@ fun HomeScreen(
     }
   }
 
+  uiState.pendingUnsavedWarning?.let { warning ->
+    UnsavedChangesWarningDialog(
+      warning = warning,
+      onKeepDraft = viewModel::resolveUnsavedWarningKeepDraft,
+      onDeployNow = viewModel::resolveUnsavedWarningDeployNow,
+      onDiscard = viewModel::resolveUnsavedWarningDiscard,
+      onDismiss = viewModel::dismissUnsavedWarning,
+    )
+  }
+
   pendingDeleteCloudWorker?.let { scriptName ->
     AlertDialog(
       onDismissRequest = { pendingDeleteCloudWorker = null },
@@ -375,6 +387,7 @@ fun HomeScreen(
           viewModel.setShowHomeGitHubHub(true)
         },
         onClearAutoSavedDrafts = viewModel::clearAllAutoSavedDrafts,
+        onClearApiCache = viewModel::clearApiResponseCache,
         onRequestStorageAccess = requestStorageAccess,
         onPickEditorBackgroundImage = viewModel::setCustomEditorBackground,
         onClearEditorBackgroundImage = viewModel::clearCustomEditorBackground,
@@ -809,7 +822,7 @@ fun HomeScreen(
             ) {
               CloudflareInfraPanel(
                 uiState = uiState,
-                onRefreshInfra = viewModel::loadCloudflareInfra,
+                onRefreshInfra = { viewModel.loadCloudflareInfra(forceRefresh = true) },
                 onToggleWorkersDev = viewModel::toggleWorkersDev,
                 onUpdateCompat = viewModel::updateCompatibilitySettings,
                 onAddCronSchedule = viewModel::addCronSchedule,
@@ -1280,19 +1293,7 @@ private fun HomeProjectsTabContent(
 
       if (cloudWorkers.isEmpty() && uiState.isLoadingWorkers) {
         item(key = "cf_loading") {
-          Surface(
-            color = palette.chromeSurface,
-            shape = RoundedCornerShape(if (isV2) 24.dp else 14.dp),
-            border = if (isV2) null else rememberGlassBorderStroke(0.75.dp),
-            modifier = Modifier.fillMaxWidth(),
-          ) {
-            Box(
-              modifier = Modifier.fillMaxWidth().padding(vertical = 26.dp),
-              contentAlignment = Alignment.Center,
-            ) {
-              EdgeLoadingIndicator(size = 34.dp)
-            }
-          }
+          EdgeSkeletonProjectList(count = 4)
         }
       } else if (cloudWorkers.isEmpty() && !uiState.isLoadingWorkers) {
         item(key = "cf_empty") {

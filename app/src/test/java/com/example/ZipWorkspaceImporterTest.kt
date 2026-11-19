@@ -151,4 +151,63 @@ class ZipWorkspaceImporterTest {
     val read = ZipWorkspaceImporter.readZipStream(ByteArrayInputStream(binaryOnlyZip), "pics.zip").getOrThrow()
     assertTrue(ZipWorkspaceImporter.buildImportPlan(read, stripCommonRootFolder = true).isFailure)
   }
+
+  @Test
+  fun supportsDefault500MiBCeilingAndDiskStreamedExtractionOver25MiB() {
+    assertEquals(500L * 1024L * 1024L, ZipWorkspaceImporter.DEFAULT_MAX_ARCHIVE_BYTES)
+    assertEquals(500L * 1024L * 1024L, ZipWorkspaceImporter.DEFAULT_MAX_FILE_BYTES)
+
+    // Create a highly-compressible 28 MiB binary entry (compresses to ~30 KB in ZIP) + normal source file
+    val stagingDir = kotlin.io.path.createTempDirectory("edgecode_zip_stream_test").toFile()
+    try {
+      val zipFile = java.io.File(stagingDir, "large_archive.zip")
+      val chunk = ByteArray(64 * 1024) { 0x00 } // NUL-filled so highly compressible and detected as binary
+      java.io.FileOutputStream(zipFile).use { fos ->
+        ZipOutputStream(fos).use { zos ->
+          zos.putNextEntry(ZipEntry("proj/index.js"))
+          zos.write("export default { fetch() { return new Response('ok'); } };".toByteArray())
+          zos.closeEntry()
+
+          zos.putNextEntry(ZipEntry("proj/media/large_video.bin"))
+          repeat(448) { zos.write(chunk) } // 448 * 64 KiB = 28 MiB (> old 25 MiB limit!)
+          zos.closeEntry()
+        }
+      }
+
+      val extractDir = java.io.File(stagingDir, "extracted")
+      val readResult =
+        java.io.FileInputStream(zipFile).use { fis ->
+          ZipWorkspaceImporter.readZipStream(
+            input = fis,
+            archiveName = "large_archive.zip",
+            stagingDir = extractDir,
+          ).getOrThrow()
+        }
+      assertTrue(readResult.totalArchiveBytes > 25L * 1024L * 1024L)
+      assertEquals(2, readResult.rawAssets.size)
+      val bigAsset = readResult.rawAssets.first { it.relativePath.endsWith("large_video.bin") }
+      assertEquals(28L * 1024L * 1024L, bigAsset.byteSize)
+      assertNotNull(bigAsset.diskFile)
+      assertTrue(bigAsset.bytes.isEmpty()) // Zero heap retention for disk-streamed assets
+
+      val plan = ZipWorkspaceImporter.buildImportPlan(readResult, stripCommonRootFolder = true).getOrThrow()
+      assertEquals(1, plan.files.size)
+      assertEquals("index.js", plan.entryModulePath)
+      assertEquals(listOf("media/large_video.bin"), plan.skippedBinaryFiles)
+
+      // Verify cumulative archive ceiling is enforced cleanly
+      val cappedResult =
+        java.io.FileInputStream(zipFile).use { fis ->
+          ZipWorkspaceImporter.readZipStream(
+            input = fis,
+            archiveName = "large_archive.zip",
+            maxTotalBytes = 10L * 1024L * 1024L,
+            stagingDir = java.io.File(stagingDir, "extracted_capped"),
+          )
+        }
+      assertTrue(cappedResult.isFailure)
+    } finally {
+      stagingDir.deleteRecursively()
+    }
+  }
 }

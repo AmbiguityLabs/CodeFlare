@@ -308,4 +308,41 @@ class SettingsAndPreferencesTest {
       assertEquals(mode, loaded.iconLabelBehavior)
     }
   }
+
+  @Test
+  fun unifiedEditorApiCacheTtlAndUnsavedWarningPrefsPersistAndClampCleanly() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val store = AuthPreferencesStore(context)
+
+    val defaults = EditorSettings()
+    assertTrue(defaults.useUnifiedEditorEverywhere)
+    assertEquals(4, defaults.apiCacheTtlHours)
+    assertTrue(defaults.warnOnCloseDirtyTab)
+    assertTrue(defaults.warnOnLeaveDirtyWorkspace)
+    assertTrue(defaults.warnOnCloudOverwrite)
+
+    store.updateEditorSettings {
+      it.copy(
+        useUnifiedEditorEverywhere = false,
+        apiCacheTtlHours = 0, // Manual Only
+        warnOnCloseDirtyTab = false,
+        warnOnLeaveDirtyWorkspace = true,
+        warnOnCloudOverwrite = false,
+      )
+    }
+    val manual = store.editorSettingsFlow.first()
+    assertFalse(manual.useUnifiedEditorEverywhere)
+    assertEquals(0, manual.apiCacheTtlHours)
+    assertFalse(manual.warnOnCloseDirtyTab)
+    assertTrue(manual.warnOnLeaveDirtyWorkspace)
+    assertFalse(manual.warnOnCloudOverwrite)
+
+    store.updateEditorSettings { it.copy(apiCacheTtlHours = 999) }
+    val clampedHigh = store.editorSettingsFlow.first()
+    assertEquals(24, clampedHigh.apiCacheTtlHours)
+
+    store.updateEditorSettings { it.copy(apiCacheTtlHours = -5) }
+    val clampedLow = store.editorSettingsFlow.first()
+    assertEquals(0, clampedLow.apiCacheTtlHours)
+  }
 }

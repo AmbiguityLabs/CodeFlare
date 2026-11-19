@@ -75,6 +75,7 @@ class MainActivity : ComponentActivity() {
           ),
         selectionDragConfig = uiState.editorSettings.selectionDragConfig,
         iconLabelBehavior = uiState.editorSettings.iconLabelBehavior,
+        editorSettings = uiState.editorSettings,
       ) {
         when {
           uiState.isBootstrapping -> {

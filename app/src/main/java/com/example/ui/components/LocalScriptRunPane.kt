@@ -71,6 +71,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.data.remote.WorkerLanguage
 import com.example.editor.LocalWorkspacePreviewRenderer
 import com.example.editor.SyntaxHighlighter
 import com.example.editor.drag.SmartDraggableText
@@ -326,27 +327,15 @@ fun LocalScriptRunPane(
         }
 
         AnimatedVisibility(visible = showBodyEditor) {
-          val bodyShape = RoundedCornerShape(8.dp)
-          OutlinedTextField(
+          EdgeSharedTextEditor(
+            surfaceKey = "local_cli_request_body",
             value = uiState.localRunBody,
             onValueChange = onBodyChange,
-            label = { Text("Request Body") },
-            textStyle = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
-            minLines = 2,
-            maxLines = 5,
-            shape = bodyShape,
-            modifier =
-              Modifier
-                .fillMaxWidth()
-                .padding(start = 8.dp, end = 8.dp, bottom = 6.dp)
-                .edgeTextDropTarget(
-                  targetSurfaceId = "CLI Body",
-                  currentValue = uiState.localRunBody,
-                  onValueChange = onBodyChange,
-                  singleLine = false,
-                  shape = bodyShape,
-                  onDropFeedback = onNotifyStatus,
-                ),
+            label = "Request Body",
+            placeholder = "{\"hello\": \"local\"}",
+            language = detectSharedEditorLanguage(uiState.localRunBody, fallback = WorkerLanguage.JSON),
+            height = 116.dp,
+            modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 6.dp),
           )
         }
       }
@@ -598,37 +587,19 @@ fun LocalScriptRunPane(
       when (resultViewTab) {
         0 -> {
           if (result.errorMessage != null) {
-            val highlightedErr =
-              remember(result.errorMessage, palette) {
-                SyntaxHighlighter.highlightResponse(result.errorMessage, null, palette)
-              }
-            val highlightedWithSearch =
-              remember(highlightedErr, result.errorMessage, outputSearchMatches, palette) {
-                applySearchMatchHighlight(
-                  base = highlightedErr,
-                  plainText = result.errorMessage,
-                  matches = outputSearchMatches,
-                  matchBg = palette.searchMatchBg,
-                  matchFg = palette.textPrimary,
-                )
-              }
-            Box(
-              modifier =
-                Modifier
-                  .fillMaxSize()
-                  .verticalScroll(rememberScrollState())
-                  .padding(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 72.dp),
-            ) {
-              SmartDraggableText(
-                text = result.errorMessage,
-                annotatedText = highlightedWithSearch,
-                surfaceId = "cli_error_output",
-                domain = SmartTextDomain.TERMINAL_OR_LOG,
-                style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 17.sp),
-                color = RoseError,
-                onCopied = { onNotifyStatus("Copied error snippet") },
-              )
-            }
+            EdgeSharedTextEditor(
+              surfaceKey = "cli_error_output_${result.entryPath.hashCode()}",
+              value = result.errorMessage,
+              onValueChange = {},
+              language = WorkerLanguage.TEXT,
+              readOnly = true,
+              wordWrap = wrapOutput,
+              height = null,
+              findMatches = outputSearchMatches,
+              isErrorText = true,
+              onCopiedFallback = { onNotifyStatus("Copied error snippet") },
+              modifier = Modifier.fillMaxSize().padding(bottom = 64.dp),
+            )
           } else if (result.isHtmlBody) {
             val baseEntryUrl =
               remember(result.entryPath) {
@@ -674,44 +645,20 @@ fun LocalScriptRunPane(
           } else {
             val displayText = result.body.ifEmpty { "(empty)" }
             val ctype = result.headers["content-type"]
-            val annotatedOutput =
-              remember(displayText, ctype, palette) {
-                SyntaxHighlighter.highlightResponse(displayText, ctype, palette)
-              }
-            val highlightedWithSearch =
-              remember(annotatedOutput, displayText, outputSearchMatches, palette) {
-                applySearchMatchHighlight(
-                  base = annotatedOutput,
-                  plainText = displayText,
-                  matches = outputSearchMatches,
-                  matchBg = palette.searchMatchBg,
-                  matchFg = palette.textPrimary,
-                )
-              }
-            val trimmedBody = displayText.trimStart()
-            val domain =
-              if (trimmedBody.startsWith("{") || trimmedBody.startsWith("[")) {
-                SmartTextDomain.JSON
-              } else {
-                SmartTextDomain.TERMINAL_OR_LOG
-              }
-            val baseMod =
-              Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .let { if (wrapOutput) it else it.horizontalScroll(rememberScrollState()) }
-                .padding(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 72.dp)
-            Box(modifier = baseMod) {
-              SmartDraggableText(
-                text = displayText,
-                annotatedText = highlightedWithSearch,
-                surfaceId = "cli_body_output",
-                domain = domain,
-                style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 17.sp),
-                color = palette.textPrimary,
-                onCopied = { onNotifyStatus("Copied output snippet") },
-              )
-            }
+            val detectedLang = remember(displayText, ctype) { detectSharedEditorLanguage(displayText, ctype) }
+            EdgeSharedTextEditor(
+              surfaceKey = "cli_body_output_${result.entryPath.hashCode()}_${result.statusCode}",
+              value = displayText,
+              onValueChange = {},
+              language = detectedLang,
+              readOnly = true,
+              wordWrap = wrapOutput,
+              height = null,
+              findMatches = outputSearchMatches,
+              contentTypeHint = ctype,
+              onCopiedFallback = { onNotifyStatus("Copied output snippet") },
+              modifier = Modifier.fillMaxSize().padding(bottom = 64.dp),
+            )
           }
         }
 

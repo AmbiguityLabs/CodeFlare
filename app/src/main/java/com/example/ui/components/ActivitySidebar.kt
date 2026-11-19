@@ -1016,11 +1016,9 @@ private fun ExplorerPanel(
           }
         }
 
-        if (uiState.isLoadingWorkers) {
+        if (uiState.isLoadingWorkers && uiState.workers.isEmpty()) {
           item {
-            Box(modifier = Modifier.fillMaxWidth().padding(18.dp), contentAlignment = Alignment.Center) {
-              EdgeLoadingIndicator(size = 24.dp)
-            }
+            EdgeSkeletonCompactRows(count = 5)
           }
         } else {
           items(uiState.workers, key = { "cf_${it.id}" }) { script ->

@@ -5,7 +5,11 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.InputStream
+import java.util.UUID
 import java.util.zip.ZipInputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -17,22 +21,66 @@ data class PickedDeviceFile(
 
 data class RawPickedAsset(
   val relativePath: String,
-  val bytes: ByteArray,
+  val bytes: ByteArray = ByteArray(0),
+  val diskFile: File? = null,
+  val byteSize: Long = diskFile?.length() ?: bytes.size.toLong(),
 ) {
+  fun readBytes(): ByteArray =
+    diskFile?.let { file -> if (file.exists()) file.readBytes() else bytes } ?: bytes
+
+  fun readSampleBytes(maxLen: Int = 4096): ByteArray {
+    val file = diskFile
+    if (file != null && file.exists()) {
+      val len = file.length().coerceAtMost(maxLen.toLong()).toInt()
+      if (len <= 0) return ByteArray(0)
+      val buf = ByteArray(len)
+      FileInputStream(file).use { fis ->
+        var offset = 0
+        while (offset < len) {
+          val n = fis.read(buf, offset, len - offset)
+          if (n <= 0) break
+          offset += n
+        }
+        return if (offset == len) buf else buf.copyOf(offset)
+      }
+    }
+    return if (bytes.size <= maxLen) bytes else bytes.copyOf(maxLen)
+  }
+
   override fun equals(other: Any?): Boolean {
     if (this === other) return true
     if (other !is RawPickedAsset) return false
-    return relativePath == other.relativePath && bytes.contentEquals(other.bytes)
+    return relativePath == other.relativePath &&
+      byteSize == other.byteSize &&
+      diskFile?.absolutePath == other.diskFile?.absolutePath &&
+      bytes.contentEquals(other.bytes)
   }
 
-  override fun hashCode(): Int = 31 * relativePath.hashCode() + bytes.contentHashCode()
+  override fun hashCode(): Int {
+    var result = relativePath.hashCode()
+    result = 31 * result + byteSize.hashCode()
+    result = 31 * result + (diskFile?.absolutePath?.hashCode() ?: 0)
+    result = 31 * result + bytes.contentHashCode()
+    return result
+  }
 }
 
 object DeviceFileHelper {
-  private const val MAX_PAGES_FILE_BYTES = 25L * 1024L * 1024L
-  private const val MAX_PAGES_ASSET_COUNT = 2000
+  const val MAX_ZIP_ARCHIVE_BYTES = 500L * 1024L * 1024L
+  const val CLOUDFLARE_PAGES_MAX_SINGLE_FILE_BYTES = 25L * 1024L * 1024L
+  const val CLOUDFLARE_WORKER_MAX_UNCOMPRESSED_BYTES = 64L * 1024L * 1024L
+  private const val MAX_PAGES_ASSET_COUNT = 20_000
+  private const val STREAM_BUFFER_BYTES = 64 * 1024
   private val IGNORED_SEGMENTS = setOf(".git", "node_modules", ".wrangler", "__MACOSX")
   private val IGNORED_FILES = setOf(".DS_Store", "Thumbs.db", "desktop.ini")
+
+  private fun prepareFreshStagingDir(context: Context, bucket: String): File {
+    val parent = File(context.cacheDir, bucket)
+    parent.mkdirs()
+    // Clean up older staging snapshots so disk cache never accumulates unboundedly
+    parent.listFiles()?.forEach { child -> runCatching { child.deleteRecursively() } }
+    return File(parent, UUID.randomUUID().toString()).apply { mkdirs() }
+  }
 
   suspend fun readFiles(context: Context, uris: List<Uri>): List<PickedDeviceFile> =
     withContext(Dispatchers.IO) {
@@ -59,8 +107,9 @@ object DeviceFileHelper {
           val rawName = resolveDisplayName(context, uri).trimStart('/')
           if (rawName.isBlank() || IGNORED_FILES.contains(rawName)) continue
           val bytes =
-            context.contentResolver.openInputStream(uri)?.use { input -> readStreamBytes(input, MAX_PAGES_FILE_BYTES) }
-              ?: continue
+            context.contentResolver.openInputStream(uri)?.use { input ->
+              readStreamBytes(input, MAX_ZIP_ARCHIVE_BYTES)
+            } ?: continue
           val uniqueName =
             if (usedNames.add(rawName)) rawName
             else "${rawName.substringBeforeLast('.')}_${usedNames.size}.${rawName.substringAfterLast('.', "")}"
@@ -108,16 +157,16 @@ object DeviceFileHelper {
               if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
                 walk(docId, relPath)
               } else {
-                if (reportedSize > MAX_PAGES_FILE_BYTES) {
-                  error("File '$relPath' exceeds Cloudflare Pages 25 MiB per-file limit")
+                if (reportedSize > MAX_ZIP_ARCHIVE_BYTES) {
+                  error("File '$relPath' exceeds 500 MiB local staging limit")
                 }
                 val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
                 val bytes =
-                  resolver.openInputStream(docUri)?.use { input -> readStreamBytes(input, MAX_PAGES_FILE_BYTES) }
+                  resolver.openInputStream(docUri)?.use { input -> readStreamBytes(input, MAX_ZIP_ARCHIVE_BYTES) }
                     ?: continue
                 collected.add(RawPickedAsset(relPath, bytes))
                 if (collected.size >= MAX_PAGES_ASSET_COUNT) {
-                  error("Folder exceeds $MAX_PAGES_ASSET_COUNT files limit for mobile upload")
+                  error("Folder exceeds $MAX_PAGES_ASSET_COUNT files limit for upload")
                 }
               }
             }
@@ -137,9 +186,14 @@ object DeviceFileHelper {
   ): Result<List<RawPickedAsset>> =
     withContext(Dispatchers.IO) {
       runCatching {
+        val stagingRoot = prepareFreshStagingDir(context, "pages_zip_staging")
+        val canonicalRoot = stagingRoot.canonicalPath + File.separator
         val rawEntries = mutableListOf<RawPickedAsset>()
+        var totalExtractedBytes = 0L
+        val chunk = ByteArray(STREAM_BUFFER_BYTES)
+
         context.contentResolver.openInputStream(zipUri)?.use { baseStream ->
-          ZipInputStream(baseStream.buffered()).use { zis ->
+          ZipInputStream(baseStream.buffered(STREAM_BUFFER_BYTES)).use { zis ->
             while (true) {
               val entry = zis.nextEntry ?: break
               try {
@@ -154,11 +208,32 @@ object DeviceFileHelper {
                     cleanSegments.any { it in IGNORED_SEGMENTS } ||
                       cleanSegments.lastOrNull() in IGNORED_FILES
                   if (!hasTraversal && !hasIgnored && cleanSegments.isNotEmpty()) {
-                    if (entry.size > MAX_PAGES_FILE_BYTES) {
-                      error("ZIP entry '${entry.name}' exceeds Cloudflare Pages 25 MiB limit")
+                    val relPath = cleanSegments.joinToString("/")
+                    val targetFile = File(stagingRoot, relPath)
+                    if (!targetFile.canonicalPath.startsWith(canonicalRoot)) {
+                      continue
                     }
-                    val bytes = readStreamBytes(zis, MAX_PAGES_FILE_BYTES)
-                    rawEntries.add(RawPickedAsset(cleanSegments.joinToString("/"), bytes))
+                    targetFile.parentFile?.mkdirs()
+                    var entryBytes = 0L
+                    FileOutputStream(targetFile).use { fos ->
+                      while (true) {
+                        val read = zis.read(chunk)
+                        if (read <= 0) break
+                        entryBytes += read
+                        totalExtractedBytes += read
+                        if (totalExtractedBytes > MAX_ZIP_ARCHIVE_BYTES) {
+                          error("ZIP archive exceeds 500 MiB uncompressed limit")
+                        }
+                        fos.write(chunk, 0, read)
+                      }
+                    }
+                    rawEntries.add(
+                      RawPickedAsset(
+                        relativePath = relPath,
+                        diskFile = targetFile,
+                        byteSize = entryBytes,
+                      ),
+                    )
                     if (rawEntries.size >= MAX_PAGES_ASSET_COUNT) {
                       error("ZIP archive exceeds $MAX_PAGES_ASSET_COUNT files limit")
                     }
@@ -220,8 +295,15 @@ object DeviceFileHelper {
     withContext(Dispatchers.IO) {
       runCatching {
         val archiveName = resolveDisplayName(context, zipUri)
+        val stagingRoot = prepareFreshStagingDir(context, "workspace_zip_staging")
         context.contentResolver.openInputStream(zipUri)?.use { stream ->
-          ZipWorkspaceImporter.readZipStream(stream, archiveName).getOrThrow()
+          ZipWorkspaceImporter.readZipStream(
+            input = stream,
+            archiveName = archiveName,
+            maxFileBytes = MAX_ZIP_ARCHIVE_BYTES,
+            maxTotalBytes = MAX_ZIP_ARCHIVE_BYTES,
+            stagingDir = stagingRoot,
+          ).getOrThrow()
         } ?: error("Unable to open ZIP archive")
       }
     }
@@ -381,7 +463,7 @@ object DeviceFileHelper {
           } else if (child.isFile && child.canRead()) {
             if (ExternalIntentExtractor.isBlockedAppOrExecutable(name, null)) continue
             val len = child.length()
-            if (len < 0L || len > MAX_PAGES_FILE_BYTES) continue
+            if (len < 0L || len > CLOUDFLARE_PAGES_MAX_SINGLE_FILE_BYTES) continue
             if (totalBytes + len > maxTotalBytes) continue
             val bytes = runCatching { child.readBytes() }.getOrNull() ?: continue
             totalBytes += bytes.size

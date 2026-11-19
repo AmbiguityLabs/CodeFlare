@@ -486,25 +486,15 @@ fun WorkerTestWindow(
           Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
           if (requestSectionTab == 0) {
             if (rawHeadersMode) {
-              OutlinedTextField(
+              EdgeSharedTextEditor(
+                surfaceKey = "worker_test_headers_json",
                 value = uiState.previewHttpHeadersJson,
                 onValueChange = onHeadersJsonChange,
-                label = { Text("Headers JSON") },
-                textStyle = TextStyle(fontFamily = JetBrainsMono, fontSize = 12.sp),
-                maxLines = 5,
-                shape = RoundedCornerShape(10.dp),
-                modifier =
-                  Modifier
-                    .fillMaxWidth()
-                    .edgeTextDropTarget(
-                      targetSurfaceId = "Headers JSON",
-                      currentValue = uiState.previewHttpHeadersJson,
-                      onValueChange = onHeadersJsonChange,
-                      singleLine = false,
-                      shape = RoundedCornerShape(10.dp),
-                      onDropFeedback = onNotifyStatus,
-                    )
-                    .testTag("worker_test_headers_json_input"),
+                label = "Headers JSON",
+                placeholder = "{\"Content-Type\": \"application/json\"}",
+                language = WorkerLanguage.JSON,
+                height = 132.dp,
+                testTagName = "worker_test_headers_json_input",
               )
             } else {
               Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -633,26 +623,14 @@ fun WorkerTestWindow(
               }
             }
           } else {
-            OutlinedTextField(
+            EdgeSharedTextEditor(
+              surfaceKey = "worker_test_request_body",
               value = uiState.previewHttpBody,
               onValueChange = onBodyChange,
-              placeholder = { Text("{\"hello\": \"cloudflare\"}") },
-              textStyle = TextStyle(fontFamily = JetBrainsMono, fontSize = 12.sp),
-              minLines = 3,
-              maxLines = 7,
-              shape = RoundedCornerShape(10.dp),
-              modifier =
-                Modifier
-                  .fillMaxWidth()
-                  .edgeTextDropTarget(
-                    targetSurfaceId = "Request Body",
-                    currentValue = uiState.previewHttpBody,
-                    onValueChange = onBodyChange,
-                    singleLine = false,
-                    shape = RoundedCornerShape(10.dp),
-                    onDropFeedback = onNotifyStatus,
-                  )
-                  .testTag("worker_test_body_input"),
+              placeholder = "{\"hello\": \"cloudflare\"}",
+              language = detectSharedEditorLanguage(uiState.previewHttpBody, fallback = WorkerLanguage.JSON),
+              height = 148.dp,
+              testTagName = "worker_test_body_input",
             )
             if (activeMethod in listOf("GET", "HEAD")) {
               Row(
@@ -1037,47 +1015,25 @@ fun WorkerTestWindow(
                   )
                 }
                 else -> {
-                  val domain =
-                    if (res.errorMessage == null && (formatBadge == "JSON" || formatBadge == "HTML" || formatBadge == "JS")) {
-                      SmartTextDomain.JSON
-                    } else {
-                      SmartTextDomain.TERMINAL_OR_LOG
+                  val detectedLang =
+                    remember(displayBody, contentTypeHint, res.errorMessage) {
+                      if (res.errorMessage != null) WorkerLanguage.TEXT
+                      else detectSharedEditorLanguage(displayBody, contentTypeHint)
                     }
-                  val syntaxHighlighted =
-                    remember(displayBody, contentTypeHint, palette, res.errorMessage) {
-                      if (res.errorMessage != null || displayBody == "(empty response body)") {
-                        null
-                      } else {
-                        SyntaxHighlighter.highlightResponse(displayBody, contentTypeHint, palette)
-                      }
-                    }
-                  val highlightedWithSearch =
-                    remember(syntaxHighlighted, displayBody, activeSearchMatches, palette) {
-                      applySearchMatchHighlight(
-                        base = syntaxHighlighted,
-                        plainText = displayBody,
-                        matches = activeSearchMatches,
-                        matchBg = palette.searchMatchBg,
-                        matchFg = palette.textPrimary,
-                      )
-                    }
-                  val bodyModifier =
-                    if (wrapResponse) {
-                      Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(10.dp)
-                    } else {
-                      Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()).padding(10.dp)
-                    }
-                  Box(modifier = bodyModifier) {
-                    SmartDraggableText(
-                      text = displayBody,
-                      annotatedText = highlightedWithSearch,
-                      surfaceId = "worker_res_body",
-                      domain = domain,
-                      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 16.sp),
-                      color = if (res.errorMessage != null) RoseError else palette.textPrimary,
-                      onCopied = { onNotifyStatus("Copied response snippet") },
-                    )
-                  }
+                  EdgeSharedTextEditor(
+                    surfaceKey = "worker_res_body_${res.url.hashCode()}_${prettyJson}",
+                    value = displayBody,
+                    onValueChange = {},
+                    language = detectedLang,
+                    readOnly = true,
+                    wordWrap = wrapResponse,
+                    showLineNumbers = false,
+                    height = if (responseExpanded) 460.dp else 280.dp,
+                    findMatches = activeSearchMatches,
+                    contentTypeHint = contentTypeHint,
+                    isErrorText = res.errorMessage != null,
+                    onCopiedFallback = { onNotifyStatus("Copied response snippet") },
+                  )
                 }
               }
             }

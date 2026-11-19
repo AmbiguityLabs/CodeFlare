@@ -158,6 +158,7 @@ import com.example.ui.components.RenameFileDialog
 import com.example.ui.components.RenameWorkerDialog
 import com.example.ui.components.SmartRenameSymbolDialog
 import com.example.ui.components.WorkerTestWindow
+import com.example.ui.components.UnsavedChangesWarningDialog
 import com.example.ui.components.ZipImportPreviewDialog
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
@@ -366,6 +367,16 @@ fun IdeWorkspaceScreen(
     }
   }
 
+  uiState.pendingUnsavedWarning?.let { warning ->
+    UnsavedChangesWarningDialog(
+      warning = warning,
+      onKeepDraft = viewModel::resolveUnsavedWarningKeepDraft,
+      onDeployNow = viewModel::resolveUnsavedWarningDeployNow,
+      onDiscard = viewModel::resolveUnsavedWarningDiscard,
+      onDismiss = viewModel::dismissUnsavedWarning,
+    )
+  }
+
   if (showRenameWorkerDialog) {
     uiState.workspace?.let { ws ->
       val effectiveSub = ws.accountSubdomain.ifBlank { uiState.accountSubdomain }
@@ -529,6 +540,7 @@ fun IdeWorkspaceScreen(
           showProjectGitModal = true
         },
         onClearAutoSavedDrafts = viewModel::clearAllAutoSavedDrafts,
+        onClearApiCache = viewModel::clearApiResponseCache,
         onRequestStorageAccess = requestStorageAccess,
         onPickEditorBackgroundImage = viewModel::setCustomEditorBackground,
         onClearEditorBackgroundImage = viewModel::clearCustomEditorBackground,
@@ -1086,7 +1098,7 @@ fun IdeWorkspaceScreen(
                   ProjectMode.CONFIG -> {
                     CloudflareInfraPanel(
                       uiState = uiState,
-                      onRefreshInfra = viewModel::loadCloudflareInfra,
+                      onRefreshInfra = { viewModel.loadCloudflareInfra(forceRefresh = true) },
                       onToggleWorkersDev = viewModel::toggleWorkersDev,
                       onUpdateCompat = viewModel::updateCompatibilitySettings,
                       onAddCronSchedule = viewModel::addCronSchedule,

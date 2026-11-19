@@ -245,9 +245,7 @@ fun SmartDraggableText(
             addStyle(
               style =
                 SpanStyle(
-                  background = selColors.spanBg,
-                  color = selColors.spanFg,
-                  fontWeight = FontWeight.Bold,
+                  background = selColors.canvasFill.copy(alpha = if (palette.isDark) 0.28f else 0.22f),
                 ),
               start = safeStart,
               end = safeEnd,
@@ -426,26 +424,24 @@ fun SmartDraggableText(
         Surface(
           shape = RoundedCornerShape(10.dp),
           color = palette.chromeSurface,
-          border = BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.35f)),
-          shadowElevation = 6.dp,
+          border = BorderStroke(0.5.dp, palette.border.copy(alpha = if (isV2) 0.55f else 0.70f)),
+          shadowElevation = if (isV2) 2.dp else 4.dp,
           modifier =
             Modifier
               .onSizeChanged { popupSize = it }
               .testTag("smart_text_popup_$surfaceId"),
         ) {
           Row(
-            modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp),
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
           ) {
             if (showDragGrip) {
               Box(
                 modifier =
                   Modifier
-                    .height(28.dp)
+                    .size(28.dp)
                     .clip(RoundedCornerShape(7.dp))
-                    .background(EmeraldLive.copy(alpha = 0.14f))
-                    .border(0.5.dp, EmeraldLive.copy(alpha = 0.35f), RoundedCornerShape(7.dp))
                     .pointerInput(currentState, fullTextSelected) {
                       awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
@@ -453,35 +449,27 @@ fun SmartDraggableText(
                         launchReadOnlyDrag(currentState, fullTextSelected)
                       }
                     }
-                    .padding(horizontal = 7.dp)
                     .testTag("smart_text_drag_grip_$surfaceId"),
                 contentAlignment = Alignment.Center,
               ) {
                 Icon(
                   imageVector = Icons.Outlined.DragIndicator,
                   contentDescription = "Drag selected text",
-                  tint = EmeraldLive,
+                  tint = palette.textSecondary,
                   modifier = Modifier.size(15.dp),
                 )
               }
             }
 
             if (showScopeBadge) {
-              Box(
-                modifier =
-                  Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(palette.activePillBg)
-                    .padding(horizontal = 6.dp, vertical = 3.dp),
-              ) {
-                Text(
-                  text = if (fullTextSelected) "All" else currentScope.label,
-                  fontFamily = JetBrainsMono,
-                  fontSize = 10.sp,
-                  fontWeight = FontWeight.SemiBold,
-                  color = palette.activePillFg,
-                )
-              }
+              Text(
+                text = if (fullTextSelected) "All" else currentScope.label,
+                fontFamily = JetBrainsMono,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                color = palette.textSecondary,
+                modifier = Modifier.padding(horizontal = 5.dp),
+              )
             }
 
             if (showExpandShrink) {

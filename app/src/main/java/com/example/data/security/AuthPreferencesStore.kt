@@ -345,6 +345,11 @@ data class EditorSettings(
   val homeMenuStyle: PopupMenuStyleConfig = PopupMenuStyleConfig.DEFAULT,
   val editorMenuStyle: PopupMenuStyleConfig = PopupMenuStyleConfig.DEFAULT,
   val selectionDragConfig: SelectionDragConfig = SelectionDragConfig.DEFAULT,
+  val useUnifiedEditorEverywhere: Boolean = true,
+  val apiCacheTtlHours: Int = 4,
+  val warnOnCloseDirtyTab: Boolean = true,
+  val warnOnLeaveDirtyWorkspace: Boolean = true,
+  val warnOnCloudOverwrite: Boolean = true,
 )
 
 class AuthPreferencesStore(private val context: Context) {
@@ -398,6 +403,11 @@ class AuthPreferencesStore(private val context: Context) {
     val HOME_MENU_STYLE = stringPreferencesKey("ui_home_menu_style")
     val EDITOR_MENU_STYLE = stringPreferencesKey("ui_editor_menu_style")
     val SELECTION_DRAG_CONFIG = stringPreferencesKey("editor_selection_drag_config")
+    val USE_UNIFIED_EDITOR_EVERYWHERE = booleanPreferencesKey("editor_use_unified_everywhere")
+    val API_CACHE_TTL_HOURS = intPreferencesKey("api_cache_ttl_hours")
+    val WARN_CLOSE_DIRTY_TAB = booleanPreferencesKey("warn_on_close_dirty_tab")
+    val WARN_LEAVE_DIRTY_WORKSPACE = booleanPreferencesKey("warn_on_leave_dirty_workspace")
+    val WARN_CLOUD_OVERWRITE = booleanPreferencesKey("warn_on_cloud_overwrite")
   }
 
   val credentialsFlow: Flow<StoredCredentials?> =
@@ -472,6 +482,11 @@ class AuthPreferencesStore(private val context: Context) {
         homeMenuStyle = PopupMenuStyleConfig.decode(prefs[Keys.HOME_MENU_STYLE], PopupMenuStyleConfig.DEFAULT),
         editorMenuStyle = PopupMenuStyleConfig.decode(prefs[Keys.EDITOR_MENU_STYLE], PopupMenuStyleConfig.DEFAULT),
         selectionDragConfig = SelectionDragConfig.decode(prefs[Keys.SELECTION_DRAG_CONFIG], SelectionDragConfig.DEFAULT),
+        useUnifiedEditorEverywhere = prefs[Keys.USE_UNIFIED_EDITOR_EVERYWHERE] ?: true,
+        apiCacheTtlHours = (prefs[Keys.API_CACHE_TTL_HOURS] ?: 4).coerceIn(0, 24),
+        warnOnCloseDirtyTab = prefs[Keys.WARN_CLOSE_DIRTY_TAB] ?: true,
+        warnOnLeaveDirtyWorkspace = prefs[Keys.WARN_LEAVE_DIRTY_WORKSPACE] ?: true,
+        warnOnCloudOverwrite = prefs[Keys.WARN_CLOUD_OVERWRITE] ?: true,
       )
     }
 
@@ -581,6 +596,11 @@ class AuthPreferencesStore(private val context: Context) {
       prefs[Keys.HOME_MENU_STYLE] = next.homeMenuStyle.encode()
       prefs[Keys.EDITOR_MENU_STYLE] = next.editorMenuStyle.encode()
       prefs[Keys.SELECTION_DRAG_CONFIG] = next.selectionDragConfig.encode()
+      prefs[Keys.USE_UNIFIED_EDITOR_EVERYWHERE] = next.useUnifiedEditorEverywhere
+      prefs[Keys.API_CACHE_TTL_HOURS] = next.apiCacheTtlHours.coerceIn(0, 24)
+      prefs[Keys.WARN_CLOSE_DIRTY_TAB] = next.warnOnCloseDirtyTab
+      prefs[Keys.WARN_LEAVE_DIRTY_WORKSPACE] = next.warnOnLeaveDirtyWorkspace
+      prefs[Keys.WARN_CLOUD_OVERWRITE] = next.warnOnCloudOverwrite
     }
   }
 }
