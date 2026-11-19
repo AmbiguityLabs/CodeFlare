@@ -42,6 +42,21 @@ enum class EditorThemePreset(
   }
 }
 
+enum class UiStyleVersion(
+  val key: String,
+  val label: String,
+) {
+  V1_DEFAULT("V1", "v1"),
+  V2_MINIMAL_OLED("V2", "v2"),
+  ;
+
+  companion object {
+    fun fromKey(raw: String?): UiStyleVersion =
+      entries.firstOrNull { it.key.equals(raw, ignoreCase = true) || it.name.equals(raw, ignoreCase = true) }
+        ?: V1_DEFAULT
+  }
+}
+
 // Built-in Editor Backdrop Presets (used alongside Custom Photo Picker background)
 enum class EditorBackgroundPreset(
   val key: String,
@@ -98,6 +113,7 @@ val RoseError = Color(0xFFFB7185)
 data class IdePalette(
   val isDark: Boolean,
   val preset: EditorThemePreset = EditorThemePreset.OLIVE_OBSIDIAN,
+  val uiStyle: UiStyleVersion = UiStyleVersion.V1_DEFAULT,
   val chromeBg: Color,
   val chromeSurface: Color,
   val chromePill: Color,
@@ -340,55 +356,127 @@ val LightIdePalette =
     syntaxOperator = Color(0xFF334155),
   )
 
-fun paletteFor(darkTheme: Boolean, preset: EditorThemePreset): IdePalette {
-  if (!darkTheme) {
-    return when (preset) {
-      EditorThemePreset.OLIVE_OBSIDIAN -> LightIdePalette
-      EditorThemePreset.SLATE_CARBON ->
-        LightIdePalette.copy(
-          preset = preset,
-          chromeBg = Color(0xFFF5F7FA),
-          chromePill = Color(0xFFE8EDF5),
-          activePillBg = Color(0xFFDBEAFE),
-          activePillFg = Color(0xFF1E40AF),
-          ctaBg = Color(0xFF2563EB),
-          border = Color(0xFFDCE3EE),
-          glassBorderHighlight = Color(0xFFD3DCEB),
-          glassBorderSubtle = Color(0xFFE2E8F0),
-          editorActiveLineBg = Color(0xFFEFF4FB),
-        )
-      EditorThemePreset.MIDNIGHT_NOIR ->
-        LightIdePalette.copy(
-          preset = preset,
-          chromeBg = Color(0xFFF7F6FA),
-          chromePill = Color(0xFFEDEBF4),
-          activePillBg = Color(0xFFEDE9FE),
-          activePillFg = Color(0xFF5B21B6),
-          ctaBg = Color(0xFF6D28D9),
-          border = Color(0xFFE2DFEE),
-          glassBorderHighlight = Color(0xFFD8D3EA),
-          glassBorderSubtle = Color(0xFFE8E5F2),
-          editorActiveLineBg = Color(0xFFF3F0FA),
-        )
-      EditorThemePreset.AMBER_DUSK ->
-        LightIdePalette.copy(
-          preset = preset,
-          chromeBg = Color(0xFFFAF7F4),
-          chromePill = Color(0xFFF2EAE1),
-          activePillBg = Color(0xFFFFEDD5),
-          activePillFg = Color(0xFF9A3412),
-          ctaBg = Color(0xFFD96B16),
-          border = Color(0xFFE8DED3),
-          glassBorderHighlight = Color(0xFFDFD2C4),
-          glassBorderSubtle = Color(0xFFECE3D9),
-          editorActiveLineBg = Color(0xFFFBF2E9),
-        )
+fun paletteFor(
+  darkTheme: Boolean,
+  preset: EditorThemePreset,
+  uiStyle: UiStyleVersion = UiStyleVersion.V1_DEFAULT,
+): IdePalette {
+  val basePalette =
+    if (!darkTheme) {
+      when (preset) {
+        EditorThemePreset.OLIVE_OBSIDIAN -> LightIdePalette
+        EditorThemePreset.SLATE_CARBON ->
+          LightIdePalette.copy(
+            preset = preset,
+            chromeBg = Color(0xFFF5F7FA),
+            chromePill = Color(0xFFE8EDF5),
+            activePillBg = Color(0xFFDBEAFE),
+            activePillFg = Color(0xFF1E40AF),
+            ctaBg = Color(0xFF2563EB),
+            border = Color(0xFFDCE3EE),
+            glassBorderHighlight = Color(0xFFD3DCEB),
+            glassBorderSubtle = Color(0xFFE2E8F0),
+            editorActiveLineBg = Color(0xFFEFF4FB),
+          )
+        EditorThemePreset.MIDNIGHT_NOIR ->
+          LightIdePalette.copy(
+            preset = preset,
+            chromeBg = Color(0xFFF7F6FA),
+            chromePill = Color(0xFFEDEBF4),
+            activePillBg = Color(0xFFEDE9FE),
+            activePillFg = Color(0xFF5B21B6),
+            ctaBg = Color(0xFF6D28D9),
+            border = Color(0xFFE2DFEE),
+            glassBorderHighlight = Color(0xFFD8D3EA),
+            glassBorderSubtle = Color(0xFFE8E5F2),
+            editorActiveLineBg = Color(0xFFF3F0FA),
+          )
+        EditorThemePreset.AMBER_DUSK ->
+          LightIdePalette.copy(
+            preset = preset,
+            chromeBg = Color(0xFFFAF7F4),
+            chromePill = Color(0xFFF2EAE1),
+            activePillBg = Color(0xFFFFEDD5),
+            activePillFg = Color(0xFF9A3412),
+            ctaBg = Color(0xFFD96B16),
+            border = Color(0xFFE8DED3),
+            glassBorderHighlight = Color(0xFFDFD2C4),
+            glassBorderSubtle = Color(0xFFECE3D9),
+            editorActiveLineBg = Color(0xFFFBF2E9),
+          )
+      }
+    } else {
+      when (preset) {
+        EditorThemePreset.OLIVE_OBSIDIAN -> DarkIdePalette
+        EditorThemePreset.SLATE_CARBON -> SlateDarkIdePalette
+        EditorThemePreset.MIDNIGHT_NOIR -> NoirDarkIdePalette
+        EditorThemePreset.AMBER_DUSK -> DuskDarkIdePalette
+      }
     }
+
+  if (uiStyle == UiStyleVersion.V1_DEFAULT) {
+    return basePalette.copy(uiStyle = UiStyleVersion.V1_DEFAULT)
   }
-  return when (preset) {
-    EditorThemePreset.OLIVE_OBSIDIAN -> DarkIdePalette
-    EditorThemePreset.SLATE_CARBON -> SlateDarkIdePalette
-    EditorThemePreset.MIDNIGHT_NOIR -> NoirDarkIdePalette
-    EditorThemePreset.AMBER_DUSK -> DuskDarkIdePalette
+
+  return if (darkTheme) {
+    basePalette.copy(
+      uiStyle = UiStyleVersion.V2_MINIMAL_OLED,
+      chromeBg = Color(0xFF000000),
+      chromeSurface = Color(0xFF141416),
+      chromePill = Color(0xFF1C1C1F),
+      glassSurface = Color(0xFF141416),
+      glassElevated = Color(0xFF1B1B1E),
+      glassDockBg = Color(0xFF070708),
+      glassBorderHighlight = Color(0xFF2B2B30),
+      glassBorderSubtle = Color(0xFF1F1F23),
+      activePillBg = Color(0xFF242428),
+      activePillFg = Color(0xFFF4F4F5),
+      ctaBg = Color(0xFFF4F4F5),
+      ctaFg = Color(0xFF09090B),
+      featuredCardBg = Color(0xFF141416),
+      featuredCardFg = Color(0xFFF4F4F5),
+      featuredCardMuted = Color(0xFFA1A1AA),
+      selectedRowBg = Color(0xFF1D1D21),
+      editorBg = Color(0xFF000000),
+      editorGutterBg = Color(0xFF040405),
+      editorActiveLineBg = Color(0xFF141416),
+      tabBarBg = Color(0xFF000000),
+      tabActiveBg = Color(0xFF141416),
+      border = Color(0xFF242428),
+      treeLine = Color(0xFF222226),
+      textPrimary = Color(0xFFF4F4F5),
+      textSecondary = Color(0xFFA1A1AA),
+      textMuted = Color(0xFF71717A),
+    )
+  } else {
+    basePalette.copy(
+      uiStyle = UiStyleVersion.V2_MINIMAL_OLED,
+      chromeBg = Color(0xFFFFFFFF),
+      chromeSurface = Color(0xFFF4F4F6),
+      chromePill = Color(0xFFEBEBEF),
+      glassSurface = Color(0xFFF4F4F6),
+      glassElevated = Color(0xFFEEEEF1),
+      glassDockBg = Color(0xFFFAFAFC),
+      glassBorderHighlight = Color(0xFFDADAE0),
+      glassBorderSubtle = Color(0xFFE5E5EA),
+      activePillBg = Color(0xFFE5E5EA),
+      activePillFg = Color(0xFF111113),
+      ctaBg = Color(0xFF18181B),
+      ctaFg = Color(0xFFFFFFFF),
+      featuredCardBg = Color(0xFFF4F4F6),
+      featuredCardFg = Color(0xFF111113),
+      featuredCardMuted = Color(0xFF6B6B74),
+      selectedRowBg = Color(0xFFE9E9EE),
+      editorBg = Color(0xFFFFFFFF),
+      editorGutterBg = Color(0xFFFAFAFC),
+      editorActiveLineBg = Color(0xFFF4F4F6),
+      tabBarBg = Color(0xFFFFFFFF),
+      tabActiveBg = Color(0xFFF4F4F6),
+      border = Color(0xFFE4E4E9),
+      treeLine = Color(0xFFDCDCE2),
+      textPrimary = Color(0xFF111113),
+      textSecondary = Color(0xFF52525B),
+      textMuted = Color(0xFF8E8E93),
+    )
   }
 }

@@ -38,8 +38,12 @@ fun rememberGlassBorderStroke(
   subtleColor: Color? = null,
 ): BorderStroke {
   val palette = LocalIdePalette.current
-  val resolvedWidth = width.coerceAtMost(0.75.dp)
-  val lineColor = subtleColor ?: highlightColor ?: palette.glassBorderSubtle
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
+  val resolvedWidth = if (isV2 && highlightColor == null && subtleColor == null) 0.5.dp else width.coerceAtMost(0.75.dp)
+  val lineColor =
+    subtleColor
+      ?: highlightColor
+      ?: if (isV2) palette.glassBorderSubtle.copy(alpha = 0.45f) else palette.glassBorderSubtle
   return remember(resolvedWidth, lineColor) { BorderStroke(resolvedWidth, lineColor) }
 }
 
@@ -50,13 +54,20 @@ fun Modifier.edgeGlassSurface(
   borderWidth: Dp = 0.75.dp,
 ): Modifier {
   val palette = LocalIdePalette.current
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
+  val resolvedShape = if (isV2 && shape == RoundedCornerShape(14.dp)) RoundedCornerShape(22.dp) else shape
   val fillColor = if (elevated) palette.glassElevated else palette.glassSurface
+  if (isV2 && !elevated) {
+    return this
+      .clip(resolvedShape)
+      .background(fillColor, resolvedShape)
+  }
   val strokeWidth = borderWidth.coerceAtMost(0.75.dp)
   val borderColor = if (elevated) palette.glassBorderHighlight else palette.glassBorderSubtle
   return this
-    .clip(shape)
-    .background(fillColor, shape)
-    .border(strokeWidth, borderColor, shape)
+    .clip(resolvedShape)
+    .background(fillColor, resolvedShape)
+    .border(strokeWidth, borderColor, resolvedShape)
 }
 
 @Composable

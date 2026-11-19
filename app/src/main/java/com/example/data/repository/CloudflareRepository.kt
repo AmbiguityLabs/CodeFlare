@@ -48,6 +48,10 @@ import com.example.data.remote.CfZoneRouteCreate
 import com.example.data.remote.CloudflareApiService
 import com.example.data.remote.CloudflareClientFactory
 import com.example.data.remote.CloudflareNamingUtils
+import com.example.data.remote.D1AppliedMigrationRecord
+import com.example.data.remote.D1SchemaGraph
+import com.example.data.remote.D1TableInfo
+import com.example.data.remote.D1WorkspaceMigration
 import com.example.data.remote.HttpTestResult
 import com.example.data.remote.MultipartWorkerParser
 import com.example.data.remote.PagesDirectUploadHasher
@@ -59,6 +63,7 @@ import com.example.data.remote.WorkerWorkspace
 import com.example.data.security.AuthMethod
 import com.example.data.security.AuthPreferencesStore
 import com.example.data.security.StoredCredentials
+import com.example.editor.D1RelationalEngine
 import com.squareup.moshi.Types
 import java.net.ConnectException
 import java.net.SocketTimeoutException
@@ -1195,6 +1200,126 @@ class CloudflareRepository(
           error(extractCfError(resp) ?: "D1 SQL query failed")
         }
         resp.body()?.result.orEmpty()
+      }
+    }
+
+  suspend fun introspectD1Schema(
+    accountId: String,
+    databaseId: String,
+    databaseName: String,
+  ): Result<D1SchemaGraph> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val masterResp = api.queryD1Database(accountId, databaseId, CfD1QueryRequest(D1RelationalEngine.buildIntrospectionMasterSql()))
+        if (!masterResp.isSuccessful || masterResp.body()?.success != true) {
+          error(extractCfError(masterResp) ?: "Failed to inspect sqlite_master")
+        }
+        val tablesWithDdl = D1RelationalEngine.parseMasterTables(masterResp.body()?.result?.firstOrNull())
+        val allTables = mutableListOf<D1TableInfo>()
+        tablesWithDdl.chunked(6).forEach { chunk ->
+          val batchSql = D1RelationalEngine.buildTableInspectionSqlChunk(chunk.map { it.first })
+          val chunkResp = api.queryD1Database(accountId, databaseId, CfD1QueryRequest(batchSql))
+          if (!chunkResp.isSuccessful || chunkResp.body()?.success != true) {
+            error(extractCfError(chunkResp) ?: "Failed to inspect D1 table metadata")
+          }
+          allTables.addAll(
+            D1RelationalEngine.parseTableDetailsChunk(
+              databaseId = databaseId,
+              databaseName = databaseName,
+              tablesWithDdl = chunk,
+              chunkResults = chunkResp.body()?.result.orEmpty(),
+            ),
+          )
+        }
+        D1SchemaGraph(
+          databaseId = databaseId,
+          databaseName = databaseName,
+          tables = allTables,
+          introspectedAtEpochMs = System.currentTimeMillis(),
+        )
+      }
+    }
+
+  suspend fun loadD1AppliedMigrations(
+    accountId: String,
+    databaseId: String,
+  ): Result<Pair<String, List<D1AppliedMigrationRecord>>> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val detectSql = "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('d1_migrations', '_edgecode_migrations');"
+        val detectResp = api.queryD1Database(accountId, databaseId, CfD1QueryRequest(detectSql))
+        if (!detectResp.isSuccessful || detectResp.body()?.success != true) {
+          error(extractCfError(detectResp) ?: "Failed checking migration ledger")
+        }
+        val existingTables =
+          detectResp.body()?.result?.firstOrNull()?.results
+            ?.mapNotNull { it["name"]?.toString() }
+            .orEmpty()
+        val ledgerTable =
+          when {
+            "d1_migrations" in existingTables -> "d1_migrations"
+            "_edgecode_migrations" in existingTables -> "_edgecode_migrations"
+            else -> "_edgecode_migrations"
+          }
+        if (ledgerTable !in existingTables) {
+          return@runCatching ledgerTable to emptyList()
+        }
+        val readSql = "SELECT * FROM ${D1RelationalEngine.quoteIdent(ledgerTable)} ORDER BY id ASC;"
+        val readResp = api.queryD1Database(accountId, databaseId, CfD1QueryRequest(readSql))
+        if (!readResp.isSuccessful || readResp.body()?.success != true) {
+          return@runCatching ledgerTable to emptyList()
+        }
+        val records =
+          readResp.body()?.result?.firstOrNull()?.results.orEmpty().mapNotNull { row ->
+            val name = row["name"]?.toString()?.trim().orEmpty()
+            if (name.isEmpty()) return@mapNotNull null
+            val appliedAt = row["applied_at"]?.toString().orEmpty()
+            val checksum = row["checksum"]?.toString()
+            D1AppliedMigrationRecord(name = name, appliedAt = appliedAt, checksum = checksum)
+          }
+        ledgerTable to records
+      }
+    }
+
+  suspend fun applyD1Migration(
+    accountId: String,
+    databaseId: String,
+    ledgerTable: String,
+    migration: D1WorkspaceMigration,
+  ): Result<List<CfD1QueryResult>> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val qLedger = D1RelationalEngine.quoteIdent(ledgerTable)
+        val createLedgerSql =
+          if (ledgerTable == "d1_migrations") {
+            "CREATE TABLE IF NOT EXISTS \"d1_migrations\" (\"id\" INTEGER PRIMARY KEY AUTOINCREMENT, \"name\" TEXT UNIQUE, \"applied_at\" TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL);"
+          } else {
+            "CREATE TABLE IF NOT EXISTS \"_edgecode_migrations\" (\"id\" INTEGER PRIMARY KEY AUTOINCREMENT, \"name\" TEXT UNIQUE NOT NULL, \"checksum\" TEXT, \"applied_at\" TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL);"
+          }
+        val createResp = api.queryD1Database(accountId, databaseId, CfD1QueryRequest(createLedgerSql))
+        if (!createResp.isSuccessful || createResp.body()?.success != true) {
+          error(extractCfError(createResp) ?: "Failed initializing migration ledger '$ledgerTable'")
+        }
+        val stmts = D1RelationalEngine.splitSqlStatements(migration.sql)
+        require(stmts.isNotEmpty()) { "Migration '${migration.fileName}' contains no SQL statements" }
+        val migrationSql = stmts.joinToString("\n")
+        val execResp = api.queryD1Database(accountId, databaseId, CfD1QueryRequest(migrationSql))
+        if (!execResp.isSuccessful || execResp.body()?.success != true) {
+          error(extractCfError(execResp) ?: "Migration '${migration.fileName}' failed")
+        }
+        val escName = migration.fileName.replace("'", "''")
+        val escHash = migration.checksum.replace("'", "''")
+        val recordSql =
+          if (ledgerTable == "d1_migrations") {
+            "INSERT OR REPLACE INTO $qLedger (\"name\") VALUES ('$escName');"
+          } else {
+            "INSERT OR REPLACE INTO $qLedger (\"name\", \"checksum\") VALUES ('$escName', '$escHash');"
+          }
+        val recordResp = api.queryD1Database(accountId, databaseId, CfD1QueryRequest(recordSql))
+        if (!recordResp.isSuccessful || recordResp.body()?.success != true) {
+          error(extractCfError(recordResp) ?: "Executed SQL but failed recording ledger entry")
+        }
+        execResp.body()?.result.orEmpty()
       }
     }
 

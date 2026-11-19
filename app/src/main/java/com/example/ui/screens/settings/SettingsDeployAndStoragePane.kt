@@ -47,9 +47,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.security.EditorSettings
+import com.example.ui.components.IconRevealButton
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.RoseError
+import com.example.ui.theme.UiStyleVersion
 import com.example.ui.viewmodel.IdeUiState
 
 @Composable
@@ -171,6 +174,7 @@ fun SettingsStorageAndSessionPane(
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   val clipboard = LocalClipboardManager.current
   val storage = uiState.projectStorageSummary
   val creds = uiState.credentials
@@ -191,8 +195,8 @@ fun SettingsStorageAndSessionPane(
       Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Surface(
           color = palette.editorBg,
-          shape = RoundedCornerShape(10.dp),
-          border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.55f)),
+          shape = RoundedCornerShape(if (isV2) 16.dp else 10.dp),
+          border = if (isV2) null else BorderStroke(0.75.dp, palette.border.copy(alpha = 0.55f)),
           modifier = Modifier.fillMaxWidth(),
         ) {
           Row(
@@ -227,15 +231,20 @@ fun SettingsStorageAndSessionPane(
         }
 
         if (!storage.hasNativeStorageAccess && onRequestStorageAccess != null) {
-          Button(
-            onClick = onRequestStorageAccess,
-            shape = RoundedCornerShape(10.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = palette.ctaBg, contentColor = palette.ctaFg),
-            modifier = Modifier.fillMaxWidth().height(42.dp).testTag("settings_grant_storage_button"),
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
           ) {
-            Icon(Icons.Outlined.Folder, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Grant Folder Access", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+            Text("Folder Access", fontSize = 14.sp, color = palette.textPrimary)
+            IconRevealButton(
+              icon = Icons.Outlined.Folder,
+              revealedLabel = "Grant Folder Access",
+              accentContainer = true,
+              onClick = onRequestStorageAccess,
+              height = 38.dp,
+              tag = "settings_grant_storage_button",
+            )
           }
         }
 
@@ -270,27 +279,35 @@ fun SettingsStorageAndSessionPane(
       }
 
       if (creds != null) {
-        OutlinedButton(
-          onClick = onRequestDisconnect,
-          colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-          border = BorderStroke(0.75.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.45f)),
-          shape = RoundedCornerShape(10.dp),
-          modifier = Modifier.fillMaxWidth().padding(12.dp).height(42.dp).testTag("sign_out_button"),
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
         ) {
-          Icon(Icons.AutoMirrored.Outlined.Logout, contentDescription = null, modifier = Modifier.size(17.dp))
-          Spacer(Modifier.width(8.dp))
-          Text("Disconnect Cloudflare", fontWeight = FontWeight.Medium)
+          Text("Session", fontSize = 14.5.sp, color = RoseError)
+          IconRevealButton(
+            icon = Icons.AutoMirrored.Outlined.Logout,
+            revealedLabel = "Disconnect Cloudflare",
+            statusDotColor = RoseError,
+            onClick = onRequestDisconnect,
+            height = 38.dp,
+            tag = "sign_out_button",
+          )
         }
       } else {
-        OutlinedButton(
-          onClick = onDirectAuthSetup,
-          border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.7f)),
-          shape = RoundedCornerShape(10.dp),
-          modifier = Modifier.fillMaxWidth().padding(12.dp).height(42.dp).testTag("sign_out_button"),
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
         ) {
-          Icon(Icons.AutoMirrored.Outlined.Logout, contentDescription = null, modifier = Modifier.size(17.dp))
-          Spacer(Modifier.width(8.dp))
-          Text("Auth Setup", fontWeight = FontWeight.Medium)
+          Text("Session", fontSize = 14.5.sp, color = palette.textPrimary)
+          IconRevealButton(
+            icon = Icons.AutoMirrored.Outlined.Logout,
+            revealedLabel = "Auth Setup",
+            onClick = onDirectAuthSetup,
+            height = 38.dp,
+            tag = "sign_out_button",
+          )
         }
       }
     }

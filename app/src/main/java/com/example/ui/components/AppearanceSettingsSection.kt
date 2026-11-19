@@ -31,6 +31,7 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.RestartAlt
+import androidx.compose.material.icons.outlined.Style
 import androidx.compose.material.icons.outlined.Wallpaper
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -68,6 +69,7 @@ import com.example.ui.theme.EditorBackgroundPreset
 import com.example.ui.theme.EditorThemePreset
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.UiStyleVersion
 import com.example.ui.theme.paletteFor
 import java.io.File
 import java.util.Locale
@@ -81,6 +83,8 @@ fun AppearanceStudioContent(
   onClearEditorBackgroundImage: () -> Unit,
 ) {
   val palette = LocalIdePalette.current
+  val activeStyle = UiStyleVersion.fromKey(settings.uiStyleVersion)
+  val isV2 = activeStyle == UiStyleVersion.V2_MINIMAL_OLED
   val activePreset = EditorThemePreset.fromKey(settings.themePreset)
   val activeBgPreset = EditorBackgroundPreset.fromKey(settings.editorBgPreset)
   val hasCustomPhotoFile =
@@ -101,48 +105,50 @@ fun AppearanceStudioContent(
       modifier =
         Modifier
           .fillMaxWidth()
-          .clip(RoundedCornerShape(10.dp))
-          .background(palette.editorBg)
-          .border(0.75.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
-          .padding(3.dp),
-      horizontalArrangement = Arrangement.spacedBy(4.dp),
+          .clip(RoundedCornerShape(if (isV2) 20.dp else 10.dp))
+          .background(palette.chromeSurface)
+          .then(if (isV2) Modifier else Modifier.border(0.75.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(10.dp)))
+          .padding(4.dp),
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-      listOf(
-        true to ("Dark" to Icons.Outlined.DarkMode),
-        false to ("Light" to Icons.Outlined.LightMode),
-      ).forEach { (isDarkChoice, pair) ->
-        val (label, icon) = pair
-        val selected = settings.darkTheme == isDarkChoice
-        Surface(
-          onClick = { onUpdateSettings { it.copy(darkTheme = isDarkChoice) } },
-          shape = RoundedCornerShape(8.dp),
-          color = if (selected) palette.activePillBg else Color.Transparent,
-          border =
-            if (selected) BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.35f))
-            else null,
-          modifier = Modifier.weight(1f).height(34.dp).testTag("settings_mode_${label.lowercase()}"),
-        ) {
-          Row(
-            modifier = Modifier.fillMaxSize(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-          ) {
-            Icon(
-              imageVector = icon,
-              contentDescription = null,
-              tint = if (selected) palette.activePillFg else palette.textSecondary,
-              modifier = Modifier.size(15.dp),
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-              text = label,
-              style = MaterialTheme.typography.labelMedium,
-              fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-              color = if (selected) palette.activePillFg else palette.textSecondary,
-            )
-          }
-        }
+      UiStyleVersion.entries.forEach { styleChoice ->
+        IconSegmentTab(
+          icon = Icons.Outlined.Style,
+          label = styleChoice.label,
+          selected = activeStyle == styleChoice,
+          onClick = { onUpdateSettings { it.copy(uiStyleVersion = styleChoice.key) } },
+          tag = "settings_style_${styleChoice.key.lowercase()}",
+          modifier = Modifier.weight(1f),
+        )
       }
+    }
+
+    Row(
+      modifier =
+        Modifier
+          .fillMaxWidth()
+          .clip(RoundedCornerShape(if (isV2) 20.dp else 10.dp))
+          .background(palette.chromeSurface)
+          .then(if (isV2) Modifier else Modifier.border(0.75.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(10.dp)))
+          .padding(4.dp),
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+      IconSegmentTab(
+        icon = Icons.Outlined.DarkMode,
+        label = "Dark",
+        selected = settings.darkTheme,
+        onClick = { onUpdateSettings { it.copy(darkTheme = true) } },
+        tag = "settings_mode_dark",
+        modifier = Modifier.weight(1f),
+      )
+      IconSegmentTab(
+        icon = Icons.Outlined.LightMode,
+        label = "Light",
+        selected = !settings.darkTheme,
+        onClick = { onUpdateSettings { it.copy(darkTheme = false) } },
+        tag = "settings_mode_light",
+        modifier = Modifier.weight(1f),
+      )
     }
 
     SettingsFoldableSection(

@@ -34,10 +34,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.CloudDone
+import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.DarkMode
+import androidx.compose.material.icons.outlined.LightMode
+import androidx.compose.material.icons.outlined.Style
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -54,6 +60,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -61,6 +68,7 @@ import com.example.data.remote.CfAccount
 import com.example.data.security.AuthMethod
 import com.example.data.security.EditorSettings
 import com.example.ui.components.AppearanceStudioContent
+import com.example.ui.components.IconRevealButton
 import com.example.ui.screens.settings.SettingsCategory
 import com.example.ui.screens.settings.SettingsCloudflarePane
 import com.example.ui.screens.settings.SettingsDeployPane
@@ -74,6 +82,7 @@ import com.example.ui.theme.EditorThemePreset
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.UiStyleVersion
 import com.example.ui.viewmodel.IdeUiState
 
 @Composable
@@ -99,6 +108,8 @@ fun SettingsScreen(
   val palette = LocalIdePalette.current
   val settings = uiState.editorSettings
   val creds = uiState.credentials
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
+  val activeStyle = UiStyleVersion.fromKey(settings.uiStyleVersion)
 
   var openCategory by rememberSaveable { mutableStateOf<SettingsCategory?>(null) }
   var wideSelectedCategory by rememberSaveable { mutableStateOf(SettingsCategory.APPEARANCE) }
@@ -220,29 +231,53 @@ fun SettingsScreen(
       val select: (SettingsCategory) -> Unit = { cat ->
         if (railMode) wideSelectedCategory = cat else openCategory = cat
       }
+      val dividerIndent = if (isV2) 18.dp else 56.dp
       Column(
         modifier =
           Modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = if (railMode) 12.dp else 14.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(if (isV2) 18.dp else 14.dp),
       ) {
-        SettingsGroup(label = "Workspace") {
+        SettingsGroup(label = "Preferences") {
+          SettingsMenuRow(
+            title = "Style",
+            icon = Icons.Outlined.Style,
+            value = activeStyle.label,
+            useUnfoldIndicator = true,
+            tag = "settings_quick_style_toggle",
+            onClick = {
+              val next =
+                if (activeStyle == UiStyleVersion.V1_DEFAULT) UiStyleVersion.V2_MINIMAL_OLED
+                else UiStyleVersion.V1_DEFAULT
+              onUpdateSettings { it.copy(uiStyleVersion = next.key) }
+            },
+          )
+          SettingsHairlineDivider(startIndent = dividerIndent)
+          SettingsMenuRow(
+            title = "Theme",
+            icon = if (settings.darkTheme) Icons.Outlined.DarkMode else Icons.Outlined.LightMode,
+            value = if (settings.darkTheme) "Dark" else "Light",
+            useUnfoldIndicator = true,
+            tag = "settings_quick_theme_toggle",
+            onClick = { onUpdateSettings { it.copy(darkTheme = !it.darkTheme) } },
+          )
+          SettingsHairlineDivider(startIndent = dividerIndent)
           SettingsMenuRow(
             title = SettingsCategory.APPEARANCE.title,
             icon = SettingsCategory.APPEARANCE.icon,
-            value = categoryCompactValue(SettingsCategory.APPEARANCE, uiState),
+            value = if (isV2) null else categoryCompactValue(SettingsCategory.APPEARANCE, uiState),
             selected = activeSelection == SettingsCategory.APPEARANCE,
             showChevron = !railMode,
             tag = "settings_jump_${SettingsCategory.APPEARANCE.jumpTag}",
             onClick = { select(SettingsCategory.APPEARANCE) },
           )
-          SettingsHairlineDivider(startIndent = 56.dp)
+          SettingsHairlineDivider(startIndent = dividerIndent)
           SettingsMenuRow(
             title = SettingsCategory.EDITOR.title,
             icon = SettingsCategory.EDITOR.icon,
-            value = categoryCompactValue(SettingsCategory.EDITOR, uiState),
+            value = if (isV2) null else categoryCompactValue(SettingsCategory.EDITOR, uiState),
             selected = activeSelection == SettingsCategory.EDITOR,
             showChevron = !railMode,
             tag = "settings_jump_${SettingsCategory.EDITOR.jumpTag}",
@@ -254,18 +289,18 @@ fun SettingsScreen(
           SettingsMenuRow(
             title = SettingsCategory.CLOUDFLARE.title,
             icon = SettingsCategory.CLOUDFLARE.icon,
-            value = categoryCompactValue(SettingsCategory.CLOUDFLARE, uiState),
+            value = if (isV2) null else categoryCompactValue(SettingsCategory.CLOUDFLARE, uiState),
             statusDotColor = if (creds != null) EmeraldLive else AmberWarn,
             selected = activeSelection == SettingsCategory.CLOUDFLARE,
             showChevron = !railMode,
             tag = "settings_jump_${SettingsCategory.CLOUDFLARE.jumpTag}",
             onClick = { select(SettingsCategory.CLOUDFLARE) },
           )
-          SettingsHairlineDivider(startIndent = 56.dp)
+          SettingsHairlineDivider(startIndent = dividerIndent)
           SettingsMenuRow(
             title = SettingsCategory.DEPLOY.title,
             icon = SettingsCategory.DEPLOY.icon,
-            value = categoryCompactValue(SettingsCategory.DEPLOY, uiState),
+            value = if (isV2) null else categoryCompactValue(SettingsCategory.DEPLOY, uiState),
             selected = activeSelection == SettingsCategory.DEPLOY,
             showChevron = !railMode,
             tag = "settings_jump_${SettingsCategory.DEPLOY.jumpTag}",
@@ -277,7 +312,7 @@ fun SettingsScreen(
           SettingsMenuRow(
             title = SettingsCategory.STORAGE.title,
             icon = SettingsCategory.STORAGE.icon,
-            value = categoryCompactValue(SettingsCategory.STORAGE, uiState),
+            value = if (isV2) null else categoryCompactValue(SettingsCategory.STORAGE, uiState),
             selected = activeSelection == SettingsCategory.STORAGE,
             showChevron = !railMode,
             tag = "settings_jump_${SettingsCategory.STORAGE.jumpTag}",
@@ -297,28 +332,43 @@ fun SettingsScreen(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
       ) {
-        Surface(
-          onClick = handleBack,
-          shape = CircleShape,
-          color = palette.chromeSurface,
-          border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.7f)),
-          modifier = Modifier.size(42.dp).testTag("settings_back_button"),
-        ) {
-          Box(contentAlignment = Alignment.Center) {
+        if (isV2) {
+          IconButton(
+            onClick = handleBack,
+            modifier = Modifier.size(42.dp).testTag("settings_back_button"),
+          ) {
             Icon(
               imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
               contentDescription = "Back",
               tint = palette.textPrimary,
-              modifier = Modifier.size(19.dp),
+              modifier = Modifier.size(21.dp),
             )
+          }
+        } else {
+          Surface(
+            onClick = handleBack,
+            shape = CircleShape,
+            color = palette.chromeSurface,
+            border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.7f)),
+            modifier = Modifier.size(42.dp).testTag("settings_back_button"),
+          ) {
+            Box(contentAlignment = Alignment.Center) {
+              Icon(
+                imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                contentDescription = "Back",
+                tint = palette.textPrimary,
+                modifier = Modifier.size(19.dp),
+              )
+            }
           }
         }
 
         Text(
           text = if (!isWide && openCategory != null) openCategory!!.title else "Settings",
-          fontSize = 18.sp,
-          fontWeight = FontWeight.SemiBold,
+          fontSize = if (isV2) 19.sp else 18.sp,
+          fontWeight = FontWeight.Medium,
           color = palette.textPrimary,
+          textAlign = if (isV2) TextAlign.Center else TextAlign.Start,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
           modifier = Modifier.weight(1f),
@@ -326,34 +376,35 @@ fun SettingsScreen(
 
         val statusLabel =
           when {
-            creds != null -> "CONNECTED"
-            uiState.isGitHubIdeOnlyMode -> "GITHUB"
-            else -> "LOCAL"
+            creds != null -> "Connected"
+            uiState.isGitHubIdeOnlyMode -> "GitHub"
+            else -> "Local"
           }
         val statusColor = if (creds != null) EmeraldLive else AmberWarn
-        Surface(
-          color = statusColor.copy(alpha = 0.12f),
-          shape = RoundedCornerShape(999.dp),
-          border = BorderStroke(0.75.dp, statusColor.copy(alpha = 0.35f)),
-        ) {
-          Row(
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-          ) {
-            Box(modifier = Modifier.size(5.5.dp).clip(CircleShape).background(statusColor))
-            Text(
-              text = statusLabel,
-              fontFamily = JetBrainsMono,
-              fontSize = 9.5.sp,
-              fontWeight = FontWeight.Bold,
-              color = statusColor,
-            )
-          }
-        }
+        IconRevealButton(
+          icon = if (creds != null) Icons.Outlined.CloudDone else Icons.Outlined.CloudOff,
+          revealedLabel = statusLabel,
+          statusDotColor = statusColor,
+          onClick = { onNotify(statusLabel) },
+          tag = "settings_status_icon_button",
+        )
+        IconRevealButton(
+          icon = Icons.Outlined.Style,
+          revealedLabel = activeStyle.label,
+          active = isV2,
+          onClick = {
+            val next =
+              if (activeStyle == UiStyleVersion.V1_DEFAULT) UiStyleVersion.V2_MINIMAL_OLED
+              else UiStyleVersion.V1_DEFAULT
+            onUpdateSettings { it.copy(uiStyleVersion = next.key) }
+          },
+          tag = "settings_header_style_toggle",
+        )
       }
 
-      HorizontalDivider(color = palette.border.copy(alpha = 0.45f), thickness = 0.75.dp)
+      if (!isV2) {
+        HorizontalDivider(color = palette.border.copy(alpha = 0.45f), thickness = 0.75.dp)
+      }
 
       if (isWide) {
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {

@@ -54,6 +54,7 @@ import androidx.compose.material.icons.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.ListAlt
 import androidx.compose.material.icons.outlined.NoteAdd
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Search
@@ -123,6 +124,7 @@ import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.RoseError
+import com.example.ui.theme.UiStyleVersion
 import com.example.ui.theme.edgeGlassDock
 import com.example.ui.theme.edgeGlassSurface
 import com.example.ui.theme.rememberGlassBorderStroke
@@ -186,10 +188,12 @@ fun CodeEditorPane(
   onRequestSmartRename: (initialSymbol: String?) -> Unit = {},
   onOpenLocalHistory: () -> Unit = {},
   onOpenProjectSearch: () -> Unit = {},
+  onRunLocalScript: () -> Unit = {},
   editorCommandRequest: Pair<Long, String>? = null,
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   val activeFile = uiState.activeFile
 
   val editorController = remember { EdgeEditorController() }
@@ -305,6 +309,7 @@ fun CodeEditorPane(
           onOpenFile = onSelectTab,
           onCreateNewFile = onCreateNewFile,
           onOpenExplorer = onOpenExplorer,
+          onRunLocalScript = onRunLocalScript,
         )
       } else {
         EmptyWorkspaceWelcome(
@@ -313,6 +318,7 @@ fun CodeEditorPane(
           onShowNewWorkerDialog = onShowNewWorkerDialog,
           onOpenWorkerPreview = onOpenWorkerPreview,
           onCreateNewFile = onCreateNewFile,
+          onRunLocalScript = onRunLocalScript,
         )
       }
       return
@@ -429,53 +435,37 @@ fun CodeEditorPane(
 
       if (uiState.diagnostics.isNotEmpty()) {
         val hasErr = uiState.diagnostics.any { it.severity == DiagnosticSeverity.ERROR }
-        Surface(
+        IconRevealButton(
+          icon = Icons.Outlined.WarningAmber,
+          revealedLabel = "${uiState.diagnostics.size}",
           onClick = { flushThen(onOpenProblems) },
-          shape = RoundedCornerShape(999.dp),
-          color =
-            if (hasErr) MaterialTheme.colorScheme.errorContainer
-            else palette.activePillBg,
-        ) {
-          Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-          ) {
-            Icon(
-              Icons.Outlined.WarningAmber,
-              contentDescription = "Diagnostics",
-              modifier = Modifier.size(12.dp),
-              tint =
-                if (hasErr) MaterialTheme.colorScheme.onErrorContainer
-                else palette.activePillFg,
-            )
-            Text(
-              text = "${uiState.diagnostics.size}",
-              style = MaterialTheme.typography.labelSmall,
-              color =
-                if (hasErr) MaterialTheme.colorScheme.onErrorContainer
-                else palette.activePillFg,
-            )
-          }
-        }
+          active = !hasErr,
+          statusDotColor = if (hasErr) RoseError else AmberWarn,
+          height = 28.dp,
+          modifier = Modifier.padding(end = 4.dp),
+        )
       }
 
       if (isWranglerConfig) {
-        Surface(
+        IconRevealButton(
+          icon = Icons.Outlined.Sync,
+          revealedLabel = "Apply Config",
+          active = true,
           onClick = { flushThen(onSyncWranglerToWorkspace) },
-          shape = RoundedCornerShape(999.dp),
-          color = palette.activePillBg,
-          modifier = Modifier.padding(end = 4.dp).testTag("apply_wrangler_config_button"),
-        ) {
-          Row(
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-          ) {
-            Icon(Icons.Outlined.Sync, contentDescription = "Apply Wrangler Config", tint = palette.activePillFg, modifier = Modifier.size(13.dp))
-            Text("Apply Config", style = MaterialTheme.typography.labelSmall, color = palette.activePillFg, fontWeight = FontWeight.SemiBold)
-          }
-        }
+          tag = "apply_wrangler_config_button",
+          height = 28.dp,
+          modifier = Modifier.padding(end = 4.dp),
+        )
+      } else if (!activeFile.isVirtualReadOnly) {
+        IconRevealButton(
+          icon = Icons.Outlined.PlayArrow,
+          revealedLabel = "Run Local",
+          isBusy = uiState.isRunningLocalScript,
+          onClick = { flushThen(onRunLocalScript) },
+          tag = "editor_run_local_button",
+          height = 28.dp,
+          modifier = Modifier.padding(end = 4.dp),
+        )
       }
 
       if (symbols.isNotEmpty()) {
@@ -1087,47 +1077,26 @@ fun CodeEditorPane(
 
           val errCount = uiState.diagnostics.count { it.severity == DiagnosticSeverity.ERROR }
           val warnCount = uiState.diagnostics.size - errCount
-          Row(
-            modifier =
-              Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .clickable { flushThen(onOpenProblems) }
-                .padding(horizontal = 6.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-          ) {
-            Icon(
-              imageVector =
-                if (uiState.diagnostics.isEmpty()) Icons.Outlined.CheckCircleOutline
-                else Icons.Outlined.WarningAmber,
-              contentDescription = "Diagnostics",
-              tint =
-                when {
-                  errCount > 0 -> MaterialTheme.colorScheme.error
-                  warnCount > 0 -> AmberWarn
-                  else -> EmeraldLive
-                },
-              modifier = Modifier.size(12.dp),
-            )
-            Text(
-              text =
-                when {
-                  errCount > 0 -> "$errCount err"
-                  warnCount > 0 -> "$warnCount warn"
-                  else -> "Clean"
-                },
-              fontFamily = JetBrainsMono,
-              fontSize = 10.sp,
-              fontWeight = FontWeight.Medium,
-              color =
-                when {
-                  errCount > 0 -> MaterialTheme.colorScheme.error
-                  warnCount > 0 -> AmberWarn
-                  else -> palette.textSecondary
-                },
-              maxLines = 1,
-            )
-          }
+          IconRevealButton(
+            icon =
+              if (uiState.diagnostics.isEmpty()) Icons.Outlined.CheckCircleOutline
+              else Icons.Outlined.WarningAmber,
+            revealedLabel =
+              when {
+                errCount > 0 -> "$errCount err"
+                warnCount > 0 -> "$warnCount warn"
+                else -> "Clean"
+              },
+            statusDotColor =
+              when {
+                errCount > 0 -> RoseError
+                warnCount > 0 -> AmberWarn
+                else -> EmeraldLive
+              },
+            onClick = { flushThen(onOpenProblems) },
+            height = 24.dp,
+            tag = "editor_status_diagnostics_button",
+          )
 
           IconButton(
             onClick = onHideEditorBottomBars,
@@ -1463,8 +1432,10 @@ private fun EmptyWorkspaceWelcome(
   onShowNewWorkerDialog: () -> Unit,
   onOpenWorkerPreview: () -> Unit,
   onCreateNewFile: () -> Unit,
+  onRunLocalScript: () -> Unit,
 ) {
   val palette = LocalIdePalette.current
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   Box(
     modifier = Modifier.fillMaxSize().padding(24.dp),
     contentAlignment = Alignment.Center,
@@ -1472,13 +1443,13 @@ private fun EmptyWorkspaceWelcome(
     Column(
       modifier = Modifier.widthIn(max = 400.dp),
       horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.spacedBy(12.dp),
+      verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
       Image(
         painter = painterResource(id = R.drawable.img_empty_workspace),
         contentDescription = stringResource(R.string.cd_empty_workspace),
         contentScale = ContentScale.Crop,
-        modifier = Modifier.size(132.dp).clip(RoundedCornerShape(28.dp)),
+        modifier = Modifier.size(128.dp).clip(RoundedCornerShape(if (isV2) 30.dp else 28.dp)),
       )
       Text(
         text = "EdgeCode",
@@ -1486,47 +1457,45 @@ private fun EmptyWorkspaceWelcome(
         fontWeight = FontWeight.Bold,
         color = palette.textPrimary,
       )
-      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilledTonalButton(
+      Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconRevealButton(
+          icon = Icons.Outlined.PlayArrow,
+          revealedLabel = "Run Local",
+          onClick = onRunLocalScript,
+          height = 46.dp,
+          tag = "welcome_local_run_button",
+        )
+        IconRevealButton(
+          icon = Icons.Outlined.Visibility,
+          revealedLabel = "Test Live Worker",
           onClick = onOpenWorkerPreview,
-          shape = RoundedCornerShape(14.dp),
-          modifier = Modifier.height(48.dp).testTag("welcome_worker_preview_button"),
-        ) {
-          Icon(Icons.Outlined.Visibility, contentDescription = null, modifier = Modifier.size(18.dp))
-          Spacer(Modifier.width(6.dp))
-          Text("Test Live Worker")
-        }
-        OutlinedButton(
+          height = 46.dp,
+          tag = "welcome_worker_preview_button",
+        )
+        IconRevealButton(
+          icon = Icons.Outlined.NoteAdd,
+          revealedLabel = "New File",
           onClick = onCreateNewFile,
-          shape = RoundedCornerShape(14.dp),
-          modifier = Modifier.height(48.dp).testTag("welcome_new_file_button"),
-        ) {
-          Icon(Icons.Outlined.NoteAdd, contentDescription = null, modifier = Modifier.size(18.dp))
-          Spacer(Modifier.width(6.dp))
-          Text("New File")
-        }
-      }
-      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          height = 46.dp,
+          tag = "welcome_new_file_button",
+        )
         if (hasWorkers) {
-          OutlinedButton(
+          IconRevealButton(
+            icon = Icons.Outlined.FolderOpen,
+            revealedLabel = "Explorer",
             onClick = onOpenExplorer,
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.height(48.dp),
-          ) {
-            Icon(Icons.Outlined.FolderOpen, contentDescription = null, modifier = Modifier.size(17.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Explorer")
-          }
+            height = 46.dp,
+            tag = "welcome_explorer_button",
+          )
         }
-        Button(
+        IconRevealButton(
+          icon = Icons.Outlined.Add,
+          revealedLabel = "New Worker",
+          accentContainer = true,
           onClick = onShowNewWorkerDialog,
-          shape = RoundedCornerShape(14.dp),
-          modifier = Modifier.height(48.dp).testTag("welcome_new_worker_button"),
-        ) {
-          Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(17.dp))
-          Spacer(Modifier.width(6.dp))
-          Text("New Worker")
-        }
+          height = 46.dp,
+          tag = "welcome_new_worker_button",
+        )
       }
     }
   }
@@ -1548,6 +1517,7 @@ private fun EditorFileTabBar(
   onOpenExplorer: () -> Unit,
 ) {
   val palette = LocalIdePalette.current
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   val tabListState = rememberLazyListState()
   var tabSwitcherOpen by remember { mutableStateOf(false) }
   var switcherQuery by remember { mutableStateOf("") }
@@ -1576,39 +1546,15 @@ private fun EditorFileTabBar(
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-      Surface(
+      IconRevealButton(
+        icon = Icons.Outlined.FolderOpen,
+        revealedLabel = "Files",
         onClick = onOpenExplorer,
-        shape = RoundedCornerShape(10.dp),
-        color = palette.glassElevated,
-        border = rememberGlassBorderStroke(1.dp),
-        modifier = Modifier.testTag("editor_files_button"),
-      ) {
-        Row(
-          modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-          Icon(
-            Icons.Outlined.FolderOpen,
-            contentDescription = "Open Project Files",
-            tint = palette.activePillFg,
-            modifier = Modifier.size(15.dp),
-          )
-          Text(
-            text = "Files",
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = palette.textPrimary,
-          )
-        }
-      }
+        height = 30.dp,
+        tag = "editor_files_button",
+      )
       if (uiState.openTabPaths.isEmpty()) {
-        Text(
-          text = "${workspaceFiles.size} project files",
-          style = MaterialTheme.typography.labelSmall,
-          color = palette.textMuted,
-          modifier = Modifier.weight(1f).padding(horizontal = 6.dp),
-        )
+        Spacer(Modifier.weight(1f))
       } else {
         LazyRow(
           state = tabListState,
@@ -1629,14 +1575,17 @@ private fun EditorFileTabBar(
 
             Box {
               Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = if (isActive) palette.tabActiveBg else palette.glassSurface,
+                shape = RoundedCornerShape(if (isV2) 16.dp else 12.dp),
+                color = if (isActive) palette.tabActiveBg else if (isV2) palette.chromeSurface else palette.glassSurface,
                 border =
-                  if (isActive) BorderStroke(1.dp, palette.activePillFg.copy(alpha = 0.45f))
-                  else rememberGlassBorderStroke(1.dp),
+                  when {
+                    isV2 -> null
+                    isActive -> BorderStroke(1.dp, palette.activePillFg.copy(alpha = 0.45f))
+                    else -> rememberGlassBorderStroke(1.dp)
+                  },
                 modifier =
                   Modifier
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(if (isV2) 16.dp else 12.dp))
                     .combinedClickable(
                       onClick = { onSelectTab(path) },
                       onLongClick = { contextMenuPath = path },
@@ -2006,8 +1955,10 @@ private fun AllTabsClosedState(
   onOpenFile: (String) -> Unit,
   onCreateNewFile: () -> Unit,
   onOpenExplorer: () -> Unit,
+  onRunLocalScript: () -> Unit,
 ) {
   val palette = LocalIdePalette.current
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   Box(
     modifier = Modifier.fillMaxSize().padding(24.dp),
     contentAlignment = Alignment.Center,
@@ -2015,29 +1966,62 @@ private fun AllTabsClosedState(
     Column(
       modifier = Modifier.widthIn(max = 360.dp),
       horizontalAlignment = Alignment.Start,
-      verticalArrangement = Arrangement.spacedBy(8.dp),
+      verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-      Text(
-        text = workerName,
-        fontSize = 18.sp,
-        fontWeight = FontWeight.Bold,
-        color = palette.textPrimary,
-      )
-      Spacer(Modifier.height(4.dp))
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+      ) {
+        Text(
+          text = workerName,
+          fontSize = 18.sp,
+          fontWeight = FontWeight.Bold,
+          color = palette.textPrimary,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          IconRevealButton(
+            icon = Icons.Outlined.PlayArrow,
+            revealedLabel = "Run Local",
+            accentContainer = true,
+            onClick = onRunLocalScript,
+            height = 36.dp,
+            tag = "all_tabs_closed_run_local",
+          )
+          IconRevealButton(
+            icon = Icons.Outlined.Add,
+            revealedLabel = "New File",
+            onClick = onCreateNewFile,
+            height = 36.dp,
+          )
+          IconRevealButton(
+            icon = Icons.Outlined.FolderOpen,
+            revealedLabel = "Files",
+            onClick = onOpenExplorer,
+            height = 36.dp,
+          )
+        }
+      }
       Surface(
         color = palette.chromeSurface,
-        shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
+        shape = RoundedCornerShape(if (isV2) 24.dp else 18.dp),
+        border = if (isV2) null else BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
         modifier = Modifier.fillMaxWidth(),
       ) {
         Column(modifier = Modifier.padding(vertical = 6.dp)) {
-          files.take(4).forEach { file ->
+          files.take(5).forEachIndexed { idx, file ->
+            if (idx > 0) {
+              HorizontalDivider(
+                color = if (isV2) palette.border else palette.border.copy(alpha = 0.35f),
+                thickness = if (isV2) 0.5.dp else 0.75.dp,
+              )
+            }
             Row(
               modifier =
                 Modifier
                   .fillMaxWidth()
                   .clickable { onOpenFile(file.path) }
-                  .padding(horizontal = 16.dp, vertical = 11.dp),
+                  .padding(horizontal = 16.dp, vertical = 12.dp),
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -2051,31 +2035,6 @@ private fun AllTabsClosedState(
                 modifier = Modifier.weight(1f),
               )
             }
-          }
-          HorizontalDivider(color = palette.border.copy(alpha = 0.4f), modifier = Modifier.padding(vertical = 4.dp))
-          Row(
-            modifier =
-              Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onCreateNewFile)
-                .padding(horizontal = 16.dp, vertical = 11.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-          ) {
-            Icon(Icons.Outlined.Add, contentDescription = null, tint = palette.activePillFg, modifier = Modifier.size(18.dp))
-            Text("New File…", style = MaterialTheme.typography.bodyMedium, color = palette.textPrimary)
-          }
-          Row(
-            modifier =
-              Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onOpenExplorer)
-                .padding(horizontal = 16.dp, vertical = 11.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-          ) {
-            Icon(Icons.Outlined.FolderOpen, contentDescription = null, tint = palette.textSecondary, modifier = Modifier.size(18.dp))
-            Text("Project Explorer", style = MaterialTheme.typography.bodyMedium, color = palette.textPrimary)
           }
         }
       }

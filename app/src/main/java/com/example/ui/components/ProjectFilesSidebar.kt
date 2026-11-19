@@ -86,6 +86,7 @@ import com.example.ui.theme.FolderGreen
 import com.example.ui.theme.FolderYellow
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.UiStyleVersion
 import com.example.ui.theme.edgeGlassSurface
 import com.example.ui.theme.rememberGlassBorderStroke
 import com.example.ui.viewmodel.IdeUiState
@@ -183,17 +184,19 @@ fun ProjectFilesSidebar(
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+      val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
       Surface(
         color = palette.chromeSurface,
-        shape = RoundedCornerShape(10.dp),
-        border = rememberGlassBorderStroke(0.75.dp),
+        shape = RoundedCornerShape(if (isV2) 20.dp else 10.dp),
+        border = if (isV2) null else rememberGlassBorderStroke(0.75.dp),
         modifier = Modifier.weight(1f).height(38.dp),
       ) {
         Row(
           modifier = Modifier.fillMaxSize().padding(3.dp),
-          horizontalArrangement = Arrangement.spacedBy(2.dp),
+          horizontalArrangement = Arrangement.spacedBy(4.dp),
+          verticalAlignment = Alignment.CenterVertically,
         ) {
-          SidebarSegmentChip(
+          IconSegmentTab(
             selected = activeSubTab == 0,
             icon = Icons.Outlined.Description,
             label = "Files",
@@ -201,7 +204,7 @@ fun ProjectFilesSidebar(
             onClick = { activeSubTab = 0 },
             modifier = Modifier.weight(1f),
           )
-          SidebarSegmentChip(
+          IconSegmentTab(
             selected = activeSubTab == 1,
             icon = Icons.Outlined.Search,
             label = "Search",
@@ -209,7 +212,7 @@ fun ProjectFilesSidebar(
             onClick = { activeSubTab = 1 },
             modifier = Modifier.weight(1f),
           )
-          SidebarSegmentChip(
+          IconSegmentTab(
             selected = activeSubTab == 2,
             icon = Icons.Outlined.SnippetFolder,
             label = "Snippets",
@@ -525,16 +528,17 @@ fun ProjectFilesSidebar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
           ) {
-            Text(
-              text = "${uiState.ramDbStats.dirtyFilesCount} unsaved edit(s)",
-              style = MaterialTheme.typography.labelSmall,
-              color = AmberWarn,
+            IconToggleRevealText(
+              icon = Icons.Outlined.Description,
+              text = "${uiState.ramDbStats.dirtyFilesCount} edited",
+              tint = AmberWarn,
             )
-            TextButton(onClick = onRevertWorkspaceToImported) {
-              Icon(Icons.Outlined.Restore, contentDescription = null, modifier = Modifier.size(15.dp))
-              Spacer(Modifier.width(4.dp))
-              Text("Revert", fontSize = 12.sp)
-            }
+            IconRevealButton(
+              icon = Icons.Outlined.Restore,
+              revealedLabel = "Revert",
+              onClick = onRevertWorkspaceToImported,
+              height = 32.dp,
+            )
           }
         }
       }
@@ -569,53 +573,7 @@ fun ProjectFilesSidebar(
   }
 }
 
-@Composable
-private fun SidebarSegmentChip(
-  selected: Boolean,
-  icon: ImageVector,
-  label: String,
-  tag: String,
-  onClick: () -> Unit,
-  modifier: Modifier = Modifier,
-) {
-  val palette = LocalIdePalette.current
-  val chipBg by animateColorAsState(
-    targetValue = if (selected) palette.activePillBg else Color.Transparent,
-    animationSpec = tween(160),
-    label = "sidebar_chip_bg",
-  )
-  val chipFg by animateColorAsState(
-    targetValue = if (selected) palette.activePillFg else palette.textSecondary,
-    animationSpec = tween(160),
-    label = "sidebar_chip_fg",
-  )
-  Row(
-    modifier =
-      modifier
-        .fillMaxHeight()
-        .clip(RoundedCornerShape(8.dp))
-        .background(chipBg)
-        .clickable(onClick = onClick)
-        .testTag(tag),
-    verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.Center,
-  ) {
-    Icon(
-      imageVector = icon,
-      contentDescription = label,
-      tint = chipFg,
-      modifier = Modifier.size(16.dp),
-    )
-    Spacer(Modifier.width(4.dp))
-    Text(
-      text = label,
-      fontSize = 11.sp,
-      fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-      color = chipFg,
-      maxLines = 1,
-    )
-  }
-}
+
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable

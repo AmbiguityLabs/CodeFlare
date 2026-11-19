@@ -63,10 +63,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.remote.CfAccount
 import com.example.data.security.AuthMethod
+import com.example.ui.components.IconRevealButton
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.UiStyleVersion
 import com.example.ui.viewmodel.IdeUiState
 
 @Composable
@@ -83,6 +85,7 @@ fun SettingsCloudflarePane(
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   val clipboard = LocalClipboardManager.current
   val creds = uiState.credentials
 
@@ -119,19 +122,28 @@ fun SettingsCloudflarePane(
           horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
           val tone = if (creds != null) EmeraldLive else AmberWarn
-          Surface(
-            color = tone.copy(alpha = 0.12f),
-            shape = RoundedCornerShape(9.dp),
-            border = BorderStroke(0.75.dp, tone.copy(alpha = 0.3f)),
-            modifier = Modifier.size(34.dp),
-          ) {
-            Box(contentAlignment = Alignment.Center) {
-              Icon(
-                imageVector = if (creds != null) Icons.Outlined.CloudDone else Icons.Outlined.CloudOff,
-                contentDescription = null,
-                tint = tone,
-                modifier = Modifier.size(17.dp),
-              )
+          if (isV2) {
+            Icon(
+              imageVector = if (creds != null) Icons.Outlined.CloudDone else Icons.Outlined.CloudOff,
+              contentDescription = null,
+              tint = tone,
+              modifier = Modifier.size(21.dp),
+            )
+          } else {
+            Surface(
+              color = tone.copy(alpha = 0.12f),
+              shape = RoundedCornerShape(9.dp),
+              border = BorderStroke(0.75.dp, tone.copy(alpha = 0.3f)),
+              modifier = Modifier.size(34.dp),
+            ) {
+              Box(contentAlignment = Alignment.Center) {
+                Icon(
+                  imageVector = if (creds != null) Icons.Outlined.CloudDone else Icons.Outlined.CloudOff,
+                  contentDescription = null,
+                  tint = tone,
+                  modifier = Modifier.size(17.dp),
+                )
+              }
             }
           }
           Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
@@ -172,8 +184,8 @@ fun SettingsCloudflarePane(
         if (creds != null) {
           Surface(
             color = palette.editorBg,
-            shape = RoundedCornerShape(10.dp),
-            border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.55f)),
+            shape = RoundedCornerShape(if (isV2) 16.dp else 10.dp),
+            border = if (isV2) null else BorderStroke(0.75.dp, palette.border.copy(alpha = 0.55f)),
             modifier = Modifier.fillMaxWidth(),
           ) {
             Column(
@@ -278,41 +290,31 @@ fun SettingsCloudflarePane(
           }
         }
 
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
+        ) {
           if (creds != null) {
-            OutlinedButton(
-              onClick = onVerifyCredentials,
-              enabled = !uiState.isTestingCfCredentials,
-              shape = RoundedCornerShape(10.dp),
-              border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.7f)),
-              modifier = Modifier.weight(1f).height(40.dp).testTag("settings_test_cf_connection"),
-            ) {
-              if (uiState.isTestingCfCredentials) {
-                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                Spacer(Modifier.width(6.dp))
-              } else {
-                Icon(Icons.Outlined.VerifiedUser, contentDescription = null, modifier = Modifier.size(15.dp))
-                Spacer(Modifier.width(6.dp))
-              }
-              Text("Verify", fontSize = 12.5.sp)
-            }
+            IconRevealButton(
+              icon = Icons.Outlined.VerifiedUser,
+              revealedLabel = "Verify",
+              isBusy = uiState.isTestingCfCredentials,
+              onClick = { if (!uiState.isTestingCfCredentials) onVerifyCredentials() },
+              height = 38.dp,
+              tag = "settings_test_cf_connection",
+            )
           }
-          OutlinedButton(
+          IconRevealButton(
+            icon = Icons.Outlined.Key,
+            revealedLabel = if (creds == null) "Connect" else if (showCredentialEditor) "Close" else "Update",
+            active = showCredentialEditor,
             onClick = {
               onClearCredentialFeedback()
               showCredentialEditor = !showCredentialEditor
             },
-            shape = RoundedCornerShape(10.dp),
-            border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.7f)),
-            modifier = Modifier.weight(1f).height(40.dp).testTag("settings_toggle_credential_editor"),
-          ) {
-            Icon(Icons.Outlined.Key, contentDescription = null, modifier = Modifier.size(15.dp))
-            Spacer(Modifier.width(6.dp))
-            Text(
-              text = if (creds == null) "Connect" else if (showCredentialEditor) "Close" else "Update",
-              fontSize = 12.5.sp,
-            )
-          }
+            height = 38.dp,
+            tag = "settings_toggle_credential_editor",
+          )
         }
 
         uiState.cfCredentialTestMessage?.let { msg ->

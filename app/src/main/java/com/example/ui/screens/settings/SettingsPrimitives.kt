@@ -37,6 +37,7 @@ import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.RocketLaunch
+import androidx.compose.material.icons.outlined.UnfoldMore
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -64,6 +65,7 @@ import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.RoseError
+import com.example.ui.theme.UiStyleVersion
 
 enum class SettingsCategory(
   val title: String,
@@ -86,25 +88,36 @@ fun SettingsGroup(
   content: @Composable ColumnScope.() -> Unit,
 ) {
   val palette = LocalIdePalette.current
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   Column(
     modifier = modifier.fillMaxWidth(),
-    verticalArrangement = Arrangement.spacedBy(6.dp),
+    verticalArrangement = Arrangement.spacedBy(if (isV2) 10.dp else 6.dp),
   ) {
     if (label != null || trailingValue != null) {
       Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = if (isV2) 6.dp else 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
       ) {
         if (label != null) {
-          Text(
-            text = label.uppercase(),
-            fontFamily = JetBrainsMono,
-            fontSize = 9.5.sp,
-            fontWeight = FontWeight.SemiBold,
-            letterSpacing = 0.9.sp,
-            color = palette.textMuted,
-          )
+          if (isV2) {
+            Text(
+              text = label,
+              style = MaterialTheme.typography.bodyMedium,
+              fontSize = 13.5.sp,
+              fontWeight = FontWeight.Medium,
+              color = palette.textSecondary,
+            )
+          } else {
+            Text(
+              text = label.uppercase(),
+              fontFamily = JetBrainsMono,
+              fontSize = 9.5.sp,
+              fontWeight = FontWeight.SemiBold,
+              letterSpacing = 0.9.sp,
+              color = palette.textMuted,
+            )
+          }
         } else {
           Spacer(Modifier.width(1.dp))
         }
@@ -121,8 +134,8 @@ fun SettingsGroup(
     }
     Surface(
       color = palette.chromeSurface,
-      shape = RoundedCornerShape(13.dp),
-      border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.6f)),
+      shape = RoundedCornerShape(if (isV2) 24.dp else 13.dp),
+      border = if (isV2) null else BorderStroke(0.75.dp, palette.border.copy(alpha = 0.6f)),
       modifier = Modifier.fillMaxWidth().animateContentSize(animationSpec = tween(160)),
     ) {
       Column(
@@ -144,6 +157,7 @@ fun SettingsFoldableSection(
   content: @Composable ColumnScope.() -> Unit,
 ) {
   val palette = LocalIdePalette.current
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   var expanded by rememberSaveable(title) { mutableStateOf(initiallyExpanded) }
   val chevronRotation by animateFloatAsState(
     targetValue = if (expanded) 180f else 0f,
@@ -153,8 +167,8 @@ fun SettingsFoldableSection(
 
   Surface(
     color = palette.chromeSurface,
-    shape = RoundedCornerShape(13.dp),
-    border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.6f)),
+    shape = RoundedCornerShape(if (isV2) 24.dp else 13.dp),
+    border = if (isV2) null else BorderStroke(0.75.dp, palette.border.copy(alpha = 0.6f)),
     modifier = modifier.fillMaxWidth().animateContentSize(animationSpec = tween(160)),
   ) {
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -163,51 +177,70 @@ fun SettingsFoldableSection(
           Modifier
             .fillMaxWidth()
             .clickable { expanded = !expanded }
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = if (isV2) 18.dp else 14.dp, vertical = if (isV2) 15.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (isV2) 14.dp else 10.dp),
       ) {
-        Box(
-          modifier =
-            Modifier
-              .size(28.dp)
-              .clip(RoundedCornerShape(8.dp))
-              .background(if (expanded) palette.activePillBg else palette.editorBg)
-              .border(0.75.dp, palette.border.copy(alpha = 0.5f), RoundedCornerShape(8.dp)),
-          contentAlignment = Alignment.Center,
-        ) {
+        if (isV2) {
           Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = if (expanded) palette.activePillFg else palette.textSecondary,
-            modifier = Modifier.size(15.dp),
+            tint = if (expanded) palette.activePillFg else palette.textPrimary,
+            modifier = Modifier.size(20.dp),
           )
+        } else {
+          Box(
+            modifier =
+              Modifier
+                .size(28.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(if (expanded) palette.activePillBg else palette.editorBg)
+                .border(0.75.dp, palette.border.copy(alpha = 0.5f), RoundedCornerShape(8.dp)),
+            contentAlignment = Alignment.Center,
+          ) {
+            Icon(
+              imageVector = icon,
+              contentDescription = null,
+              tint = if (expanded) palette.activePillFg else palette.textSecondary,
+              modifier = Modifier.size(15.dp),
+            )
+          }
         }
         Text(
           text = title,
           style = MaterialTheme.typography.bodyMedium,
-          fontSize = 14.sp,
-          fontWeight = FontWeight.SemiBold,
+          fontSize = if (isV2) 15.5.sp else 14.sp,
+          fontWeight = if (isV2) FontWeight.Normal else FontWeight.SemiBold,
           color = palette.textPrimary,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
           modifier = Modifier.weight(1f),
         )
         if (!summary.isNullOrBlank()) {
-          Surface(
-            color = palette.editorBg,
-            shape = RoundedCornerShape(6.dp),
-            border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.45f)),
-          ) {
+          if (isV2) {
             Text(
               text = summary,
-              fontFamily = JetBrainsMono,
-              fontSize = 10.sp,
-              fontWeight = FontWeight.Medium,
-              color = palette.activePillFg,
+              style = MaterialTheme.typography.bodyMedium,
+              fontSize = 13.5.sp,
+              color = palette.textSecondary,
               maxLines = 1,
-              modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
             )
+          } else {
+            Surface(
+              color = palette.editorBg,
+              shape = RoundedCornerShape(6.dp),
+              border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.45f)),
+            ) {
+              Text(
+                text = summary,
+                fontFamily = JetBrainsMono,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                color = palette.activePillFg,
+                maxLines = 1,
+                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+              )
+            }
           }
         }
         Icon(
@@ -241,11 +274,13 @@ fun SettingsMenuRow(
   selected: Boolean = false,
   statusDotColor: Color? = null,
   showChevron: Boolean = true,
+  useUnfoldIndicator: Boolean = false,
   tag: String? = null,
 ) {
   val palette = LocalIdePalette.current
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   val rowBg by animateColorAsState(
-    targetValue = if (selected) palette.activePillBg.copy(alpha = 0.65f) else Color.Transparent,
+    targetValue = if (selected) palette.activePillBg.copy(alpha = if (isV2) 0.45f else 0.65f) else Color.Transparent,
     animationSpec = tween(140),
     label = "menu_row_bg",
   )
@@ -255,7 +290,12 @@ fun SettingsMenuRow(
     label = "menu_row_icon_bg",
   )
   val iconTint by animateColorAsState(
-    targetValue = if (selected) palette.activePillFg else palette.textSecondary,
+    targetValue =
+      when {
+        selected -> palette.activePillFg
+        isV2 -> palette.textPrimary
+        else -> palette.textSecondary
+      },
     animationSpec = tween(140),
     label = "menu_row_icon_tint",
   )
@@ -264,41 +304,50 @@ fun SettingsMenuRow(
     modifier =
       modifier
         .fillMaxWidth()
-        .heightIn(min = 52.dp)
+        .heightIn(min = if (isV2) 56.dp else 52.dp)
         .background(rowBg)
         .clickable(onClick = onClick)
         .then(if (tag != null) Modifier.testTag(tag) else Modifier)
-        .padding(horizontal = 14.dp, vertical = 10.dp),
+        .padding(horizontal = if (isV2) 18.dp else 14.dp, vertical = if (isV2) 13.dp else 10.dp),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(12.dp),
+    horizontalArrangement = Arrangement.spacedBy(if (isV2) 16.dp else 12.dp),
   ) {
-    Box(
-      modifier =
-        Modifier
-          .size(30.dp)
-          .clip(RoundedCornerShape(8.dp))
-          .background(iconBg)
-          .border(
-            0.75.dp,
-            if (selected) palette.activePillFg.copy(alpha = 0.35f) else palette.border.copy(alpha = 0.5f),
-            RoundedCornerShape(8.dp),
-          ),
-      contentAlignment = Alignment.Center,
-    ) {
+    if (isV2) {
       Icon(
         imageVector = icon,
         contentDescription = null,
         tint = iconTint,
-        modifier = Modifier.size(16.dp),
+        modifier = Modifier.size(21.dp),
       )
+    } else {
+      Box(
+        modifier =
+          Modifier
+            .size(30.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(iconBg)
+            .border(
+              0.75.dp,
+              if (selected) palette.activePillFg.copy(alpha = 0.35f) else palette.border.copy(alpha = 0.5f),
+              RoundedCornerShape(8.dp),
+            ),
+        contentAlignment = Alignment.Center,
+      ) {
+        Icon(
+          imageVector = icon,
+          contentDescription = null,
+          tint = iconTint,
+          modifier = Modifier.size(16.dp),
+        )
+      }
     }
 
     Text(
       text = title,
       style = MaterialTheme.typography.bodyMedium,
-      fontSize = 14.5.sp,
-      fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-      color = if (selected) palette.textPrimary else palette.textPrimary,
+      fontSize = if (isV2) 15.5.sp else 14.5.sp,
+      fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+      color = palette.textPrimary,
       maxLines = 1,
       overflow = TextOverflow.Ellipsis,
       modifier = Modifier.weight(1f),
@@ -317,19 +366,26 @@ fun SettingsMenuRow(
     if (!value.isNullOrBlank()) {
       Text(
         text = value,
-        fontFamily = JetBrainsMono,
-        fontSize = 11.sp,
-        color = if (selected) palette.activePillFg else palette.textMuted,
+        fontFamily = if (isV2) MaterialTheme.typography.bodyMedium.fontFamily else JetBrainsMono,
+        fontSize = if (isV2) 14.sp else 11.sp,
+        color = if (selected) palette.activePillFg else palette.textSecondary,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
     }
 
-    if (showChevron) {
+    if (useUnfoldIndicator) {
+      Icon(
+        imageVector = Icons.Outlined.UnfoldMore,
+        contentDescription = null,
+        tint = palette.textSecondary,
+        modifier = Modifier.size(18.dp),
+      )
+    } else if (showChevron) {
       Icon(
         imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
         contentDescription = null,
-        tint = palette.textMuted.copy(alpha = 0.7f),
+        tint = palette.textMuted.copy(alpha = 0.75f),
         modifier = Modifier.size(18.dp),
       )
     }
@@ -342,9 +398,10 @@ fun SettingsHairlineDivider(
   startIndent: Dp = 0.dp,
 ) {
   val palette = LocalIdePalette.current
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   HorizontalDivider(
-    color = palette.border.copy(alpha = 0.4f),
-    thickness = 0.75.dp,
+    color = if (isV2) palette.border else palette.border.copy(alpha = 0.4f),
+    thickness = if (isV2) 0.5.dp else 0.75.dp,
     modifier = modifier.padding(start = startIndent),
   )
 }
@@ -359,15 +416,16 @@ fun SettingsToggleRow(
   horizontalPadding: Dp = 14.dp,
 ) {
   val palette = LocalIdePalette.current
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   Row(
     modifier =
       modifier
         .fillMaxWidth()
-        .heightIn(min = 50.dp)
+        .heightIn(min = if (isV2) 54.dp else 50.dp)
         .clickable(role = Role.Switch) { onCheckedChange(!checked) }
-        .padding(horizontal = horizontalPadding, vertical = 10.dp),
+        .padding(horizontal = if (isV2 && horizontalPadding == 14.dp) 18.dp else horizontalPadding, vertical = 10.dp),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(12.dp),
+    horizontalArrangement = Arrangement.spacedBy(if (isV2) 16.dp else 12.dp),
   ) {
     if (leadingIcon != null) {
       val iconBg by animateColorAsState(
@@ -376,33 +434,42 @@ fun SettingsToggleRow(
         label = "toggle_icon_bg",
       )
       val iconTint by animateColorAsState(
-        targetValue = if (checked) palette.activePillFg else palette.textMuted,
+        targetValue = if (checked) palette.activePillFg else if (isV2) palette.textPrimary else palette.textMuted,
         animationSpec = tween(140),
         label = "toggle_icon_tint",
       )
-      Box(
-        modifier =
-          Modifier
-            .size(28.dp)
-            .clip(RoundedCornerShape(7.dp))
-            .background(iconBg)
-            .border(0.75.dp, palette.border.copy(alpha = 0.45f), RoundedCornerShape(7.dp)),
-        contentAlignment = Alignment.Center,
-      ) {
+      if (isV2) {
         Icon(
           imageVector = leadingIcon,
           contentDescription = null,
           tint = iconTint,
-          modifier = Modifier.size(15.dp),
+          modifier = Modifier.size(20.dp),
         )
+      } else {
+        Box(
+          modifier =
+            Modifier
+              .size(28.dp)
+              .clip(RoundedCornerShape(7.dp))
+              .background(iconBg)
+              .border(0.75.dp, palette.border.copy(alpha = 0.45f), RoundedCornerShape(7.dp)),
+          contentAlignment = Alignment.Center,
+        ) {
+          Icon(
+            imageVector = leadingIcon,
+            contentDescription = null,
+            tint = iconTint,
+            modifier = Modifier.size(15.dp),
+          )
+        }
       }
     }
 
     Text(
       text = title,
       style = MaterialTheme.typography.bodyMedium,
-      fontSize = 14.sp,
-      fontWeight = FontWeight.Medium,
+      fontSize = if (isV2) 15.sp else 14.sp,
+      fontWeight = if (isV2) FontWeight.Normal else FontWeight.Medium,
       color = palette.textPrimary,
       maxLines = 1,
       overflow = TextOverflow.Ellipsis,

@@ -40,9 +40,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.AccountTree
+import androidx.compose.material.icons.outlined.Api
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Difference
@@ -53,6 +55,7 @@ import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Http
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.MergeType
@@ -61,13 +64,16 @@ import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Sensors
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Tag
+import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
@@ -132,9 +138,13 @@ import com.example.ui.components.EdgeMenuUiLayersPanel
 import com.example.ui.components.EdgeBottomDock
 import com.example.ui.components.EdgeBottomDockItem
 import com.example.ui.components.GitHubAndDiffPanel
+import com.example.ui.components.IconRevealButton
+import com.example.ui.components.IconSegmentTab
+import com.example.ui.components.IconToggleRevealText
 import com.example.ui.components.IdeCoreSheetTab
 import com.example.ui.components.IdeSearchAndHistorySheet
 import com.example.ui.components.LiveTailView
+import com.example.ui.components.LocalScriptRunPane
 import com.example.ui.components.NewDirectoryDialog
 import com.example.ui.components.NewModuleFileDialog
 import com.example.ui.components.NewWorkerDialog
@@ -150,6 +160,7 @@ import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.UiStyleVersion
 import com.example.ui.theme.edgeGlassDock
 import com.example.ui.theme.edgeGlassSurface
 import com.example.ui.theme.rememberGlassBorderStroke
@@ -654,6 +665,9 @@ fun IdeWorkspaceScreen(
         PaletteCommand("Code Mode", "MODE") {
           viewModel.setProjectMode(ProjectMode.CODE)
         },
+        PaletteCommand("Run Locally", "TEST") {
+          viewModel.runWorkspaceLocally(openTestWorkspace = true)
+        },
         PaletteCommand("Worker Preview", "TEST") {
           viewModel.openDeployedWorkerPreview(maximizeWindow = true)
         },
@@ -851,121 +865,85 @@ fun IdeWorkspaceScreen(
               )
             }
 
-            Column(
+            Row(
               modifier =
                 Modifier
                   .weight(1f)
                   .clip(RoundedCornerShape(8.dp))
                   .clickable { showCommandPalette = true }
-                  .padding(horizontal = 4.dp, vertical = 2.dp),
-              verticalArrangement = Arrangement.spacedBy(1.dp),
+                  .padding(horizontal = 4.dp, vertical = 4.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(5.dp),
             ) {
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-              ) {
-                Text(
-                  text = uiState.workspace?.scriptName ?: "Project",
-                  style = MaterialTheme.typography.titleSmall,
-                  fontWeight = FontWeight.SemiBold,
-                  color = palette.textPrimary,
-                  maxLines = 1,
-                  overflow = TextOverflow.Ellipsis,
-                  modifier = Modifier.weight(1f, fill = false),
-                )
-                Icon(
-                  imageVector = Icons.Outlined.Search,
-                  contentDescription = "Open Command Palette",
-                  tint = palette.textMuted,
-                  modifier = Modifier.size(13.dp),
-                )
-              }
+              Text(
+                text = uiState.workspace?.scriptName ?: "Project",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = palette.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+              )
+              Icon(
+                imageVector = Icons.Outlined.Search,
+                contentDescription = "Open Command Palette",
+                tint = palette.textMuted,
+                modifier = Modifier.size(14.dp),
+              )
               val fileCount = uiState.workspace?.files?.count { !it.isVirtualReadOnly } ?: 0
               val dirtyCount = uiState.workspace?.files?.count { it.isDirty } ?: 0
-              Text(
+              IconToggleRevealText(
+                icon = Icons.Outlined.Info,
                 text =
                   when {
                     dirtyCount > 0 -> "$fileCount files · $dirtyCount edited"
-                    uiState.isLocalScratchpad -> "$fileCount files · Local Dir"
+                    uiState.isLocalScratchpad -> "$fileCount files · Local"
                     else -> "$fileCount files · Synced"
                   },
-                fontFamily = JetBrainsMono,
-                fontSize = 10.sp,
-                color = if (dirtyCount > 0) AmberWarn else palette.textMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                tint = if (dirtyCount > 0) AmberWarn else palette.textMuted,
               )
             }
 
             if (!isExpanded && uiState.workspace != null) {
-              Surface(
+              IconRevealButton(
+                icon = Icons.Outlined.FolderOpen,
+                revealedLabel = "Files",
                 onClick = { scope.launch { drawerState.open() } },
-                shape = CircleShape,
-                color = palette.chromeSurface,
-                border = rememberGlassBorderStroke(0.75.dp),
-                modifier = Modifier.size(34.dp).testTag("workspace_quick_files_button"),
-              ) {
-                Box(contentAlignment = Alignment.Center) {
-                  Icon(
-                    imageVector = Icons.Outlined.FolderOpen,
-                    contentDescription = "Open Project Files",
-                    tint = palette.textSecondary,
-                    modifier = Modifier.size(17.dp),
-                  )
-                }
-              }
+                height = 34.dp,
+                tag = "workspace_quick_files_button",
+              )
             }
 
             if (uiState.workspace != null) {
+              IconRevealButton(
+                icon = Icons.Outlined.PlayArrow,
+                revealedLabel = "Run Local",
+                isBusy = uiState.isRunningLocalScript,
+                active = uiState.projectMode == ProjectMode.TEST && uiState.activeBottomTab == BottomPanelTab.LOCAL_RUN,
+                onClick = { viewModel.runWorkspaceLocally(openTestWorkspace = true) },
+                height = 34.dp,
+                tag = "workspace_local_run_button",
+              )
+
               if (uiState.isLocalScratchpad) {
-                Surface(
+                IconRevealButton(
+                  icon = Icons.Outlined.CloudOff,
+                  revealedLabel = "Connect",
+                  active = true,
                   onClick = viewModel::exitScratchpadToAuth,
-                  shape = RoundedCornerShape(10.dp),
-                  color = palette.activePillBg,
-                  border = rememberGlassBorderStroke(0.75.dp),
-                  modifier = Modifier.testTag("connect_cloudflare_button"),
-                ) {
-                  Text(
-                    text = "Connect",
-                    color = palette.activePillFg,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
-                  )
-                }
+                  height = 34.dp,
+                  tag = "connect_cloudflare_button",
+                )
               } else {
-                Surface(
+                IconRevealButton(
+                  icon = Icons.Outlined.CloudUpload,
+                  revealedLabel = if (uiState.hasUnsavedChanges) "Deploy*" else "Deploy",
+                  active = uiState.hasUnsavedChanges,
+                  isBusy = uiState.isDeploying,
                   onClick = { if (!uiState.isDeploying) viewModel.deployActiveWorker() },
-                  shape = RoundedCornerShape(10.dp),
-                  color = if (uiState.hasUnsavedChanges) palette.activePillBg else palette.chromeSurface,
-                  border =
-                    if (uiState.hasUnsavedChanges) BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.35f))
-                    else rememberGlassBorderStroke(0.75.dp),
-                  modifier = Modifier.testTag("deploy_worker_button"),
-                ) {
-                  Row(
-                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
-                  ) {
-                    if (uiState.isDeploying) {
-                      CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                    } else {
-                      Icon(
-                        imageVector = Icons.Outlined.CloudUpload,
-                        contentDescription = stringResource(R.string.cd_deploy_worker),
-                        tint = if (uiState.hasUnsavedChanges) palette.activePillFg else palette.textPrimary,
-                        modifier = Modifier.size(16.dp),
-                      )
-                      Text(
-                        text = if (uiState.hasUnsavedChanges) "Deploy*" else "Deploy",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (uiState.hasUnsavedChanges) palette.activePillFg else palette.textPrimary,
-                      )
-                    }
-                  }
-                }
+                  height = 34.dp,
+                  tag = "deploy_worker_button",
+                )
               }
             }
 
@@ -1060,6 +1038,7 @@ fun IdeWorkspaceScreen(
                       },
                       onOpenLocalHistory = { activeIdeSheetTab = IdeCoreSheetTab.LOCAL_HISTORY },
                       onOpenProjectSearch = { activeIdeSheetTab = IdeCoreSheetTab.FIND_IN_FILES },
+                      onRunLocalScript = { viewModel.runWorkspaceLocally(openTestWorkspace = true) },
                       editorCommandRequest = editorCommandRequest,
                       modifier = Modifier.fillMaxSize(),
                     )
@@ -1200,13 +1179,7 @@ fun IdeWorkspaceScreen(
 
             EdgeMenuHeader(
               title = activeWs?.scriptName ?: "Project",
-              subtitle =
-                when {
-                  menuDirtyCount > 0 -> "$menuDirtyCount edited · unsaved"
-                  uiState.isLocalScratchpad -> "Local workspace"
-                  else -> "Synced with Cloudflare"
-                },
-              badgeText = if (activeWs != null) "$menuFileCount files" else null,
+              badgeText = if (activeWs != null) "$menuFileCount" else null,
               leadingIcon = Icons.Outlined.Code,
             )
 
@@ -1527,31 +1500,30 @@ fun IdeWorkspaceScreen(
               ),
         ) {
           Row(
-            modifier = Modifier.edgeGlassSurface(RoundedCornerShape(999.dp), elevated = true),
+            modifier =
+              Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .background(palette.chromeSurface)
+                .then(
+                  if (palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED) Modifier
+                  else Modifier.edgeGlassSurface(RoundedCornerShape(999.dp), elevated = true),
+                ),
             verticalAlignment = Alignment.CenterVertically,
           ) {
-            Row(
+            Box(
               modifier =
                 Modifier
                   .clip(RoundedCornerShape(topStart = 999.dp, bottomStart = 999.dp))
                   .clickable { viewModel.toggleAllUiChrome(false) }
-                  .padding(start = 11.dp, end = 9.dp, top = 8.dp, bottom = 8.dp)
+                  .padding(horizontal = 12.dp, vertical = 9.dp)
                   .testTag("show_workspace_bottom_menus_button"),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(4.dp),
+              contentAlignment = Alignment.Center,
             ) {
               Icon(
                 imageVector = Icons.Outlined.KeyboardArrowUp,
-                contentDescription = "Restore all UI layers",
+                contentDescription = "Restore all UI layers ($visibleLayersCount/4)",
                 tint = palette.activePillFg,
-                modifier = Modifier.size(16.dp),
-              )
-              Text(
-                text = if (visibleLayersCount == 0) "Show UI" else "$visibleLayersCount/4",
-                fontFamily = JetBrainsMono,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = palette.textPrimary,
+                modifier = Modifier.size(18.dp),
               )
             }
             Box(
@@ -1566,7 +1538,7 @@ fun IdeWorkspaceScreen(
                 Modifier
                   .clip(RoundedCornerShape(topEnd = 999.dp, bottomEnd = 999.dp))
                   .clickable { overflowMenuOpen = true }
-                  .padding(start = 8.dp, end = 10.dp, top = 8.dp, bottom = 8.dp)
+                  .padding(horizontal = 10.dp, vertical = 9.dp)
                   .testTag("zen_overflow_menu_button"),
               contentAlignment = Alignment.Center,
             ) {
@@ -1618,9 +1590,9 @@ private fun ProjectTestModeWorkspace(
   val palette = LocalIdePalette.current
   val activeTab =
     when (uiState.activeBottomTab) {
-      BottomPanelTab.WORKER_PREVIEW, BottomPanelTab.WORKER_TEST, BottomPanelTab.API_TESTER ->
+      BottomPanelTab.LOCAL_RUN, BottomPanelTab.WORKER_PREVIEW, BottomPanelTab.WORKER_TEST, BottomPanelTab.API_TESTER ->
         uiState.activeBottomTab
-      else -> BottomPanelTab.WORKER_PREVIEW
+      else -> BottomPanelTab.LOCAL_RUN
     }
 
   Column(modifier = Modifier.fillMaxSize().background(palette.chromeBg)) {
@@ -1634,22 +1606,33 @@ private fun ProjectTestModeWorkspace(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
       ) {
-        ModeSegmentChip(
+        IconSegmentTab(
+          icon = Icons.Outlined.Terminal,
+          label = "Local Run",
+          selected = activeTab == BottomPanelTab.LOCAL_RUN,
+          tag = "test_segment_local_run",
+          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.LOCAL_RUN) },
+          modifier = Modifier.weight(1f),
+        )
+        IconSegmentTab(
+          icon = Icons.Outlined.Visibility,
           label = "Preview",
           selected = activeTab == BottomPanelTab.WORKER_PREVIEW,
           tag = "test_segment_preview",
           onClick = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
           modifier = Modifier.weight(1f),
         )
-        ModeSegmentChip(
-          label = "Worker HTTP",
+        IconSegmentTab(
+          icon = Icons.Outlined.Http,
+          label = "HTTP",
           selected = activeTab == BottomPanelTab.WORKER_TEST,
           tag = "test_segment_worker_http",
           onClick = { viewModel.openWorkerTestWindow(maximizeWindow = true) },
           modifier = Modifier.weight(1f),
         )
-        ModeSegmentChip(
-          label = "API Tester",
+        IconSegmentTab(
+          icon = Icons.Outlined.Api,
+          label = "API",
           selected = activeTab == BottomPanelTab.API_TESTER,
           tag = "test_segment_api_tester",
           onClick = { viewModel.toggleBottomPanel(BottomPanelTab.API_TESTER) },
@@ -1657,7 +1640,7 @@ private fun ProjectTestModeWorkspace(
         )
         IconButton(
           onClick = { viewModel.setPreviewFullScreen(true) },
-          modifier = Modifier.size(30.dp).testTag("test_workspace_fullscreen_button"),
+          modifier = Modifier.size(32.dp).testTag("test_workspace_fullscreen_button"),
         ) {
           Icon(
             imageVector = Icons.Outlined.Fullscreen,
@@ -1675,36 +1658,45 @@ private fun ProjectTestModeWorkspace(
           Modifier
             .fillMaxWidth()
             .background(palette.chromeSurface)
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
       ) {
         Text(
-          text = if (activeTab == BottomPanelTab.WORKER_TEST) "Worker HTTP Tester" else "API Tester",
+          text =
+            when (activeTab) {
+              BottomPanelTab.LOCAL_RUN -> "Local Runner"
+              BottomPanelTab.WORKER_TEST -> "Worker HTTP"
+              else -> "API Tester"
+            },
           style = MaterialTheme.typography.labelMedium,
           fontWeight = FontWeight.SemiBold,
           color = palette.textPrimary,
         )
-        Surface(
+        IconRevealButton(
+          icon = Icons.Outlined.FullscreenExit,
+          revealedLabel = "Exit",
+          active = true,
           onClick = { viewModel.setPreviewFullScreen(false) },
-          color = palette.activePillBg,
-          shape = RoundedCornerShape(8.dp),
-        ) {
-          Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-          ) {
-            Icon(Icons.Outlined.FullscreenExit, contentDescription = "Exit Fullscreen", tint = palette.activePillFg, modifier = Modifier.size(15.dp))
-            Text("Exit", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, color = palette.activePillFg)
-          }
-        }
+          height = 30.dp,
+        )
       }
       HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
     }
 
     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
       when (activeTab) {
+        BottomPanelTab.LOCAL_RUN ->
+          LocalScriptRunPane(
+            uiState = uiState,
+            onPathChange = { p -> viewModel.updateLocalRunRequest(path = p) },
+            onMethodChange = { m -> viewModel.updateLocalRunRequest(method = m) },
+            onBodyChange = { b -> viewModel.updateLocalRunRequest(body = b) },
+            onRunLocally = { viewModel.runWorkspaceLocally(openTestWorkspace = true) },
+            onNotifyStatus = viewModel::showStatus,
+            modifier = Modifier.fillMaxSize(),
+          )
+
         BottomPanelTab.WORKER_PREVIEW ->
           DeployedWorkerPreviewPane(
             uiState = uiState,
@@ -1787,10 +1779,11 @@ private fun ProjectConsoleModeWorkspace(
           .fillMaxWidth()
           .edgeGlassDock(shape = RectangleShape)
           .padding(horizontal = 10.dp, vertical = 6.dp),
-      horizontalArrangement = Arrangement.spacedBy(5.dp),
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
       verticalAlignment = Alignment.CenterVertically,
     ) {
-      ModeSegmentChip(
+      IconSegmentTab(
+        icon = Icons.Outlined.Sensors,
         label = "Live Tail",
         selected = activeTab == BottomPanelTab.TAIL_LOGS,
         tag = "console_segment_tail",
@@ -1799,7 +1792,8 @@ private fun ProjectConsoleModeWorkspace(
         onClick = { viewModel.toggleBottomPanel(BottomPanelTab.TAIL_LOGS) },
         modifier = Modifier.weight(1f),
       )
-      ModeSegmentChip(
+      IconSegmentTab(
+        icon = Icons.Outlined.WarningAmber,
         label = "Problems",
         selected = activeTab == BottomPanelTab.PROBLEMS,
         tag = "console_segment_problems",
@@ -1808,12 +1802,13 @@ private fun ProjectConsoleModeWorkspace(
         onClick = { viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS) },
         modifier = Modifier.weight(1f),
       )
-      ModeSegmentChip(
+      IconSegmentTab(
+        icon = Icons.Outlined.Dvr,
         label = "Log",
         selected = activeTab == BottomPanelTab.CONSOLE,
         tag = "console_segment_log",
         onClick = { viewModel.toggleBottomPanel(BottomPanelTab.CONSOLE) },
-        modifier = Modifier.weight(0.8f),
+        modifier = Modifier.weight(1f),
       )
     }
 
@@ -1835,76 +1830,6 @@ private fun ProjectConsoleModeWorkspace(
 
         else ->
           ConsoleView(uiState = uiState)
-      }
-    }
-  }
-}
-
-@Composable
-private fun ModeSegmentChip(
-  label: String,
-  selected: Boolean,
-  tag: String,
-  onClick: () -> Unit,
-  modifier: Modifier = Modifier,
-  badgeText: String? = null,
-  badgeColor: Color? = null,
-) {
-  val palette = LocalIdePalette.current
-  val fg by animateColorAsState(
-    targetValue = if (selected) palette.activePillFg else palette.textSecondary,
-    animationSpec = tween(160),
-    label = "mode_chip_fg",
-  )
-  val bg by animateColorAsState(
-    targetValue = if (selected) palette.activePillBg else palette.glassSurface,
-    animationSpec = tween(160),
-    label = "mode_chip_bg",
-  )
-
-  Surface(
-    onClick = onClick,
-    shape = RoundedCornerShape(8.dp),
-    color = bg,
-    border =
-      if (selected) BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.35f))
-      else rememberGlassBorderStroke(0.75.dp),
-    modifier = modifier.height(28.dp).testTag(tag),
-  ) {
-    Row(
-      modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.Center,
-    ) {
-      Text(
-        text = label,
-        fontSize = 11.sp,
-        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-        color = fg,
-        maxLines = 1,
-        softWrap = false,
-        overflow = TextOverflow.Ellipsis,
-      )
-      if (!badgeText.isNullOrBlank()) {
-        Spacer(Modifier.width(4.dp))
-        val bColor = badgeColor ?: palette.activePillFg
-        Box(
-          modifier =
-            Modifier
-              .clip(RoundedCornerShape(4.dp))
-              .background(bColor.copy(alpha = 0.16f))
-              .padding(horizontal = 4.dp, vertical = 1.dp),
-        ) {
-          Text(
-            text = badgeText,
-            fontFamily = JetBrainsMono,
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            color = bColor,
-            maxLines = 1,
-            softWrap = false,
-          )
-        }
       }
     }
   }

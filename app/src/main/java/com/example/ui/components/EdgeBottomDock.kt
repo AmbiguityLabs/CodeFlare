@@ -1,10 +1,15 @@
 package com.example.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -14,7 +19,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -46,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.UiStyleVersion
 import com.example.ui.theme.edgeGlassDock
 
 data class EdgeBottomDockItem(
@@ -66,17 +71,21 @@ fun EdgeBottomDock(
   hideDockTestTag: String = "hide_bottom_dock_button",
 ) {
   val palette = LocalIdePalette.current
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
 
   Column(
     modifier = modifier.fillMaxWidth().edgeGlassDock(shape = RectangleShape),
   ) {
-    HorizontalDivider(color = palette.border.copy(alpha = 0.55f), thickness = 0.75.dp)
+    HorizontalDivider(
+      color = if (isV2) palette.border else palette.border.copy(alpha = 0.55f),
+      thickness = if (isV2) 0.5.dp else 0.75.dp,
+    )
     Row(
       modifier =
         Modifier
           .fillMaxWidth()
-          .height(58.dp)
-          .padding(horizontal = 8.dp, vertical = 4.dp),
+          .height(54.dp)
+          .padding(horizontal = 10.dp, vertical = 6.dp),
       horizontalArrangement = Arrangement.SpaceEvenly,
       verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -84,11 +93,6 @@ fun EdgeBottomDock(
         val interactionSource = remember(item.testTag) { MutableInteractionSource() }
         val active = item.selected
 
-        val pillWidth by animateDpAsState(
-          targetValue = if (active) 52.dp else 30.dp,
-          animationSpec = tween(durationMillis = 190, easing = FastOutSlowInEasing),
-          label = "dock_pill_w",
-        )
         val pillBg by animateColorAsState(
           targetValue = if (active) palette.activePillBg else Color.Transparent,
           animationSpec = tween(durationMillis = 180),
@@ -99,23 +103,17 @@ fun EdgeBottomDock(
           animationSpec = tween(durationMillis = 160),
           label = "dock_icon_tint",
         )
-        val labelColor by animateColorAsState(
-          targetValue = if (active) palette.textPrimary else palette.textMuted,
-          animationSpec = tween(durationMillis = 160),
-          label = "dock_label_color",
-        )
         val iconScale by animateFloatAsState(
-          targetValue = if (active) 1.05f else 1f,
+          targetValue = if (active) 1.06f else 1f,
           animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
           label = "dock_icon_scale",
         )
 
-        Column(
+        Box(
           modifier =
             Modifier
-              .weight(1f)
-              .fillMaxHeight()
-              .clip(RoundedCornerShape(10.dp))
+              .height(38.dp)
+              .clip(RoundedCornerShape(999.dp))
               .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -123,64 +121,76 @@ fun EdgeBottomDock(
                 onClick = item.onClick,
               )
               .testTag(item.testTag),
-          horizontalAlignment = Alignment.CenterHorizontally,
-          verticalArrangement = Arrangement.Center,
+          contentAlignment = Alignment.Center,
         ) {
-          Box(contentAlignment = Alignment.Center) {
-            Surface(
-              color = pillBg,
-              shape = RoundedCornerShape(999.dp),
-              border = if (active) BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.30f)) else null,
-              modifier = Modifier.width(pillWidth).height(28.dp),
+          Surface(
+            color = pillBg,
+            shape = RoundedCornerShape(999.dp),
+            border =
+              if (active && !isV2) BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.30f))
+              else null,
+            modifier = Modifier.height(36.dp).animateContentSize(animationSpec = tween(180)),
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = if (active) 14.dp else 12.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.Center,
             ) {
-              Box(contentAlignment = Alignment.Center) {
+              Box(contentAlignment = Alignment.TopEnd) {
                 Icon(
                   imageVector = item.icon,
                   contentDescription = item.label,
                   tint = iconTint,
                   modifier =
                     Modifier
-                      .size(18.dp)
+                      .size(19.dp)
                       .graphicsLayer {
                         scaleX = iconScale
                         scaleY = iconScale
                       },
                 )
+                if (!item.badgeText.isNullOrBlank()) {
+                  val bColor = item.badgeColor ?: palette.ctaBg
+                  Box(
+                    modifier =
+                      Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(bColor)
+                        .padding(horizontal = 3.5.dp, vertical = 0.5.dp),
+                  ) {
+                    Text(
+                      text = item.badgeText,
+                      fontFamily = JetBrainsMono,
+                      fontSize = 7.5.sp,
+                      fontWeight = FontWeight.Bold,
+                      color = Color(0xFF141806),
+                      maxLines = 1,
+                      softWrap = false,
+                    )
+                  }
+                }
               }
-            }
-            if (!item.badgeText.isNullOrBlank()) {
-              val bColor = item.badgeColor ?: palette.ctaBg
-              Box(
-                modifier =
-                  Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(end = 2.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(bColor)
-                    .padding(horizontal = 4.5.dp, vertical = 1.dp),
+
+              AnimatedVisibility(
+                visible = active,
+                enter = fadeIn(tween(150)) + expandHorizontally(tween(180)),
+                exit = fadeOut(tween(110)) + shrinkHorizontally(tween(140)),
               ) {
-                Text(
-                  text = item.badgeText,
-                  fontFamily = JetBrainsMono,
-                  fontSize = 8.sp,
-                  fontWeight = FontWeight.Bold,
-                  color = Color(0xFF141806),
-                  maxLines = 1,
-                  softWrap = false,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                  Spacer(Modifier.width(6.dp))
+                  Text(
+                    text = item.label,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = palette.activePillFg,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                  )
+                }
               }
             }
           }
-          Spacer(Modifier.height(2.dp))
-          Text(
-            text = item.label,
-            fontSize = 10.5.sp,
-            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-            color = labelColor,
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Ellipsis,
-          )
         }
       }
 
@@ -189,11 +199,11 @@ fun EdgeBottomDock(
           onClick = onHideDock,
           shape = CircleShape,
           color = palette.chromeSurface,
-          border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.7f)),
+          border = if (isV2) null else BorderStroke(0.75.dp, palette.border.copy(alpha = 0.7f)),
           modifier =
             Modifier
               .padding(start = 2.dp, end = 4.dp)
-              .size(32.dp)
+              .size(34.dp)
               .testTag(hideDockTestTag),
         ) {
           Box(contentAlignment = Alignment.Center) {
@@ -201,7 +211,7 @@ fun EdgeBottomDock(
               imageVector = Icons.Outlined.KeyboardArrowDown,
               contentDescription = "Hide bottom menu",
               tint = palette.textSecondary,
-              modifier = Modifier.size(17.dp),
+              modifier = Modifier.size(18.dp),
             )
           }
         }

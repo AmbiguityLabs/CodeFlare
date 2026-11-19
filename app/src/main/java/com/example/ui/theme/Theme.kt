@@ -74,10 +74,11 @@ fun EdgeCodeTheme(
   darkTheme: Boolean = true,
   dynamicColor: Boolean = false,
   themePreset: EditorThemePreset = EditorThemePreset.OLIVE_OBSIDIAN,
+  uiStyle: UiStyleVersion = UiStyleVersion.V1_DEFAULT,
   content: @Composable () -> Unit,
 ) {
   val context = LocalContext.current
-  val palette = remember(darkTheme, themePreset) { paletteFor(darkTheme, themePreset) }
+  val palette = remember(darkTheme, themePreset, uiStyle) { paletteFor(darkTheme, themePreset, uiStyle) }
   val colorScheme =
     when {
       dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {

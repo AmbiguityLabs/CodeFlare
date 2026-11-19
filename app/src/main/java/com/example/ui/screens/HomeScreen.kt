@@ -62,6 +62,7 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.Style
 import androidx.compose.material.icons.outlined.Web
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
@@ -108,6 +109,8 @@ import com.example.ui.components.CloudflarePagesPanel
 import com.example.ui.components.EdgeBottomDock
 import com.example.ui.components.EdgeBottomDockItem
 import com.example.ui.components.GitHubAndDiffPanel
+import com.example.ui.components.IconRevealButton
+import com.example.ui.components.IconToggleRevealText
 import com.example.ui.components.NewWorkerDialog
 import com.example.ui.components.RenameWorkerDialog
 import com.example.ui.components.ZipImportPreviewDialog
@@ -115,6 +118,7 @@ import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.UiStyleVersion
 import com.example.ui.theme.edgeGlassSurface
 import com.example.ui.theme.rememberGlassBorderStroke
 import com.example.ui.viewmodel.HomeTab
@@ -503,209 +507,112 @@ fun HomeScreen(
     containerColor = palette.chromeBg,
     snackbarHost = { SnackbarHost(snackbarHostState) },
     topBar = {
+      val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
+      val activeStyle = UiStyleVersion.fromKey(uiState.editorSettings.uiStyleVersion)
       Column(modifier = Modifier.background(palette.chromeBg).statusBarsPadding()) {
         Row(
           modifier =
             Modifier
               .fillMaxWidth()
-              .padding(horizontal = 20.dp, vertical = 14.dp),
+              .padding(horizontal = 18.dp, vertical = 12.dp),
           verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(10.dp),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-          Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-              text =
-                when (uiState.homeTab) {
-                  HomeTab.PROJECTS -> "Your projects"
-                  HomeTab.PAGES -> "Cloudflare Pages"
-                  HomeTab.INFRA -> "Edge Infrastructure"
-                },
-              fontSize = 24.sp,
-              fontWeight = FontWeight.Bold,
-              letterSpacing = (-0.3).sp,
-              color = palette.textPrimary,
+          Text(
+            text =
+              when (uiState.homeTab) {
+                HomeTab.PROJECTS -> "EdgeCode"
+                HomeTab.PAGES -> "Pages"
+                HomeTab.INFRA -> "Infra"
+              },
+            fontSize = if (isV2) 22.sp else 24.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = (-0.3).sp,
+            color = palette.textPrimary,
+            modifier = Modifier.weight(1f),
+          )
+
+          if (!uiState.isLocalScratchpad && uiState.accounts.isNotEmpty()) {
+            Box {
+              IconRevealButton(
+                icon = Icons.Outlined.CloudQueue,
+                revealedLabel = uiState.selectedAccount?.name?.let(::formatAccountDisplayName) ?: "Account",
+                statusDotColor = EmeraldLive,
+                onClick = { accountMenuOpen = true },
+                tag = "home_account_button",
+              )
+              EdgeMenu(
+                expanded = accountMenuOpen,
+                onDismissRequest = { accountMenuOpen = false },
+                minWidth = 224.dp,
+                maxWidth = 280.dp,
+              ) {
+                EdgeMenuHeader(
+                  title = "Cloudflare Accounts",
+                  badgeText = "${uiState.accounts.size}",
+                  leadingIcon = Icons.Outlined.CloudQueue,
+                )
+                uiState.accounts.forEach { acc ->
+                  EdgeMenuCompactItem(
+                    label = formatAccountDisplayName(acc.name),
+                    icon = Icons.Outlined.CloudQueue,
+                    selected = acc.id == uiState.selectedAccount?.id,
+                    onClick = {
+                      accountMenuOpen = false
+                      viewModel.selectAccount(acc)
+                    },
+                  )
+                }
+              }
+            }
+
+            IconRevealButton(
+              icon = Icons.Outlined.Language,
+              revealedLabel =
+                if (uiState.accountSubdomain.isNotBlank()) "${uiState.accountSubdomain}.workers.dev"
+                else "Subdomain",
+              active = uiState.accountSubdomain.isNotBlank(),
+              onClick = { showChangeSubdomainDialog = true },
+              tag = "home_subdomain_chip",
             )
-            if (!uiState.isLocalScratchpad && uiState.accounts.isNotEmpty()) {
-              Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-              ) {
-                Box {
-                  Surface(
-                    onClick = { accountMenuOpen = true },
-                    shape = RoundedCornerShape(999.dp),
-                    color = palette.glassSurface,
-                    border = rememberGlassBorderStroke(0.75.dp),
-                  ) {
-                    Row(
-                      modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                      verticalAlignment = Alignment.CenterVertically,
-                      horizontalArrangement = Arrangement.spacedBy(5.dp),
-                    ) {
-                      Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(EmeraldLive))
-                      Text(
-                        text =
-                          uiState.selectedAccount?.name?.let(::formatAccountDisplayName)
-                            ?: "Account",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = palette.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                      )
-                      Icon(
-                        Icons.Outlined.KeyboardArrowDown,
-                        contentDescription = "Switch account",
-                        tint = palette.textSecondary,
-                        modifier = Modifier.size(15.dp),
-                      )
-                    }
-                  }
-                  EdgeMenu(
-                    expanded = accountMenuOpen,
-                    onDismissRequest = { accountMenuOpen = false },
-                    minWidth = 224.dp,
-                    maxWidth = 280.dp,
-                  ) {
-                    EdgeMenuHeader(
-                      title = "Cloudflare Accounts",
-                      badgeText = "${uiState.accounts.size}",
-                      leadingIcon = Icons.Outlined.CloudQueue,
-                    )
-                    uiState.accounts.forEach { acc ->
-                      EdgeMenuCompactItem(
-                        label = formatAccountDisplayName(acc.name),
-                        icon = Icons.Outlined.CloudQueue,
-                        selected = acc.id == uiState.selectedAccount?.id,
-                        onClick = {
-                          accountMenuOpen = false
-                          viewModel.selectAccount(acc)
-                        },
-                      )
-                    }
-                  }
-                }
-
-                Surface(
-                  onClick = { showChangeSubdomainDialog = true },
-                  shape = RoundedCornerShape(999.dp),
-                  color = palette.activePillBg.copy(alpha = 0.55f),
-                  border = rememberGlassBorderStroke(0.75.dp),
-                  modifier = Modifier.testTag("home_subdomain_chip"),
-                ) {
-                  Row(
-                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                  ) {
-                    Icon(
-                      Icons.Outlined.Language,
-                      contentDescription = null,
-                      tint = palette.activePillFg,
-                      modifier = Modifier.size(13.dp),
-                    )
-                    Text(
-                      text =
-                        if (uiState.accountSubdomain.isNotBlank()) "${uiState.accountSubdomain}.workers.dev"
-                        else "Set *.workers.dev",
-                      fontFamily = JetBrainsMono,
-                      fontSize = 10.5.sp,
-                      fontWeight = FontWeight.SemiBold,
-                      color = palette.activePillFg,
-                      maxLines = 1,
-                      overflow = TextOverflow.Ellipsis,
-                    )
-                    Icon(
-                      Icons.Outlined.Edit,
-                      contentDescription = "Change subdomain",
-                      tint = palette.activePillFg,
-                      modifier = Modifier.size(11.dp),
-                    )
-                  }
-                }
-              }
-            } else {
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-              ) {
-                Text(
-                  text = "Local Dir",
-                  style = MaterialTheme.typography.labelSmall,
-                  color = palette.textMuted,
-                )
-                Surface(
-                  onClick = viewModel::exitScratchpadToAuth,
-                  shape = RoundedCornerShape(999.dp),
-                  color = palette.activePillBg.copy(alpha = 0.65f),
-                ) {
-                  Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
-                  ) {
-                    Text(
-                      text = "Connect Cloudflare",
-                      style = MaterialTheme.typography.labelSmall,
-                      fontWeight = FontWeight.SemiBold,
-                      color = palette.activePillFg,
-                    )
-                    Icon(
-                      imageVector = Icons.AutoMirrored.Outlined.ArrowForward,
-                      contentDescription = "Connect Cloudflare",
-                      tint = palette.activePillFg,
-                      modifier = Modifier.size(12.dp),
-                    )
-                  }
-                }
-              }
-            }
+          } else {
+            IconRevealButton(
+              icon = Icons.Outlined.CloudQueue,
+              revealedLabel = "Connect",
+              statusDotColor = AmberWarn,
+              onClick = viewModel::exitScratchpadToAuth,
+              tag = "home_connect_cloudflare_button",
+            )
           }
 
-          Surface(
+          IconRevealButton(
+            icon = Icons.Outlined.Style,
+            revealedLabel = activeStyle.label,
+            active = isV2,
+            onClick = {
+              val next =
+                if (activeStyle == UiStyleVersion.V1_DEFAULT) UiStyleVersion.V2_MINIMAL_OLED
+                else UiStyleVersion.V1_DEFAULT
+              viewModel.updateSettings { it.copy(uiStyleVersion = next.key) }
+            },
+            tag = "home_style_toggle_button",
+          )
+
+          IconRevealButton(
+            icon = Icons.Outlined.AccountTree,
+            revealedLabel = uiState.gitHubCreds?.login?.let { "@$it" } ?: "GitHub",
+            active = uiState.gitHubCreds != null,
+            statusDotColor = if (uiState.gitHubCreds != null) EmeraldLive else null,
             onClick = { viewModel.setShowHomeGitHubHub(true) },
-            shape = CircleShape,
-            color = palette.chromeSurface,
-            border = rememberGlassBorderStroke(0.75.dp),
-            modifier = Modifier.size(40.dp).testTag("home_github_hub_button"),
-          ) {
-            Box(contentAlignment = Alignment.Center) {
-              Icon(
-                imageVector = Icons.Outlined.AccountTree,
-                contentDescription = "Optional GitHub Hub",
-                tint = if (uiState.gitHubCreds != null) palette.activePillFg else palette.textPrimary,
-                modifier = Modifier.size(19.dp),
-              )
-              if (uiState.gitHubCreds != null) {
-                Box(
-                  modifier =
-                    Modifier
-                      .align(Alignment.TopEnd)
-                      .padding(7.dp)
-                      .size(6.dp)
-                      .clip(CircleShape)
-                      .background(EmeraldLive),
-                )
-              }
-            }
-          }
+            tag = "home_github_hub_button",
+          )
 
-          Surface(
+          IconRevealButton(
+            icon = Icons.Outlined.Settings,
+            revealedLabel = "Settings",
             onClick = { viewModel.setShowHomeSettings(true) },
-            shape = CircleShape,
-            color = palette.chromeSurface,
-            border = rememberGlassBorderStroke(0.75.dp),
-            modifier = Modifier.size(40.dp).testTag("home_settings_button"),
-          ) {
-            Box(contentAlignment = Alignment.Center) {
-              Icon(
-                imageVector = Icons.Outlined.Settings,
-                contentDescription = "Settings and Credentials",
-                tint = palette.textPrimary,
-                modifier = Modifier.size(19.dp),
-              )
-            }
-          }
+            tag = "home_settings_button",
+          )
         }
 
         if (uiState.isOpeningWorker || uiState.isLoadingWorkers) {
@@ -907,28 +814,21 @@ fun HomeScreen(
             .imePadding()
             .padding(end = 16.dp, bottom = 14.dp),
       ) {
-        Row(
-          modifier =
-            Modifier
-              .edgeGlassSurface(RoundedCornerShape(999.dp), elevated = true)
-              .clickable { viewModel.setBottomDockHidden(false) }
-              .padding(horizontal = 14.dp, vertical = 9.dp)
-              .testTag("show_home_bottom_dock_button"),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        Surface(
+          onClick = { viewModel.setBottomDockHidden(false) },
+          shape = CircleShape,
+          color = palette.chromeSurface,
+          border = if (palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED) null else rememberGlassBorderStroke(0.75.dp),
+          modifier = Modifier.size(42.dp).testTag("show_home_bottom_dock_button"),
         ) {
-          Icon(
-            imageVector = Icons.Outlined.KeyboardArrowUp,
-            contentDescription = "Show bottom menu",
-            tint = palette.activePillFg,
-            modifier = Modifier.size(18.dp),
-          )
-          Text(
-            text = "Menu",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = palette.textPrimary,
-          )
+          Box(contentAlignment = Alignment.Center) {
+            Icon(
+              imageVector = Icons.Outlined.KeyboardArrowUp,
+              contentDescription = "Show menu",
+              tint = palette.activePillFg,
+              modifier = Modifier.size(20.dp),
+            )
+          }
         }
       }
     }
@@ -955,7 +855,9 @@ private fun HomeProjectsTabContent(
   onRequestDeleteWorker: (CfWorkerScript) -> Unit,
 ) {
   val palette = LocalIdePalette.current
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   val q = searchQuery.trim()
+  var showSearchBar by remember { mutableStateOf(false) }
   val ramWorkspaces =
     remember(uiState.ramWorkspaces, q) {
       val list =
@@ -973,60 +875,33 @@ private fun HomeProjectsTabContent(
 
   LazyColumn(
     modifier = Modifier.fillMaxSize(),
-    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp),
-    verticalArrangement = Arrangement.spacedBy(14.dp),
+    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+    verticalArrangement = Arrangement.spacedBy(if (isV2) 16.dp else 12.dp),
   ) {
     item(key = "home_actions") {
       Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
       ) {
-        Surface(
+        IconRevealButton(
+          icon = Icons.Outlined.Add,
+          revealedLabel = "New",
+          accentContainer = true,
           onClick = onNewProject,
-          shape = RoundedCornerShape(14.dp),
-          color = palette.ctaBg,
-          modifier = Modifier.weight(1f).height(50.dp).testTag("home_new_project_button"),
-        ) {
-          Row(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-          ) {
-            Icon(
-              imageVector = Icons.Outlined.Add,
-              contentDescription = null,
-              tint = palette.ctaFg,
-              modifier = Modifier.size(20.dp),
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-              text = "New project",
-              fontSize = 14.5.sp,
-              fontWeight = FontWeight.SemiBold,
-              color = palette.ctaFg,
-            )
-          }
-        }
+          height = 42.dp,
+          tag = "home_new_project_button",
+        )
 
         var importMenuOpen by remember { mutableStateOf(false) }
         Box {
-          Surface(
+          IconRevealButton(
+            icon = Icons.Outlined.CloudDownload,
+            revealedLabel = "Import",
             onClick = { importMenuOpen = true },
-            shape = RoundedCornerShape(14.dp),
-            color = palette.glassElevated,
-            border = rememberGlassBorderStroke(0.75.dp),
-            modifier = Modifier.size(50.dp).testTag("home_import_bundle_button"),
-          ) {
-            Box(contentAlignment = Alignment.Center) {
-              Icon(
-                imageVector = Icons.Outlined.CloudDownload,
-                contentDescription = "Import ZIP or JSON project",
-                tint = palette.textPrimary,
-                modifier = Modifier.size(20.dp),
-              )
-            }
-          }
+            height = 42.dp,
+            tag = "home_import_bundle_button",
+          )
           EdgeMenu(
             expanded = importMenuOpen,
             onDismissRequest = { importMenuOpen = false },
@@ -1057,113 +932,135 @@ private fun HomeProjectsTabContent(
             )
           }
         }
-      }
-    }
 
-    item(key = "home_quick_cards") {
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-      ) {
-        CompactQuickChip(
-          title = "API Vault",
-          status = if (uiState.credentials != null) "Active" else "Setup",
-          accent = if (uiState.credentials != null) EmeraldLive else AmberWarn,
+        IconRevealButton(
+          icon = Icons.Outlined.Search,
+          revealedLabel = "Search",
+          active = showSearchBar || searchQuery.isNotEmpty(),
+          onClick = {
+            showSearchBar = !showSearchBar
+            if (!showSearchBar && searchQuery.isNotEmpty()) onSearchChange("")
+          },
+          height = 42.dp,
+          tag = "home_search_toggle_button",
+        )
+
+        IconRevealButton(
           icon = Icons.Outlined.Key,
+          revealedLabel = "Vault",
+          statusDotColor = if (uiState.credentials != null) EmeraldLive else AmberWarn,
           onClick = onOpenSettings,
-          modifier = Modifier.weight(1f),
+          height = 42.dp,
+          tag = "home_vault_shortcut",
         )
-        CompactQuickChip(
-          title = "GitHub",
-          status = uiState.gitHubCreds?.login?.let { "@$it" } ?: "Optional",
-          accent = if (uiState.gitHubCreds != null) EmeraldLive else palette.textMuted,
+
+        IconRevealButton(
           icon = Icons.Outlined.AccountTree,
+          revealedLabel = "GitHub",
+          statusDotColor = if (uiState.gitHubCreds != null) EmeraldLive else null,
           onClick = onOpenGitHubHub,
-          modifier = Modifier.weight(1f),
+          height = 42.dp,
+          tag = "home_github_shortcut",
+        )
+
+        if (!uiState.projectStorageSummary.hasNativeStorageAccess) {
+          IconRevealButton(
+            icon = Icons.Outlined.Folder,
+            revealedLabel = "Storage",
+            statusDotColor = AmberWarn,
+            onClick = onRequestStorageAccess,
+            height = 42.dp,
+            tag = "home_grant_storage_button",
+          )
+        }
+      }
+    }
+
+    if (showSearchBar || searchQuery.isNotEmpty()) {
+      item(key = "home_search") {
+        OutlinedTextField(
+          value = searchQuery,
+          onValueChange = onSearchChange,
+          leadingIcon = {
+            Icon(Icons.Outlined.Search, contentDescription = null, tint = palette.textSecondary, modifier = Modifier.size(18.dp))
+          },
+          trailingIcon = {
+            IconButton(
+              onClick = {
+                onSearchChange("")
+                showSearchBar = false
+              },
+            ) {
+              Icon(Icons.Outlined.Close, contentDescription = "Close", modifier = Modifier.size(16.dp))
+            }
+          },
+          singleLine = true,
+          shape = RoundedCornerShape(if (isV2) 20.dp else 12.dp),
+          modifier = Modifier.fillMaxWidth().testTag("home_project_search"),
         )
       }
     }
 
-    item(key = "home_search") {
-      OutlinedTextField(
-        value = searchQuery,
-        onValueChange = onSearchChange,
-        placeholder = { Text("Search projects and Workers…", color = palette.textMuted) },
-        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = palette.textSecondary, modifier = Modifier.size(18.dp)) },
-        trailingIcon = {
-          if (searchQuery.isNotEmpty()) {
-            IconButton(onClick = { onSearchChange("") }) {
-              Icon(Icons.Outlined.Close, contentDescription = "Clear search", modifier = Modifier.size(16.dp))
-            }
-          }
-        },
-        singleLine = true,
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth().testTag("home_project_search"),
-      )
-    }
-
-    if (!uiState.projectStorageSummary.hasNativeStorageAccess) {
-      item(key = "home_storage_permission") {
-        var showStorageInfo by remember { mutableStateOf(false) }
+    if (latestProject != null && q.isEmpty()) {
+      item(key = "resume_featured_card") {
+        val ws = latestProject.workingWorkspace
+        var showResumeMeta by remember { mutableStateOf(false) }
+        val fileCount = ws.files.count { !it.isVirtualReadOnly }
         Surface(
-          color = palette.glassElevated,
-          shape = RoundedCornerShape(14.dp),
-          border = rememberGlassBorderStroke(0.75.dp),
-          modifier = Modifier.fillMaxWidth().testTag("home_storage_permission_card"),
+          onClick = { onOpenRamWorkspace(latestProject.key) },
+          color = if (isV2) palette.chromeSurface else palette.featuredCardBg,
+          shape = RoundedCornerShape(if (isV2) 24.dp else 16.dp),
+          border = if (isV2) null else BorderStroke(0.75.dp, palette.featuredCardFg.copy(alpha = 0.14f)),
+          modifier = Modifier.fillMaxWidth(),
         ) {
-          Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-              Surface(
-                color = palette.activePillBg,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.size(36.dp),
-              ) {
-                Box(contentAlignment = Alignment.Center) {
-                  Icon(
-                    imageVector = Icons.Outlined.Folder,
-                    contentDescription = null,
-                    tint = palette.activePillFg,
-                    modifier = Modifier.size(18.dp),
-                  )
-                }
-              }
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+          ) {
+            Icon(
+              imageVector = Icons.Outlined.Bolt,
+              contentDescription = null,
+              tint = if (isV2) palette.activePillFg else palette.featuredCardFg,
+              modifier = Modifier.size(22.dp),
+            )
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
               Text(
-                text = "Folder Access",
-                fontSize = 13.5.sp,
+                text = ws.scriptName,
+                fontSize = 15.5.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = palette.textPrimary,
-                modifier = Modifier.weight(1f),
+                color = if (isV2) palette.textPrimary else palette.featuredCardFg,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
               )
-              IconButton(onClick = { showStorageInfo = !showStorageInfo }, modifier = Modifier.size(28.dp)) {
-                Icon(Icons.Outlined.Info, contentDescription = "Storage info", tint = palette.textMuted, modifier = Modifier.size(16.dp))
-              }
-              Surface(
-                onClick = onRequestStorageAccess,
-                shape = RoundedCornerShape(12.dp),
-                color = palette.ctaBg,
-                modifier = Modifier.testTag("home_grant_storage_button"),
-              ) {
+              AnimatedVisibility(visible = showResumeMeta) {
                 Text(
-                  text = "Allow",
-                  fontSize = 12.sp,
-                  fontWeight = FontWeight.SemiBold,
-                  color = palette.ctaFg,
-                  modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                  text = "$fileCount · ${ws.entryModulePath}",
+                  fontFamily = JetBrainsMono,
+                  fontSize = 11.sp,
+                  color = if (isV2) palette.textSecondary else palette.featuredCardMuted,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
                 )
               }
             }
-            AnimatedVisibility(visible = showStorageInfo) {
-              Text(
-                text = "Phone Storage/EdgeCode/",
-                fontSize = 11.5.sp,
-                color = palette.textSecondary,
+            IconButton(
+              onClick = { showResumeMeta = !showResumeMeta },
+              modifier = Modifier.size(32.dp),
+            ) {
+              Icon(
+                imageVector = Icons.Outlined.Info,
+                contentDescription = "Info",
+                tint = if (isV2) palette.textSecondary else palette.featuredCardMuted,
+                modifier = Modifier.size(18.dp),
               )
             }
+            Icon(
+              imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+              contentDescription = "Open",
+              tint = if (isV2) palette.textSecondary else palette.featuredCardFg,
+              modifier = Modifier.size(20.dp),
+            )
           }
         }
       }
@@ -1171,25 +1068,23 @@ private fun HomeProjectsTabContent(
 
     item(key = "ram_header") {
       Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
       ) {
-        SectionCountPill(
-          title = "Projects",
-          count = ramWorkspaces.size,
+        Text(
+          text = "Projects",
+          style = MaterialTheme.typography.bodyMedium,
+          fontSize = if (isV2) 13.5.sp else 13.sp,
+          fontWeight = FontWeight.Medium,
+          color = palette.textSecondary,
         )
-        if (uiState.projectStorageSummary.totalDiskKb > 0 || uiState.ramDbStats.estimatedRamKb > 0) {
-          val kb =
-            uiState.projectStorageSummary.totalDiskKb.takeIf { it > 0 }
-              ?: uiState.ramDbStats.estimatedRamKb
-          Text(
-            text = "$kb KB",
-            fontFamily = JetBrainsMono,
-            fontSize = 11.sp,
-            color = palette.textMuted,
-          )
-        }
+        Text(
+          text = "${ramWorkspaces.size}",
+          fontFamily = JetBrainsMono,
+          fontSize = 11.sp,
+          color = palette.textMuted,
+        )
       }
     }
 
@@ -1198,22 +1093,53 @@ private fun HomeProjectsTabContent(
         var showEmptyInfo by remember { mutableStateOf(false) }
         Surface(
           onClick = { showEmptyInfo = !showEmptyInfo },
-          color = palette.glassSurface,
-          shape = RoundedCornerShape(14.dp),
-          border = rememberGlassBorderStroke(0.75.dp),
+          color = palette.chromeSurface,
+          shape = RoundedCornerShape(if (isV2) 24.dp else 14.dp),
+          border = if (isV2) null else rememberGlassBorderStroke(0.75.dp),
           modifier = Modifier.fillMaxWidth(),
         ) {
-          Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-              Icon(Icons.Outlined.Folder, contentDescription = null, tint = palette.textMuted, modifier = Modifier.size(16.dp))
-              Spacer(Modifier.weight(1f))
-              Icon(Icons.Outlined.Info, contentDescription = "Empty workspace info", tint = palette.textMuted, modifier = Modifier.size(16.dp))
-            }
-            AnimatedVisibility(visible = showEmptyInfo) {
+          Row(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+          ) {
+            Icon(Icons.Outlined.Folder, contentDescription = null, tint = palette.textMuted, modifier = Modifier.size(18.dp))
+            AnimatedVisibility(visible = showEmptyInfo, modifier = Modifier.weight(1f)) {
               Text(
-                text = "No projects yet. Tap + to create.",
-                style = MaterialTheme.typography.bodySmall,
+                text = "Tap +",
+                fontFamily = JetBrainsMono,
+                fontSize = 12.sp,
                 color = palette.textSecondary,
+              )
+            }
+            if (!showEmptyInfo) Spacer(Modifier.weight(1f))
+            Icon(Icons.Outlined.Info, contentDescription = "Info", tint = palette.textMuted, modifier = Modifier.size(16.dp))
+          }
+        }
+      }
+    } else if (isV2) {
+      item(key = "ram_v2_grouped_list") {
+        Surface(
+          color = palette.chromeSurface,
+          shape = RoundedCornerShape(24.dp),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Column(modifier = Modifier.fillMaxWidth()) {
+            ramWorkspaces.forEachIndexed { idx, rec ->
+              if (idx > 0) {
+                HorizontalDivider(
+                  color = palette.border,
+                  thickness = 0.5.dp,
+                  modifier = Modifier.padding(start = 18.dp),
+                )
+              }
+              RamProjectRowContent(
+                record = rec,
+                isV2 = true,
+                onOpen = { onOpenRamWorkspace(rec.key) },
+                onRename = { onRequestRenameRamWorkspace(rec) },
+                onDelete = { onRequestDeleteRamWorkspace(rec) },
+                modifier = Modifier.testTag("home_ram_card_${rec.workingWorkspace.scriptName}"),
               )
             }
           }
@@ -1221,68 +1147,22 @@ private fun HomeProjectsTabContent(
       }
     } else {
       items(ramWorkspaces, key = { "ram_${it.key}" }) { rec ->
-        RamProjectCard(
-          record = rec,
-          onOpen = { onOpenRamWorkspace(rec.key) },
-          onRename = { onRequestRenameRamWorkspace(rec) },
-          onDelete = { onRequestDeleteRamWorkspace(rec) },
-          modifier = Modifier.animateItem(),
-        )
-      }
-    }
-
-    if (latestProject != null && q.isEmpty()) {
-      item(key = "resume_featured_card") {
-        val ws = latestProject.workingWorkspace
-        val fileCount = ws.files.count { !it.isVirtualReadOnly }
+        val ws = rec.workingWorkspace
         Surface(
-          color = palette.featuredCardBg,
-          shape = RoundedCornerShape(16.dp),
-          border = BorderStroke(0.75.dp, palette.featuredCardFg.copy(alpha = 0.14f)),
-          modifier = Modifier.fillMaxWidth(),
+          color = palette.glassSurface,
+          shape = RoundedCornerShape(14.dp),
+          border =
+            if (rec.hasPendingChanges) BorderStroke(0.75.dp, AmberWarn.copy(alpha = 0.55f))
+            else rememberGlassBorderStroke(0.75.dp),
+          modifier = Modifier.fillMaxWidth().animateItem().testTag("home_ram_card_${ws.scriptName}"),
         ) {
-          Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-          ) {
-            Row(
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-              Icon(
-                imageVector = Icons.Outlined.Bolt,
-                contentDescription = null,
-                tint = palette.featuredCardFg,
-                modifier = Modifier.size(20.dp),
-              )
-              Text(
-                text = "Pick up where you left off",
-                fontSize = 17.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = palette.featuredCardFg,
-              )
-            }
-            Text(
-              text = "${ws.scriptName} · $fileCount file(s) · entry ${ws.entryModulePath}",
-              style = MaterialTheme.typography.bodySmall,
-              color = palette.featuredCardMuted,
-              maxLines = 1,
-              overflow = TextOverflow.Ellipsis,
-            )
-            Surface(
-              onClick = { onOpenRamWorkspace(latestProject.key) },
-              shape = RoundedCornerShape(999.dp),
-              color = if (palette.isDark) Color(0xFFF3EAFF) else Color(0xFF4F346B),
-            ) {
-              Text(
-                text = "Open ${ws.scriptName}",
-                fontSize = 13.5.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = if (palette.isDark) Color(0xFF31164F) else Color.White,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
-              )
-            }
-          }
+          RamProjectRowContent(
+            record = rec,
+            isV2 = false,
+            onOpen = { onOpenRamWorkspace(rec.key) },
+            onRename = { onRequestRenameRamWorkspace(rec) },
+            onDelete = { onRequestDeleteRamWorkspace(rec) },
+          )
         }
       }
     }
@@ -1290,29 +1170,35 @@ private fun HomeProjectsTabContent(
     if (!uiState.isLocalScratchpad && uiState.credentials != null) {
       item(key = "cf_header") {
         Row(
-          modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-          SectionCountPill(
-            title = "Cloudflare Workers",
-            count = cloudWorkers.size,
+          Text(
+            text = "Workers",
+            style = MaterialTheme.typography.bodyMedium,
+            fontSize = if (isV2) 13.5.sp else 13.sp,
+            fontWeight = FontWeight.Medium,
+            color = palette.textSecondary,
           )
-          Surface(
-            onClick = { if (!uiState.isLoadingWorkers) onRefreshWorkers() },
-            shape = CircleShape,
-            color = palette.chromeSurface,
-            border = rememberGlassBorderStroke(0.75.dp),
-            modifier = Modifier.size(34.dp).testTag("home_refresh_workers_button"),
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
           ) {
-            Box(contentAlignment = Alignment.Center) {
-              Icon(
-                Icons.Outlined.Refresh,
-                contentDescription = "Refresh Workers",
-                tint = palette.textSecondary,
-                modifier = Modifier.size(17.dp),
-              )
-            }
+            Text(
+              text = "${cloudWorkers.size}",
+              fontFamily = JetBrainsMono,
+              fontSize = 11.sp,
+              color = palette.textMuted,
+            )
+            IconRevealButton(
+              icon = Icons.Outlined.Refresh,
+              revealedLabel = "Refresh",
+              isBusy = uiState.isLoadingWorkers,
+              onClick = { if (!uiState.isLoadingWorkers) onRefreshWorkers() },
+              height = 32.dp,
+              tag = "home_refresh_workers_button",
+            )
           }
         }
       }
@@ -1322,25 +1208,55 @@ private fun HomeProjectsTabContent(
           var showCfEmptyInfo by remember { mutableStateOf(false) }
           Surface(
             onClick = { showCfEmptyInfo = !showCfEmptyInfo },
-            color = palette.glassSurface,
-            shape = RoundedCornerShape(14.dp),
-            border = rememberGlassBorderStroke(0.75.dp),
+            color = palette.chromeSurface,
+            shape = RoundedCornerShape(if (isV2) 24.dp else 14.dp),
+            border = if (isV2) null else rememberGlassBorderStroke(0.75.dp),
             modifier = Modifier.fillMaxWidth(),
           ) {
-            Column(
-              modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-              verticalArrangement = Arrangement.spacedBy(4.dp),
+            Row(
+              modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-              Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(Icons.Outlined.CloudQueue, contentDescription = null, tint = palette.textMuted, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.weight(1f))
-                Icon(Icons.Outlined.Info, contentDescription = "Workers empty info", tint = palette.textMuted, modifier = Modifier.size(16.dp))
-              }
-              AnimatedVisibility(visible = showCfEmptyInfo) {
+              Icon(Icons.Outlined.CloudQueue, contentDescription = null, tint = palette.textMuted, modifier = Modifier.size(18.dp))
+              AnimatedVisibility(visible = showCfEmptyInfo, modifier = Modifier.weight(1f)) {
                 Text(
-                  text = if (q.isEmpty()) "No Workers found." else "No matching Workers.",
-                  style = MaterialTheme.typography.bodySmall,
+                  text = "0 Workers",
+                  fontFamily = JetBrainsMono,
+                  fontSize = 12.sp,
                   color = palette.textSecondary,
+                )
+              }
+              if (!showCfEmptyInfo) Spacer(Modifier.weight(1f))
+              Icon(Icons.Outlined.Info, contentDescription = "Info", tint = palette.textMuted, modifier = Modifier.size(16.dp))
+            }
+          }
+        }
+      } else if (isV2) {
+        item(key = "cf_v2_grouped_list") {
+          Surface(
+            color = palette.chromeSurface,
+            shape = RoundedCornerShape(24.dp),
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+              cloudWorkers.forEachIndexed { idx, script ->
+                if (idx > 0) {
+                  HorizontalDivider(
+                    color = palette.border,
+                    thickness = 0.5.dp,
+                    modifier = Modifier.padding(start = 18.dp),
+                  )
+                }
+                val cached = ramByName[script.id]
+                CloudWorkerRowContent(
+                  script = script,
+                  cachedRecord = cached,
+                  isV2 = true,
+                  onOpen = { onOpenWorker(script) },
+                  onRename = { onRequestRenameWorker(script, cached) },
+                  onDelete = { onRequestDeleteWorker(script) },
+                  modifier = Modifier.testTag("home_worker_card_${script.id}"),
                 )
               }
             }
@@ -1349,113 +1265,26 @@ private fun HomeProjectsTabContent(
       } else {
         items(cloudWorkers, key = { "cf_${it.id}" }) { script ->
           val cached = ramByName[script.id]
-          CloudWorkerCard(
-            script = script,
-            cachedRecord = cached,
-            onOpen = { onOpenWorker(script) },
-            onRename = { onRequestRenameWorker(script, cached) },
-            onDelete = { onRequestDeleteWorker(script) },
-            modifier = Modifier.animateItem(),
-          )
+          Surface(
+            color = palette.glassSurface,
+            shape = RoundedCornerShape(14.dp),
+            border = rememberGlassBorderStroke(0.75.dp),
+            modifier = Modifier.fillMaxWidth().animateItem().testTag("home_worker_card_${script.id}"),
+          ) {
+            CloudWorkerRowContent(
+              script = script,
+              cachedRecord = cached,
+              isV2 = false,
+              onOpen = { onOpenWorker(script) },
+              onRename = { onRequestRenameWorker(script, cached) },
+              onDelete = { onRequestDeleteWorker(script) },
+            )
+          }
         }
       }
     }
 
     item(key = "home_bottom_spacer") { Spacer(Modifier.height(14.dp)) }
-  }
-}
-
-@Composable
-private fun SectionCountPill(
-  title: String,
-  count: Int,
-) {
-  val palette = LocalIdePalette.current
-  Surface(
-    color = palette.activePillBg.copy(alpha = 0.55f),
-    shape = RoundedCornerShape(999.dp),
-  ) {
-    Row(
-      modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-      Text(
-        text = title,
-        fontSize = 13.sp,
-        fontWeight = FontWeight.SemiBold,
-        color = palette.activePillFg,
-      )
-      Surface(
-        color = palette.ctaBg,
-        shape = CircleShape,
-        modifier = Modifier.size(22.dp),
-      ) {
-        Box(contentAlignment = Alignment.Center) {
-          Text(
-            text = count.toString(),
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            color = palette.ctaFg,
-          )
-        }
-      }
-    }
-  }
-}
-
-@Composable
-private fun CompactQuickChip(
-  title: String,
-  status: String,
-  accent: Color,
-  icon: ImageVector,
-  onClick: () -> Unit,
-  modifier: Modifier = Modifier,
-) {
-  val palette = LocalIdePalette.current
-  Surface(
-    onClick = onClick,
-    color = palette.glassSurface,
-    shape = RoundedCornerShape(12.dp),
-    border = rememberGlassBorderStroke(0.75.dp),
-    modifier = modifier.height(44.dp),
-  ) {
-    Row(
-      modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-      Icon(
-        imageVector = icon,
-        contentDescription = null,
-        tint = palette.textPrimary,
-        modifier = Modifier.size(17.dp),
-      )
-      Text(
-        text = title,
-        fontSize = 13.5.sp,
-        fontWeight = FontWeight.SemiBold,
-        color = palette.textPrimary,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.weight(1f),
-      )
-      Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-      ) {
-        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(accent))
-        Text(
-          text = status,
-          fontSize = 11.sp,
-          fontWeight = FontWeight.Medium,
-          color = palette.textSecondary,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-        )
-      }
-    }
   }
 }
 
@@ -1474,8 +1303,9 @@ private data class HomeRenameTarget(
 )
 
 @Composable
-private fun RamProjectCard(
+private fun RamProjectRowContent(
   record: RamWorkspaceRecord,
+  isV2: Boolean,
   onOpen: () -> Unit,
   onRename: () -> Unit,
   onDelete: () -> Unit,
@@ -1484,99 +1314,90 @@ private fun RamProjectCard(
   val palette = LocalIdePalette.current
   val ws = record.workingWorkspace
   val fileCount = ws.files.count { !it.isVirtualReadOnly }
-  val isLocal = record.key.startsWith("local_")
   val dirty = record.hasPendingChanges
+  var showDetails by remember { mutableStateOf(false) }
 
-  Surface(
-    onClick = onOpen,
-    color = palette.glassSurface,
-    shape = RoundedCornerShape(14.dp),
-    border =
-      if (dirty) BorderStroke(0.75.dp, AmberWarn.copy(alpha = 0.55f))
-      else rememberGlassBorderStroke(0.75.dp),
-    modifier = modifier.fillMaxWidth().testTag("home_ram_card_${ws.scriptName}"),
+  Column(
+    modifier =
+      modifier
+        .fillMaxWidth()
+        .clickable(onClick = onOpen)
+        .padding(horizontal = if (isV2) 18.dp else 13.dp, vertical = if (isV2) 14.dp else 12.dp),
+    verticalArrangement = Arrangement.spacedBy(6.dp),
   ) {
     Row(
-      modifier = Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 12.dp),
+      modifier = Modifier.fillMaxWidth(),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(10.dp),
+      horizontalArrangement = Arrangement.spacedBy(if (isV2) 14.dp else 10.dp),
     ) {
-      Surface(
-        color = if (dirty) AmberWarn.copy(alpha = 0.16f) else EmeraldLive.copy(alpha = 0.16f),
-        shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(0.75.dp, (if (dirty) AmberWarn else EmeraldLive).copy(alpha = 0.35f)),
-        modifier = Modifier.size(40.dp),
-      ) {
-        Box(contentAlignment = Alignment.Center) {
-          Icon(
-            imageVector = Icons.Outlined.Folder,
-            contentDescription = null,
-            tint = if (dirty) AmberWarn else EmeraldLive,
-            modifier = Modifier.size(20.dp),
-          )
+      if (isV2) {
+        Icon(
+          imageVector = Icons.Outlined.Folder,
+          contentDescription = null,
+          tint = if (dirty) AmberWarn else palette.textPrimary,
+          modifier = Modifier.size(20.dp),
+        )
+      } else {
+        Surface(
+          color = if (dirty) AmberWarn.copy(alpha = 0.16f) else EmeraldLive.copy(alpha = 0.16f),
+          shape = RoundedCornerShape(10.dp),
+          border = BorderStroke(0.75.dp, (if (dirty) AmberWarn else EmeraldLive).copy(alpha = 0.35f)),
+          modifier = Modifier.size(38.dp),
+        ) {
+          Box(contentAlignment = Alignment.Center) {
+            Icon(
+              imageVector = Icons.Outlined.Folder,
+              contentDescription = null,
+              tint = if (dirty) AmberWarn else EmeraldLive,
+              modifier = Modifier.size(19.dp),
+            )
+          }
         }
       }
 
-      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Row(
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-          Text(
-            text = ws.scriptName,
-            fontSize = 15.5.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = palette.textPrimary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false),
-          )
-          StatusTag(
-            label =
-              when {
-                dirty -> "Edited"
-                isLocal -> "Local"
-                else -> "Saved"
-              },
-            color =
-              when {
-                dirty -> AmberWarn
-                isLocal -> palette.activePillFg
-                else -> EmeraldLive
-              },
-          )
-        }
-        Text(
-          text = "$fileCount file(s) · ${ws.entryModulePath}",
-          fontFamily = JetBrainsMono,
-          fontSize = 11.5.sp,
-          color = palette.textSecondary,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
+      Text(
+        text = ws.scriptName,
+        fontSize = 15.5.sp,
+        fontWeight = if (isV2) FontWeight.Normal else FontWeight.SemiBold,
+        color = palette.textPrimary,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.weight(1f),
+      )
+
+      IconButton(
+        onClick = { showDetails = !showDetails },
+        modifier = Modifier.size(30.dp),
+      ) {
+        Icon(
+          imageVector = Icons.Outlined.Info,
+          contentDescription = "Details",
+          tint = if (showDetails) palette.activePillFg else palette.textMuted,
+          modifier = Modifier.size(16.dp),
         )
       }
 
       IconButton(
         onClick = onRename,
-        modifier = Modifier.size(34.dp).testTag("rename_ram_project_${ws.scriptName}"),
+        modifier = Modifier.size(30.dp).testTag("rename_ram_project_${ws.scriptName}"),
       ) {
         Icon(
           imageVector = Icons.Outlined.DriveFileRenameOutline,
           contentDescription = "Rename ${ws.scriptName}",
           tint = palette.textSecondary,
-          modifier = Modifier.size(18.dp),
+          modifier = Modifier.size(17.dp),
         )
       }
 
       IconButton(
         onClick = onDelete,
-        modifier = Modifier.size(34.dp).testTag("delete_ram_project_${ws.scriptName}"),
+        modifier = Modifier.size(30.dp).testTag("delete_ram_project_${ws.scriptName}"),
       ) {
         Icon(
           imageVector = Icons.Outlined.DeleteOutline,
           contentDescription = "Remove ${ws.scriptName}",
           tint = palette.textMuted,
-          modifier = Modifier.size(18.dp),
+          modifier = Modifier.size(17.dp),
         )
       }
 
@@ -1584,16 +1405,27 @@ private fun RamProjectCard(
         imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
         contentDescription = "Open project",
         tint = palette.textSecondary,
-        modifier = Modifier.size(20.dp),
+        modifier = Modifier.size(19.dp),
+      )
+    }
+
+    AnimatedVisibility(visible = showDetails) {
+      Text(
+        text = "$fileCount · ${ws.entryModulePath}",
+        fontFamily = JetBrainsMono,
+        fontSize = 11.sp,
+        color = palette.textSecondary,
+        modifier = Modifier.padding(start = if (isV2) 34.dp else 48.dp),
       )
     }
   }
 }
 
 @Composable
-private fun CloudWorkerCard(
+private fun CloudWorkerRowContent(
   script: CfWorkerScript,
   cachedRecord: RamWorkspaceRecord?,
+  isV2: Boolean,
   onOpen: () -> Unit,
   onRename: () -> Unit,
   onDelete: () -> Unit,
@@ -1601,89 +1433,89 @@ private fun CloudWorkerCard(
 ) {
   val palette = LocalIdePalette.current
   val hasRamEdits = cachedRecord?.hasPendingChanges == true
+  var showDetails by remember { mutableStateOf(false) }
 
-  Surface(
-    onClick = onOpen,
-    color = palette.glassSurface,
-    shape = RoundedCornerShape(14.dp),
-    border = rememberGlassBorderStroke(0.75.dp),
-    modifier = modifier.fillMaxWidth().testTag("home_worker_card_${script.id}"),
+  Column(
+    modifier =
+      modifier
+        .fillMaxWidth()
+        .clickable(onClick = onOpen)
+        .padding(horizontal = if (isV2) 18.dp else 13.dp, vertical = if (isV2) 14.dp else 12.dp),
+    verticalArrangement = Arrangement.spacedBy(6.dp),
   ) {
     Row(
-      modifier = Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 12.dp),
+      modifier = Modifier.fillMaxWidth(),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(12.dp),
+      horizontalArrangement = Arrangement.spacedBy(if (isV2) 14.dp else 12.dp),
     ) {
-      Surface(
-        color = if (cachedRecord != null) palette.activePillBg else palette.chromeSurface,
-        shape = RoundedCornerShape(10.dp),
-        border = rememberGlassBorderStroke(0.75.dp),
-        modifier = Modifier.size(40.dp),
-      ) {
-        Box(contentAlignment = Alignment.Center) {
-          Icon(
-            imageVector = Icons.Outlined.CloudQueue,
-            contentDescription = null,
-            tint = if (cachedRecord != null) palette.activePillFg else palette.textSecondary,
-            modifier = Modifier.size(20.dp),
-          )
+      if (isV2) {
+        Icon(
+          imageVector = Icons.Outlined.CloudQueue,
+          contentDescription = null,
+          tint = if (hasRamEdits) AmberWarn else if (cachedRecord != null) EmeraldLive else palette.textPrimary,
+          modifier = Modifier.size(20.dp),
+        )
+      } else {
+        Surface(
+          color = if (cachedRecord != null) palette.activePillBg else palette.chromeSurface,
+          shape = RoundedCornerShape(10.dp),
+          border = rememberGlassBorderStroke(0.75.dp),
+          modifier = Modifier.size(38.dp),
+        ) {
+          Box(contentAlignment = Alignment.Center) {
+            Icon(
+              imageVector = Icons.Outlined.CloudQueue,
+              contentDescription = null,
+              tint = if (cachedRecord != null) palette.activePillFg else palette.textSecondary,
+              modifier = Modifier.size(19.dp),
+            )
+          }
         }
       }
 
-      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Row(
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-          Text(
-            text = script.id,
-            fontSize = 15.5.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = palette.textPrimary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false),
-          )
-          if (hasRamEdits) {
-            StatusTag(label = "Edited", color = AmberWarn)
-          } else if (cachedRecord != null) {
-            StatusTag(label = "Synced", color = EmeraldLive)
-          }
-        }
-        Text(
-          text =
-            cachedRecord?.let { "${it.workingWorkspace.files.count { f -> !f.isVirtualReadOnly }} files saved" }
-              ?: script.modifiedOn?.take(10)?.let { "Updated $it · Tap to open" }
-              ?: "Cloudflare Worker · Tap to open",
-          fontFamily = JetBrainsMono,
-          fontSize = 11.5.sp,
-          color = palette.textSecondary,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
+      Text(
+        text = script.id,
+        fontSize = 15.5.sp,
+        fontWeight = if (isV2) FontWeight.Normal else FontWeight.SemiBold,
+        color = palette.textPrimary,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.weight(1f),
+      )
+
+      IconButton(
+        onClick = { showDetails = !showDetails },
+        modifier = Modifier.size(30.dp),
+      ) {
+        Icon(
+          imageVector = Icons.Outlined.Info,
+          contentDescription = "Details",
+          tint = if (showDetails) palette.activePillFg else palette.textMuted,
+          modifier = Modifier.size(16.dp),
         )
       }
 
       IconButton(
         onClick = onRename,
-        modifier = Modifier.size(34.dp).testTag("rename_worker_${script.id}"),
+        modifier = Modifier.size(30.dp).testTag("rename_worker_${script.id}"),
       ) {
         Icon(
           imageVector = Icons.Outlined.DriveFileRenameOutline,
           contentDescription = "Rename ${script.id}",
           tint = palette.textSecondary,
-          modifier = Modifier.size(18.dp),
+          modifier = Modifier.size(17.dp),
         )
       }
 
       IconButton(
         onClick = onDelete,
-        modifier = Modifier.size(34.dp).testTag("delete_worker_${script.id}"),
+        modifier = Modifier.size(30.dp).testTag("delete_worker_${script.id}"),
       ) {
         Icon(
           imageVector = Icons.Outlined.DeleteOutline,
           contentDescription = "Delete ${script.id}",
           tint = palette.textMuted,
-          modifier = Modifier.size(18.dp),
+          modifier = Modifier.size(17.dp),
         )
       }
 
@@ -1691,33 +1523,21 @@ private fun CloudWorkerCard(
         imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
         contentDescription = "Open ${script.id}",
         tint = palette.textSecondary,
-        modifier = Modifier.size(20.dp),
+        modifier = Modifier.size(19.dp),
       )
     }
-  }
-}
 
-@Composable
-private fun StatusTag(
-  label: String,
-  color: Color,
-) {
-  Surface(
-    color = color.copy(alpha = 0.16f),
-    shape = RoundedCornerShape(999.dp),
-  ) {
-    Row(
-      modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-      Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(color))
+    AnimatedVisibility(visible = showDetails) {
+      val detailText =
+        cachedRecord?.let { "${it.workingWorkspace.files.count { f -> !f.isVirtualReadOnly }} · ${it.workingWorkspace.entryModulePath}" }
+          ?: script.modifiedOn?.take(10)
+          ?: "Worker"
       Text(
-        text = label,
-        fontSize = 10.sp,
-        fontWeight = FontWeight.SemiBold,
-        color = color,
-        maxLines = 1,
+        text = detailText,
+        fontFamily = JetBrainsMono,
+        fontSize = 11.sp,
+        color = palette.textSecondary,
+        modifier = Modifier.padding(start = if (isV2) 34.dp else 50.dp),
       )
     }
   }

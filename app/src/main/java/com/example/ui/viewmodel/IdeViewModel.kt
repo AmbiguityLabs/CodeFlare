@@ -102,6 +102,8 @@ import com.example.editor.CodeFormatter
 import com.example.editor.ConflictChoice
 import com.example.editor.DiffFileOrigin
 import com.example.editor.FileDiffEntry
+import com.example.editor.LocalScriptRunResult
+import com.example.editor.LocalScriptRunner
 import com.example.editor.MergeConflictFile
 import com.example.editor.MergeConflictResolver
 import com.example.editor.WranglerSyncParser
@@ -171,6 +173,7 @@ enum class SidebarSection {
 }
 
 enum class BottomPanelTab {
+  LOCAL_RUN,
   WORKER_PREVIEW,
   WORKER_TEST,
   API_TESTER,
@@ -237,6 +240,13 @@ data class IdeUiState(
   val findScope: Int = 0, // 0 = Current Tab, 1 = Open Tabs, 2 = All Files
   val searchQuery: String = "",
   val editorSettings: EditorSettings = EditorSettings(),
+  // On-Device Local Pre-Deploy Script Runner
+  val isRunningLocalScript: Boolean = false,
+  val localScriptResult: LocalScriptRunResult? = null,
+  val localRunUrlPath: String = "/",
+  val localRunMethod: String = "GET",
+  val localRunHeadersJson: String = "{}",
+  val localRunBody: String = "",
   // Deployed Worker Live Preview & Testing Window
   val previewUrl: String = "",
   val previewModeTab: Int = 0, // 0 = Preview, 1 = HTTP
@@ -1274,10 +1284,10 @@ export default {
       val nextBottomTab =
         when (mode) {
           ProjectMode.TEST ->
-            if (state.activeBottomTab in setOf(BottomPanelTab.WORKER_PREVIEW, BottomPanelTab.WORKER_TEST, BottomPanelTab.API_TESTER)) {
+            if (state.activeBottomTab in setOf(BottomPanelTab.LOCAL_RUN, BottomPanelTab.WORKER_PREVIEW, BottomPanelTab.WORKER_TEST, BottomPanelTab.API_TESTER)) {
               state.activeBottomTab
             } else {
-              BottomPanelTab.WORKER_PREVIEW
+              BottomPanelTab.LOCAL_RUN
             }
           ProjectMode.CONSOLE ->
             if (state.activeBottomTab in setOf(BottomPanelTab.TAIL_LOGS, BottomPanelTab.PROBLEMS, BottomPanelTab.CONSOLE)) {
@@ -3232,6 +3242,84 @@ export default {
     _uiState.update { it.copy(previewConsoleEntries = emptyList()) }
   }
 
+  fun updateLocalRunRequest(
+    path: String = _uiState.value.localRunUrlPath,
+    method: String = _uiState.value.localRunMethod,
+    headersJson: String = _uiState.value.localRunHeadersJson,
+    body: String = _uiState.value.localRunBody,
+  ) {
+    _uiState.update {
+      it.copy(
+        localRunUrlPath = path,
+        localRunMethod = method,
+        localRunHeadersJson = headersJson,
+        localRunBody = body,
+      )
+    }
+  }
+
+  fun runWorkspaceLocally(openTestWorkspace: Boolean = true) {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val ws = state.workspace ?: return
+    if (state.isRunningLocalScript) return
+
+    _uiState.update { cur ->
+      cur.copy(
+        isRunningLocalScript = true,
+        projectMode = if (openTestWorkspace) ProjectMode.TEST else cur.projectMode,
+        activeBottomTab = if (openTestWorkspace) BottomPanelTab.LOCAL_RUN else cur.activeBottomTab,
+        showBottomPanel = if (openTestWorkspace) true else cur.showBottomPanel,
+      )
+    }
+
+    viewModelScope.launch {
+      val result =
+        runCatching {
+          LocalScriptRunner.runWorkspace(
+            context = getApplication(),
+            workspace = ws,
+            activeFilePath = state.activeFilePath,
+            requestPath = state.localRunUrlPath,
+            method = state.localRunMethod,
+            headersJson = state.localRunHeadersJson,
+            body = state.localRunBody,
+            isDarkTheme = state.editorSettings.darkTheme,
+          )
+        }.getOrElse { err ->
+          LocalScriptRunResult(
+            mode = "SCRIPT",
+            entryPath = state.activeFilePath ?: ws.entryModulePath,
+            statusCode = 500,
+            statusText = "ERROR",
+            durationMs = 0L,
+            errorMessage = err.localizedMessage ?: "Failed to execute locally",
+            ranAt = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date()),
+          )
+        }
+
+      _uiState.update { cur ->
+        cur.copy(
+          isRunningLocalScript = false,
+          localScriptResult = result,
+        )
+      }
+      result.logs.forEach { log ->
+        appendLog(log.level, "[Local ${result.entryPath}] ${log.message}")
+      }
+      if (result.errorMessage != null) {
+        appendLog("ERROR", "[Local ${result.entryPath}] ${result.errorMessage}")
+      }
+      appendPreviewConsoleEntry(
+        kind = if (result.errorMessage != null || result.statusCode >= 400) "ERR" else "JS",
+        methodOrLevel = "${result.mode} ${state.localRunMethod}",
+        message = result.errorMessage ?: "${result.entryPath} (${state.localRunUrlPath})",
+        statusCode = result.statusCode,
+        durationMs = result.durationMs,
+      )
+    }
+  }
+
   fun deleteModuleFile(filePath: String) {
     val ws = _uiState.value.workspace ?: return
     val target = ws.files.firstOrNull { it.path == filePath } ?: return
@@ -3957,7 +4045,7 @@ export default {
       } else {
         val nextMode =
           when (tab) {
-            BottomPanelTab.WORKER_PREVIEW, BottomPanelTab.WORKER_TEST, BottomPanelTab.API_TESTER -> ProjectMode.TEST
+            BottomPanelTab.LOCAL_RUN, BottomPanelTab.WORKER_PREVIEW, BottomPanelTab.WORKER_TEST, BottomPanelTab.API_TESTER -> ProjectMode.TEST
             BottomPanelTab.TAIL_LOGS, BottomPanelTab.PROBLEMS, BottomPanelTab.CONSOLE -> ProjectMode.CONSOLE
           }
         state.copy(projectMode = nextMode, showBottomPanel = true, activeBottomTab = tab)

@@ -51,9 +51,11 @@ import androidx.compose.ui.unit.sp
 import com.example.data.remote.WorkerLanguage
 import com.example.data.security.EditorSettings
 import com.example.editor.SyntaxHighlighter
+import com.example.ui.components.IconRevealButton
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.UiStyleVersion
 
 @Composable
 fun SettingsEditorPane(
@@ -63,6 +65,7 @@ fun SettingsEditorPane(
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
 
   val enabledEditorFlags =
     listOf(
@@ -112,8 +115,8 @@ fun SettingsEditorPane(
       Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Surface(
           color = palette.editorBg,
-          shape = RoundedCornerShape(10.dp),
-          border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.6f)),
+          shape = RoundedCornerShape(if (isV2) 16.dp else 10.dp),
+          border = if (isV2) null else BorderStroke(0.75.dp, palette.border.copy(alpha = 0.6f)),
           modifier = Modifier.fillMaxWidth(),
         ) {
           Column(modifier = Modifier.fillMaxWidth()) {
@@ -399,19 +402,19 @@ fun SettingsEditorPane(
 
       if (onClearAutoSavedDrafts != null) {
         SettingsHairlineDivider()
-        OutlinedButton(
-          onClick = onClearAutoSavedDrafts,
-          shape = RoundedCornerShape(10.dp),
-          border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.7f)),
-          modifier = Modifier.fillMaxWidth().padding(12.dp).height(42.dp),
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
         ) {
-          Icon(
-            imageVector = Icons.Outlined.DeleteSweep,
-            contentDescription = null,
-            modifier = Modifier.size(16.dp),
+          Text("Drafts", fontSize = 14.sp, color = palette.textPrimary)
+          IconRevealButton(
+            icon = Icons.Outlined.DeleteSweep,
+            revealedLabel = "Clear Drafts",
+            onClick = onClearAutoSavedDrafts,
+            height = 36.dp,
+            tag = "settings_clear_drafts_button",
           )
-          Spacer(Modifier.width(7.dp))
-          Text("Clear Drafts", fontSize = 12.5.sp)
         }
       }
     }

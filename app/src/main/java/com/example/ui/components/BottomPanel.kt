@@ -20,14 +20,20 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Api
 import androidx.compose.material.icons.outlined.CheckCircleOutline
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloseFullscreen
+import androidx.compose.material.icons.outlined.Dvr
+import androidx.compose.material.icons.outlined.Http
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.OpenInFull
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Sensors
 import androidx.compose.material.icons.outlined.Stop
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -94,6 +100,8 @@ fun BottomPanel(
   onImportApiCollection: (String, Boolean, Boolean) -> Result<ApiImportResult> = { _, _, _ ->
     Result.failure(UnsupportedOperationException("Collection import not wired"))
   },
+  onUpdateLocalRunRequest: (method: String, path: String, body: String) -> Unit = { _, _, _ -> },
+  onRunWorkspaceLocally: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
@@ -118,45 +126,61 @@ fun BottomPanel(
       ) {
         Row(
           modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-          horizontalArrangement = Arrangement.spacedBy(4.dp),
+          horizontalArrangement = Arrangement.spacedBy(5.dp),
           verticalAlignment = Alignment.CenterVertically,
         ) {
-          BottomPanelTabChip(
+          IconSegmentTab(
+            icon = Icons.Outlined.Terminal,
+            label = "Local Run",
+            selected = uiState.activeBottomTab == BottomPanelTab.LOCAL_RUN,
+            onClick = { onSelectTab(BottomPanelTab.LOCAL_RUN) },
+            tag = "tab_local_run",
+          )
+          IconSegmentTab(
+            icon = Icons.Outlined.Visibility,
             label = "Preview",
             selected = uiState.activeBottomTab == BottomPanelTab.WORKER_PREVIEW,
             onClick = { onSelectTab(BottomPanelTab.WORKER_PREVIEW) },
-            modifier = Modifier.testTag("tab_worker_preview"),
+            tag = "tab_worker_preview",
           )
-          BottomPanelTabChip(
+          IconSegmentTab(
+            icon = Icons.Outlined.Http,
             label = "Worker Test",
             selected = uiState.activeBottomTab == BottomPanelTab.WORKER_TEST,
             onClick = { onSelectTab(BottomPanelTab.WORKER_TEST) },
-            modifier = Modifier.testTag("tab_worker_test"),
+            tag = "tab_worker_test",
           )
-          BottomPanelTabChip(
+          IconSegmentTab(
+            icon = Icons.Outlined.Api,
             label = "API Tester",
             selected = uiState.activeBottomTab == BottomPanelTab.API_TESTER,
             onClick = { onSelectTab(BottomPanelTab.API_TESTER) },
-            modifier = Modifier.testTag("tab_api_tester"),
+            tag = "tab_api_tester",
           )
-          BottomPanelTabChip(
+          IconSegmentTab(
+            icon = Icons.Outlined.WarningAmber,
             label = "Problems",
             selected = uiState.activeBottomTab == BottomPanelTab.PROBLEMS,
             badgeText = uiState.diagnostics.size.takeIf { it > 0 }?.toString(),
             badgeColor = AmberWarn,
             onClick = { onSelectTab(BottomPanelTab.PROBLEMS) },
+            tag = "tab_problems",
           )
-          BottomPanelTabChip(
+          IconSegmentTab(
+            icon = Icons.Outlined.Sensors,
             label = "Live Tail",
             selected = uiState.activeBottomTab == BottomPanelTab.TAIL_LOGS,
             badgeText = if (uiState.isTailRunning) "LIVE" else null,
             badgeColor = EmeraldLive,
             onClick = { onSelectTab(BottomPanelTab.TAIL_LOGS) },
+            tag = "tab_live_tail",
           )
-          BottomPanelTabChip(
+          IconSegmentTab(
+            icon = Icons.Outlined.Dvr,
             label = "IDE Log",
             selected = uiState.activeBottomTab == BottomPanelTab.CONSOLE,
             onClick = { onSelectTab(BottomPanelTab.CONSOLE) },
+            tag = "tab_ide_log",
           )
         }
 
@@ -185,6 +209,16 @@ fun BottomPanel(
       HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
 
       when (uiState.activeBottomTab) {
+        BottomPanelTab.LOCAL_RUN ->
+          LocalScriptRunPane(
+            uiState = uiState,
+            onPathChange = { p -> onUpdateLocalRunRequest(uiState.localRunMethod, p, uiState.localRunBody) },
+            onMethodChange = { m -> onUpdateLocalRunRequest(m, uiState.localRunUrlPath, uiState.localRunBody) },
+            onBodyChange = { b -> onUpdateLocalRunRequest(uiState.localRunMethod, uiState.localRunUrlPath, b) },
+            onRunLocally = onRunWorkspaceLocally,
+            onNotifyStatus = onNotifyStatus,
+            modifier = Modifier.weight(1f),
+          )
         BottomPanelTab.WORKER_PREVIEW ->
           DeployedWorkerPreviewPane(
             uiState = uiState,
@@ -396,19 +430,18 @@ fun LiveTailView(
         )
       }
 
-      FilledTonalButton(
-        onClick = onToggleLiveTail,
-        enabled = !uiState.isLocalScratchpad && uiState.workspace != null,
-        modifier = Modifier.testTag("toggle_live_tail_button"),
-      ) {
-        Icon(
-          imageVector = if (uiState.isTailRunning) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
-          contentDescription = if (uiState.isTailRunning) "Stop Live Tail" else "Start Live Tail",
-          modifier = Modifier.size(16.dp),
-        )
-        Spacer(Modifier.width(4.dp))
-        Text(if (uiState.isTailRunning) "Stop Tail" else "Start Tail")
-      }
+      IconRevealButton(
+        icon = if (uiState.isTailRunning) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
+        revealedLabel = if (uiState.isTailRunning) "Stop Tail" else "Start Tail",
+        active = uiState.isTailRunning,
+        onClick = {
+          if (!uiState.isLocalScratchpad && uiState.workspace != null) {
+            onToggleLiveTail()
+          }
+        },
+        height = 34.dp,
+        tag = "toggle_live_tail_button",
+      )
     }
 
     if (uiState.isLocalScratchpad || uiState.tailLogs.isEmpty()) {
@@ -467,61 +500,5 @@ fun LiveTailView(
   }
 }
 
-@Composable
-private fun BottomPanelTabChip(
-  label: String,
-  selected: Boolean,
-  onClick: () -> Unit,
-  modifier: Modifier = Modifier,
-  badgeText: String? = null,
-  badgeColor: Color? = null,
-) {
-  val palette = LocalIdePalette.current
-  val fg = if (selected) palette.activePillFg else palette.textSecondary
 
-  Surface(
-    onClick = onClick,
-    shape = RoundedCornerShape(7.dp),
-    color = if (selected) palette.activePillBg else Color.Transparent,
-    border =
-      if (selected) BorderStroke(1.dp, palette.activePillFg.copy(alpha = 0.25f))
-      else null,
-    modifier = modifier.height(28.dp),
-  ) {
-    Row(
-      modifier = Modifier.padding(horizontal = 9.dp),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-      Text(
-        text = label,
-        fontSize = 11.sp,
-        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-        color = fg,
-        maxLines = 1,
-        softWrap = false,
-      )
-      if (!badgeText.isNullOrBlank()) {
-        val bColor = badgeColor ?: palette.activePillFg
-        Box(
-          modifier =
-            Modifier
-              .clip(RoundedCornerShape(4.dp))
-              .background(bColor.copy(alpha = 0.16f))
-              .padding(horizontal = 4.dp, vertical = 1.dp),
-        ) {
-          Text(
-            text = badgeText,
-            fontFamily = JetBrainsMono,
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            color = bColor,
-            maxLines = 1,
-            softWrap = false,
-          )
-        }
-      }
-    }
-  }
-}
 

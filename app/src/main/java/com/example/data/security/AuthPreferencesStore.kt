@@ -48,6 +48,7 @@ data class EditorSettings(
   val darkTheme: Boolean = true,
   val dynamicColor: Boolean = false,
   val themePreset: String = "OLIVE_OBSIDIAN",
+  val uiStyleVersion: String = "V1",
   val editorBgPreset: String = "NONE",
   val editorBgImagePath: String = "",
   val editorBgOpacity: Float = 0.28f,
@@ -94,6 +95,7 @@ class AuthPreferencesStore(private val context: Context) {
     val DARK_THEME = booleanPreferencesKey("editor_dark_theme")
     val DYNAMIC_COLOR = booleanPreferencesKey("editor_dynamic_color")
     val THEME_PRESET = stringPreferencesKey("editor_theme_preset")
+    val UI_STYLE_VERSION = stringPreferencesKey("editor_ui_style_version")
     val EDITOR_BG_PRESET = stringPreferencesKey("editor_bg_preset")
     val EDITOR_BG_IMAGE_PATH = stringPreferencesKey("editor_bg_image_path")
     val EDITOR_BG_OPACITY = floatPreferencesKey("editor_bg_opacity")
@@ -160,6 +162,7 @@ class AuthPreferencesStore(private val context: Context) {
         darkTheme = prefs[Keys.DARK_THEME] ?: true,
         dynamicColor = prefs[Keys.DYNAMIC_COLOR] ?: false,
         themePreset = prefs[Keys.THEME_PRESET]?.takeIf { it.isNotBlank() } ?: "OLIVE_OBSIDIAN",
+        uiStyleVersion = prefs[Keys.UI_STYLE_VERSION]?.takeIf { it.isNotBlank() } ?: "V1",
         editorBgPreset = prefs[Keys.EDITOR_BG_PRESET]?.takeIf { it.isNotBlank() } ?: "NONE",
         editorBgImagePath = prefs[Keys.EDITOR_BG_IMAGE_PATH].orEmpty(),
         editorBgOpacity = (prefs[Keys.EDITOR_BG_OPACITY] ?: 0.28f).coerceIn(0.05f, 1.0f),
@@ -263,6 +266,7 @@ class AuthPreferencesStore(private val context: Context) {
       prefs[Keys.DARK_THEME] = next.darkTheme
       prefs[Keys.DYNAMIC_COLOR] = next.dynamicColor
       prefs[Keys.THEME_PRESET] = next.themePreset.ifBlank { "OLIVE_OBSIDIAN" }
+      prefs[Keys.UI_STYLE_VERSION] = next.uiStyleVersion.ifBlank { "V1" }
       prefs[Keys.EDITOR_BG_PRESET] = next.editorBgPreset.ifBlank { "NONE" }
       prefs[Keys.EDITOR_BG_IMAGE_PATH] = next.editorBgImagePath
       prefs[Keys.EDITOR_BG_OPACITY] = next.editorBgOpacity.coerceIn(0.05f, 1.0f)

@@ -36,6 +36,7 @@ class SettingsAndPreferencesTest {
     assertFalse(defaults.autoOpenPreviewOnDeploy)
     assertTrue(defaults.autoSaveEnabled)
     assertEquals(5, defaults.autoSaveIntervalSeconds)
+    assertEquals("V1", defaults.uiStyleVersion)
   }
 
   @Test
@@ -58,6 +59,7 @@ class SettingsAndPreferencesTest {
         autoOpenPreviewOnDeploy = true,
         autoSaveEnabled = false,
         autoSaveIntervalSeconds = 15,
+        uiStyleVersion = "V2",
       )
     }
 
@@ -75,6 +77,7 @@ class SettingsAndPreferencesTest {
     assertTrue(loaded.autoOpenPreviewOnDeploy)
     assertFalse(loaded.autoSaveEnabled)
     assertEquals(15, loaded.autoSaveIntervalSeconds)
+    assertEquals("V2", loaded.uiStyleVersion)
 
     // Blank compatibility date falls back safely to baseline and intervals clamp to 3..60s
     store.updateEditorSettings {

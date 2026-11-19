@@ -93,6 +93,7 @@ import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.RoseError
+import com.example.ui.theme.UiStyleVersion
 import com.example.ui.viewmodel.IdeUiState
 import com.example.ui.viewmodel.WorkerPreviewConsoleEntry
 
@@ -209,128 +210,59 @@ fun DeployedWorkerPreviewPane(
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-      Surface(
+      IconSegmentTab(
+        icon = Icons.Outlined.Visibility,
+        label = "Preview",
+        selected = uiState.previewModeTab == 0,
         onClick = { onSelectModeTab(0) },
-        color = if (uiState.previewModeTab == 0) palette.activePillBg else Color.Transparent,
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.testTag("worker_preview_mode_web"),
-      ) {
-        Row(
-          modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(5.dp),
-        ) {
-          Icon(
-            Icons.Outlined.Visibility,
-            contentDescription = "Preview mode",
-            tint = if (uiState.previewModeTab == 0) palette.activePillFg else palette.textSecondary,
-            modifier = Modifier.size(15.dp),
-          )
-          Text(
-            text = "Preview",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = if (uiState.previewModeTab == 0) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (uiState.previewModeTab == 0) palette.activePillFg else palette.textPrimary,
-          )
-        }
-      }
+        tag = "worker_preview_mode_web",
+      )
 
-      Surface(
+      IconSegmentTab(
+        icon = Icons.Outlined.Http,
+        label = "HTTP",
+        selected = uiState.previewModeTab == 1,
         onClick = { onSelectModeTab(1) },
-        color = if (uiState.previewModeTab == 1) palette.activePillBg else Color.Transparent,
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.testTag("worker_preview_mode_http"),
-      ) {
-        Row(
-          modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(5.dp),
-        ) {
-          Icon(
-            Icons.Outlined.Http,
-            contentDescription = "HTTP request mode",
-            tint = if (uiState.previewModeTab == 1) palette.activePillFg else palette.textSecondary,
-            modifier = Modifier.size(15.dp),
-          )
-          Text(
-            text = "HTTP",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = if (uiState.previewModeTab == 1) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (uiState.previewModeTab == 1) palette.activePillFg else palette.textPrimary,
-          )
-        }
-      }
+        tag = "worker_preview_mode_http",
+      )
 
       Spacer(Modifier.weight(1f))
 
       if (uiState.hasUnsavedChanges && !uiState.isLocalScratchpad && uiState.workspace != null) {
-        Surface(
+        IconRevealButton(
+          icon = Icons.Outlined.CloudUpload,
+          revealedLabel = "Deploy*",
+          active = true,
+          isBusy = uiState.isDeploying,
           onClick = { if (!uiState.isDeploying) onDeployActiveWorker() },
-          color = palette.activePillBg,
-          shape = RoundedCornerShape(8.dp),
-          modifier = Modifier.testTag("preview_deploy_sync_button"),
-        ) {
-          Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-          ) {
-            Icon(Icons.Outlined.CloudUpload, contentDescription = "Deploy pending changes", tint = palette.activePillFg, modifier = Modifier.size(13.dp))
-            Text("Deploy*", style = MaterialTheme.typography.labelSmall, color = palette.activePillFg, fontWeight = FontWeight.SemiBold)
-          }
-        }
+          height = 30.dp,
+          tag = "preview_deploy_sync_button",
+        )
       }
 
       if (uiState.previewUrl.isNotBlank()) {
-        Surface(
+        IconRevealButton(
+          icon = Icons.AutoMirrored.Outlined.OpenInNew,
+          revealedLabel = "Visit",
           onClick = {
             val url = normalizeWorkerUrl(uiState.previewUrl)
             runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
               .onFailure { onNotifyStatus("No browser available for $url") }
           },
-          color = palette.chromePill,
-          shape = RoundedCornerShape(8.dp),
-          modifier = Modifier.testTag("worker_preview_visit_button"),
-        ) {
-          Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-          ) {
-            Text("Visit", style = MaterialTheme.typography.labelSmall, color = palette.textPrimary)
-            Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = "Visit live Worker URL", tint = palette.activePillFg, modifier = Modifier.size(13.dp))
-          }
-        }
+          height = 30.dp,
+          tag = "worker_preview_visit_button",
+        )
       }
 
       if (onToggleFullScreen != null) {
-        Surface(
+        IconRevealButton(
+          icon = if (isFullScreen) Icons.Outlined.FullscreenExit else Icons.Outlined.Fullscreen,
+          revealedLabel = if (isFullScreen) "Exit" else "Fullscreen",
+          active = isFullScreen,
           onClick = onToggleFullScreen,
-          color = if (isFullScreen) palette.activePillBg else palette.chromePill,
-          shape = RoundedCornerShape(8.dp),
-          modifier = Modifier.testTag("worker_preview_fullscreen_button"),
-        ) {
-          Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-          ) {
-            Icon(
-              imageVector = if (isFullScreen) Icons.Outlined.FullscreenExit else Icons.Outlined.Fullscreen,
-              contentDescription = if (isFullScreen) "Exit Fullscreen Preview" else "Fullscreen Preview",
-              tint = if (isFullScreen) palette.activePillFg else palette.textPrimary,
-              modifier = Modifier.size(16.dp),
-            )
-            if (isFullScreen) {
-              Text(
-                text = "Exit",
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = palette.activePillFg,
-              )
-            }
-          }
-        }
+          height = 30.dp,
+          tag = "worker_preview_fullscreen_button",
+        )
       }
     }
 
@@ -598,35 +530,29 @@ fun DeployedWorkerPreviewPane(
                       textAlign = TextAlign.Center,
                     )
                     Row(
-                      horizontalArrangement = Arrangement.spacedBy(8.dp),
+                      horizontalArrangement = Arrangement.spacedBy(10.dp),
                       verticalAlignment = Alignment.CenterVertically,
                     ) {
-                      FilledTonalButton(
+                      IconRevealButton(
+                        icon = Icons.Outlined.Refresh,
+                        revealedLabel = "Retry",
                         onClick = { requestPreviewReload() },
-                        shape = RoundedCornerShape(9.dp),
-                      ) {
-                        Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(5.dp))
-                        Text("Retry", fontSize = 12.sp)
-                      }
+                        height = 36.dp,
+                      )
                       if (uiState.workspace != null && !uiState.isLocalScratchpad) {
-                        OutlinedButton(
+                        IconRevealButton(
+                          icon = Icons.Outlined.CloudUpload,
+                          revealedLabel = "Deploy",
                           onClick = onDeployActiveWorker,
-                          shape = RoundedCornerShape(9.dp),
-                        ) {
-                          Icon(Icons.Outlined.CloudUpload, contentDescription = null, modifier = Modifier.size(15.dp))
-                          Spacer(Modifier.width(5.dp))
-                          Text("Deploy", fontSize = 12.sp)
-                        }
+                          height = 36.dp,
+                        )
                       }
-                      OutlinedButton(
+                      IconRevealButton(
+                        icon = Icons.Outlined.Http,
+                        revealedLabel = "HTTP",
                         onClick = { onSelectModeTab(1) },
-                        shape = RoundedCornerShape(9.dp),
-                      ) {
-                        Icon(Icons.Outlined.Http, contentDescription = null, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(5.dp))
-                        Text("HTTP", fontSize = 12.sp)
-                      }
+                        height = 36.dp,
+                      )
                     }
                   }
                 }
@@ -719,22 +645,13 @@ fun DeployedWorkerPreviewPane(
         }
         Spacer(Modifier.weight(1f))
         if (entryCount > 0) {
-          Surface(
+          IconRevealButton(
+            icon = Icons.Outlined.DeleteSweep,
+            revealedLabel = "Clear",
             onClick = onClearConsole,
-            color = palette.chromePill,
-            shape = RoundedCornerShape(6.dp),
-            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
-            modifier = Modifier.height(24.dp).testTag("worker_preview_console_clear"),
-          ) {
-            Row(
-              modifier = Modifier.padding(horizontal = 7.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
-              Icon(Icons.Outlined.DeleteSweep, contentDescription = "Clear console", tint = palette.textSecondary, modifier = Modifier.size(12.dp))
-              Text("Clear", style = MaterialTheme.typography.labelSmall, fontSize = 10.5.sp, color = palette.textSecondary)
-            }
-          }
+            height = 26.dp,
+            tag = "worker_preview_console_clear",
+          )
           Spacer(Modifier.width(6.dp))
         }
         Icon(
@@ -907,15 +824,14 @@ private fun EmptyPreviewUrlNotice(
         )
       }
       if (hasWorkspace) {
-        FilledTonalButton(
+        IconRevealButton(
+          icon = Icons.Outlined.CloudUpload,
+          revealedLabel = "Deploy",
+          accentContainer = true,
           onClick = onDeployWorker,
-          shape = RoundedCornerShape(10.dp),
-          modifier = Modifier.testTag("empty_preview_deploy_button"),
-        ) {
-          Icon(Icons.Outlined.CloudUpload, contentDescription = null, modifier = Modifier.size(16.dp))
-          Spacer(Modifier.width(6.dp))
-          Text("Deploy")
-        }
+          height = 40.dp,
+          tag = "empty_preview_deploy_button",
+        )
       }
     }
   }

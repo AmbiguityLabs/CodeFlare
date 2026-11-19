@@ -50,6 +50,7 @@ class MainActivity : ComponentActivity() {
         darkTheme = uiState.editorSettings.darkTheme,
         dynamicColor = uiState.editorSettings.dynamicColor,
         themePreset = com.example.ui.theme.EditorThemePreset.fromKey(uiState.editorSettings.themePreset),
+        uiStyle = com.example.ui.theme.UiStyleVersion.fromKey(uiState.editorSettings.uiStyleVersion),
       ) {
         when {
           uiState.isBootstrapping -> {
