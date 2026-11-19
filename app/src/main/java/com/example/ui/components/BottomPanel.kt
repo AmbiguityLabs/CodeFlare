@@ -131,7 +131,7 @@ fun BottomPanel(
         ) {
           IconSegmentTab(
             icon = Icons.Outlined.Terminal,
-            label = "Local Run",
+            label = "CLI",
             selected = uiState.activeBottomTab == BottomPanelTab.LOCAL_RUN,
             onClick = { onSelectTab(BottomPanelTab.LOCAL_RUN) },
             tag = "tab_local_run",

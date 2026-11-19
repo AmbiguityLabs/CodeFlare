@@ -10,10 +10,23 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import com.example.data.security.FloatingBarStyleConfig
+import com.example.data.security.PopupMenuStyleConfig
+
+@Immutable
+data class BarStylePreferences(
+  val homeBar: FloatingBarStyleConfig = FloatingBarStyleConfig.HOME_DEFAULT,
+  val editorBar: FloatingBarStyleConfig = FloatingBarStyleConfig.EDITOR_DEFAULT,
+  val homeMenu: PopupMenuStyleConfig = PopupMenuStyleConfig.DEFAULT,
+  val editorMenu: PopupMenuStyleConfig = PopupMenuStyleConfig.DEFAULT,
+)
 
 val LocalIdePalette = staticCompositionLocalOf { DarkIdePalette }
+val LocalBarStylePreferences = staticCompositionLocalOf { BarStylePreferences() }
+val LocalPopupMenuStyle = staticCompositionLocalOf { PopupMenuStyleConfig.DEFAULT }
 
 private fun buildDarkColorScheme(palette: IdePalette) =
   darkColorScheme(
@@ -75,6 +88,7 @@ fun EdgeCodeTheme(
   dynamicColor: Boolean = false,
   themePreset: EditorThemePreset = EditorThemePreset.OLIVE_OBSIDIAN,
   uiStyle: UiStyleVersion = UiStyleVersion.V1_DEFAULT,
+  barPreferences: BarStylePreferences = BarStylePreferences(),
   content: @Composable () -> Unit,
 ) {
   val context = LocalContext.current
@@ -88,7 +102,11 @@ fun EdgeCodeTheme(
       else -> remember(palette) { buildLightColorScheme(palette) }
     }
 
-  CompositionLocalProvider(LocalIdePalette provides palette) {
+  CompositionLocalProvider(
+    LocalIdePalette provides palette,
+    LocalBarStylePreferences provides barPreferences,
+    LocalPopupMenuStyle provides barPreferences.homeMenu,
+  ) {
     MaterialTheme(
       colorScheme = colorScheme,
       typography = EdgeCodeTypography,

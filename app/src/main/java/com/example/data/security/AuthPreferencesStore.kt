@@ -44,6 +44,154 @@ data class StoredGitHubCredentials(
   val displayName: String = "",
 )
 
+data class FloatingBarStyleConfig(
+  val heightDp: Int = 58,
+  val widthPercent: Int = 82,
+  val iconSpacingDp: Int = 18,
+  val iconSizeDp: Int = 22,
+  val opacity: Float = 0.78f,
+  val borderOpacity: Float = 0.34f,
+  val cornerRadiusDp: Int = 32,
+  val bottomMarginDp: Int = 12,
+  val activePillOpacity: Float = 0.24f,
+  val showLabels: Boolean = false,
+  val showBadges: Boolean = true,
+) {
+  fun normalized(): FloatingBarStyleConfig =
+    copy(
+      heightDp = heightDp.coerceIn(44, 78),
+      widthPercent = widthPercent.coerceIn(52, 100),
+      iconSpacingDp = iconSpacingDp.coerceIn(2, 40),
+      iconSizeDp = iconSizeDp.coerceIn(16, 28),
+      opacity = opacity.coerceIn(0.15f, 1.0f),
+      borderOpacity = borderOpacity.coerceIn(0.0f, 0.75f),
+      cornerRadiusDp = cornerRadiusDp.coerceIn(10, 40),
+      bottomMarginDp = bottomMarginDp.coerceIn(0, 28),
+      activePillOpacity = activePillOpacity.coerceIn(0.08f, 0.60f),
+    )
+
+  fun encode(): String {
+    val n = normalized()
+    return listOf(
+      n.heightDp,
+      n.widthPercent,
+      n.iconSpacingDp,
+      n.iconSizeDp,
+      n.opacity,
+      n.borderOpacity,
+      n.cornerRadiusDp,
+      n.bottomMarginDp,
+      n.activePillOpacity,
+      if (n.showLabels) 1 else 0,
+      if (n.showBadges) 1 else 0,
+    ).joinToString("|")
+  }
+
+  companion object {
+    val HOME_DEFAULT =
+      FloatingBarStyleConfig(
+        heightDp = 58,
+        widthPercent = 78,
+        iconSpacingDp = 20,
+        iconSizeDp = 22,
+        opacity = 0.76f,
+        borderOpacity = 0.34f,
+        cornerRadiusDp = 32,
+        bottomMarginDp = 12,
+        activePillOpacity = 0.24f,
+        showLabels = false,
+        showBadges = true,
+      )
+
+    val EDITOR_DEFAULT =
+      FloatingBarStyleConfig(
+        heightDp = 56,
+        widthPercent = 86,
+        iconSpacingDp = 14,
+        iconSizeDp = 21,
+        opacity = 0.78f,
+        borderOpacity = 0.34f,
+        cornerRadiusDp = 32,
+        bottomMarginDp = 10,
+        activePillOpacity = 0.24f,
+        showLabels = false,
+        showBadges = true,
+      )
+
+    fun decode(raw: String?, fallback: FloatingBarStyleConfig): FloatingBarStyleConfig {
+      if (raw.isNullOrBlank()) return fallback
+      val parts = raw.split("|")
+      if (parts.size < 11) return fallback
+      return FloatingBarStyleConfig(
+        heightDp = parts[0].toIntOrNull() ?: fallback.heightDp,
+        widthPercent = parts[1].toIntOrNull() ?: fallback.widthPercent,
+        iconSpacingDp = parts[2].toIntOrNull() ?: fallback.iconSpacingDp,
+        iconSizeDp = parts[3].toIntOrNull() ?: fallback.iconSizeDp,
+        opacity = parts[4].toFloatOrNull() ?: fallback.opacity,
+        borderOpacity = parts[5].toFloatOrNull() ?: fallback.borderOpacity,
+        cornerRadiusDp = parts[6].toIntOrNull() ?: fallback.cornerRadiusDp,
+        bottomMarginDp = parts[7].toIntOrNull() ?: fallback.bottomMarginDp,
+        activePillOpacity = parts[8].toFloatOrNull() ?: fallback.activePillOpacity,
+        showLabels = parts[9] == "1",
+        showBadges = parts[10] != "0",
+      ).normalized()
+    }
+  }
+}
+
+data class PopupMenuStyleConfig(
+  val widthDp: Int = 248,
+  val itemHeightDp: Int = 40,
+  val iconSpacingDp: Int = 10,
+  val iconSizeDp: Int = 16,
+  val opacity: Float = 0.94f,
+  val borderOpacity: Float = 0.36f,
+  val cornerRadiusDp: Int = 16,
+) {
+  fun normalized(): PopupMenuStyleConfig =
+    copy(
+      widthDp = widthDp.coerceIn(180, 320),
+      itemHeightDp = itemHeightDp.coerceIn(32, 56),
+      iconSpacingDp = iconSpacingDp.coerceIn(4, 20),
+      iconSizeDp = iconSizeDp.coerceIn(13, 22),
+      opacity = opacity.coerceIn(0.35f, 1.0f),
+      borderOpacity = borderOpacity.coerceIn(0.0f, 0.75f),
+      cornerRadiusDp = cornerRadiusDp.coerceIn(8, 28),
+    )
+
+  fun encode(): String {
+    val n = normalized()
+    return listOf(
+      n.widthDp,
+      n.itemHeightDp,
+      n.iconSpacingDp,
+      n.iconSizeDp,
+      n.opacity,
+      n.borderOpacity,
+      n.cornerRadiusDp,
+    ).joinToString("|")
+  }
+
+  companion object {
+    val DEFAULT = PopupMenuStyleConfig()
+
+    fun decode(raw: String?, fallback: PopupMenuStyleConfig = DEFAULT): PopupMenuStyleConfig {
+      if (raw.isNullOrBlank()) return fallback
+      val parts = raw.split("|")
+      if (parts.size < 7) return fallback
+      return PopupMenuStyleConfig(
+        widthDp = parts[0].toIntOrNull() ?: fallback.widthDp,
+        itemHeightDp = parts[1].toIntOrNull() ?: fallback.itemHeightDp,
+        iconSpacingDp = parts[2].toIntOrNull() ?: fallback.iconSpacingDp,
+        iconSizeDp = parts[3].toIntOrNull() ?: fallback.iconSizeDp,
+        opacity = parts[4].toFloatOrNull() ?: fallback.opacity,
+        borderOpacity = parts[5].toFloatOrNull() ?: fallback.borderOpacity,
+        cornerRadiusDp = parts[6].toIntOrNull() ?: fallback.cornerRadiusDp,
+      ).normalized()
+    }
+  }
+}
+
 data class EditorSettings(
   val darkTheme: Boolean = true,
   val dynamicColor: Boolean = false,
@@ -73,6 +221,10 @@ data class EditorSettings(
   val defaultNodejsCompat: Boolean = false,
   val defaultWorkersDevEnabled: Boolean = true,
   val autoOpenPreviewOnDeploy: Boolean = false,
+  val homeBarStyle: FloatingBarStyleConfig = FloatingBarStyleConfig.HOME_DEFAULT,
+  val editorBarStyle: FloatingBarStyleConfig = FloatingBarStyleConfig.EDITOR_DEFAULT,
+  val homeMenuStyle: PopupMenuStyleConfig = PopupMenuStyleConfig.DEFAULT,
+  val editorMenuStyle: PopupMenuStyleConfig = PopupMenuStyleConfig.DEFAULT,
 )
 
 class AuthPreferencesStore(private val context: Context) {
@@ -120,6 +272,10 @@ class AuthPreferencesStore(private val context: Context) {
     val DEFAULT_NODEJS_COMPAT = booleanPreferencesKey("deploy_default_nodejs_compat")
     val DEFAULT_WORKERS_DEV = booleanPreferencesKey("deploy_default_workers_dev")
     val AUTO_OPEN_PREVIEW_ON_DEPLOY = booleanPreferencesKey("deploy_auto_open_preview")
+    val HOME_BAR_STYLE = stringPreferencesKey("ui_home_bar_style")
+    val EDITOR_BAR_STYLE = stringPreferencesKey("ui_editor_bar_style")
+    val HOME_MENU_STYLE = stringPreferencesKey("ui_home_menu_style")
+    val EDITOR_MENU_STYLE = stringPreferencesKey("ui_editor_menu_style")
   }
 
   val credentialsFlow: Flow<StoredCredentials?> =
@@ -188,6 +344,10 @@ class AuthPreferencesStore(private val context: Context) {
         defaultNodejsCompat = prefs[Keys.DEFAULT_NODEJS_COMPAT] ?: false,
         defaultWorkersDevEnabled = prefs[Keys.DEFAULT_WORKERS_DEV] ?: true,
         autoOpenPreviewOnDeploy = prefs[Keys.AUTO_OPEN_PREVIEW_ON_DEPLOY] ?: false,
+        homeBarStyle = FloatingBarStyleConfig.decode(prefs[Keys.HOME_BAR_STYLE], FloatingBarStyleConfig.HOME_DEFAULT),
+        editorBarStyle = FloatingBarStyleConfig.decode(prefs[Keys.EDITOR_BAR_STYLE], FloatingBarStyleConfig.EDITOR_DEFAULT),
+        homeMenuStyle = PopupMenuStyleConfig.decode(prefs[Keys.HOME_MENU_STYLE], PopupMenuStyleConfig.DEFAULT),
+        editorMenuStyle = PopupMenuStyleConfig.decode(prefs[Keys.EDITOR_MENU_STYLE], PopupMenuStyleConfig.DEFAULT),
       )
     }
 
@@ -291,6 +451,10 @@ class AuthPreferencesStore(private val context: Context) {
       prefs[Keys.DEFAULT_NODEJS_COMPAT] = next.defaultNodejsCompat
       prefs[Keys.DEFAULT_WORKERS_DEV] = next.defaultWorkersDevEnabled
       prefs[Keys.AUTO_OPEN_PREVIEW_ON_DEPLOY] = next.autoOpenPreviewOnDeploy
+      prefs[Keys.HOME_BAR_STYLE] = next.homeBarStyle.encode()
+      prefs[Keys.EDITOR_BAR_STYLE] = next.editorBarStyle.encode()
+      prefs[Keys.HOME_MENU_STYLE] = next.homeMenuStyle.encode()
+      prefs[Keys.EDITOR_MENU_STYLE] = next.editorMenuStyle.encode()
     }
   }
 }

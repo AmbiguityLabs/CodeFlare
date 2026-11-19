@@ -56,7 +56,9 @@ import com.example.ui.theme.BadgeTs
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.LocalPopupMenuStyle
 import com.example.ui.theme.RoseError
+import com.example.ui.theme.UiStyleVersion
 
 enum class EdgeMenuTone {
   DEFAULT,
@@ -114,16 +116,27 @@ fun EdgeMenu(
   content: @Composable ColumnScope.() -> Unit,
 ) {
   val palette = LocalIdePalette.current
+  val menuStyle = LocalPopupMenuStyle.current.normalized()
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
+  val resolvedMax = menuStyle.widthDp.dp
+  val resolvedMin = (menuStyle.widthDp - 40).coerceAtLeast(160).dp
+  val borderColor =
+    if (isV2 && palette.isDark) Color.White.copy(alpha = menuStyle.borderOpacity)
+    else palette.glassBorderHighlight.copy(alpha = menuStyle.borderOpacity)
+  val borderStroke =
+    if (menuStyle.borderOpacity > 0.01f) BorderStroke(if (isV2) 0.9.dp else 0.75.dp, borderColor)
+    else null
+
   DropdownMenu(
     expanded = expanded,
     onDismissRequest = onDismissRequest,
     offset = offset,
-    shape = RoundedCornerShape(14.dp),
-    containerColor = palette.chromeSurface,
+    shape = RoundedCornerShape(menuStyle.cornerRadiusDp.dp),
+    containerColor = palette.chromeSurface.copy(alpha = menuStyle.opacity),
     tonalElevation = 0.dp,
-    shadowElevation = 8.dp,
-    border = BorderStroke(0.75.dp, palette.glassBorderHighlight),
-    modifier = modifier.widthIn(min = minWidth, max = maxWidth),
+    shadowElevation = if (menuStyle.opacity > 0.45f) 10.dp else 4.dp,
+    border = borderStroke,
+    modifier = modifier.widthIn(min = resolvedMin, max = resolvedMax),
   ) {
     Column(
       modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 2.dp),
@@ -147,18 +160,29 @@ fun EdgeFloatingMenuPopup(
 ) {
   if (!expanded) return
   val palette = LocalIdePalette.current
+  val menuStyle = LocalPopupMenuStyle.current.normalized()
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
+  val resolvedMax = menuStyle.widthDp.dp
+  val resolvedMin = (menuStyle.widthDp - 40).coerceAtLeast(160).dp
+  val borderColor =
+    if (isV2 && palette.isDark) Color.White.copy(alpha = menuStyle.borderOpacity)
+    else palette.glassBorderHighlight.copy(alpha = menuStyle.borderOpacity)
+  val borderStroke =
+    if (menuStyle.borderOpacity > 0.01f) BorderStroke(if (isV2) 0.9.dp else 0.75.dp, borderColor)
+    else null
+
   Popup(
     alignment = alignment,
     onDismissRequest = onDismissRequest,
     properties = PopupProperties(focusable = true),
   ) {
     Surface(
-      color = palette.chromeSurface,
-      shape = RoundedCornerShape(14.dp),
+      color = palette.chromeSurface.copy(alpha = menuStyle.opacity),
+      shape = RoundedCornerShape(menuStyle.cornerRadiusDp.dp),
       tonalElevation = 0.dp,
-      shadowElevation = 8.dp,
-      border = BorderStroke(0.75.dp, palette.glassBorderHighlight),
-      modifier = Modifier.padding(top = 4.dp).widthIn(min = minWidth, max = maxWidth),
+      shadowElevation = if (menuStyle.opacity > 0.45f) 10.dp else 4.dp,
+      border = borderStroke,
+      modifier = Modifier.padding(top = 4.dp).widthIn(min = resolvedMin, max = resolvedMax),
     ) {
       Column(
         modifier =
@@ -266,9 +290,10 @@ fun EdgeMenuQuickActionRow(
 ) {
   if (actions.isEmpty()) return
   val palette = LocalIdePalette.current
+  val menuStyle = LocalPopupMenuStyle.current.normalized()
   Row(
     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
-    horizontalArrangement = Arrangement.spacedBy(5.dp),
+    horizontalArrangement = Arrangement.spacedBy((menuStyle.iconSpacingDp / 2).coerceIn(4, 12).dp),
   ) {
     actions.forEach { action ->
       val (bg, borderColor, iconTint, labelColor) =
@@ -307,7 +332,7 @@ fun EdgeMenuQuickActionRow(
         modifier =
           Modifier
             .weight(1f)
-            .heightIn(min = 48.dp)
+            .heightIn(min = (menuStyle.itemHeightDp + 8).coerceAtLeast(44).dp)
             .clip(RoundedCornerShape(9.dp))
             .background(bg)
             .border(0.75.dp, borderColor, RoundedCornerShape(9.dp))
@@ -321,7 +346,7 @@ fun EdgeMenuQuickActionRow(
           imageVector = action.icon,
           contentDescription = action.label,
           tint = iconTint,
-          modifier = Modifier.size(16.dp),
+          modifier = Modifier.size(menuStyle.iconSizeDp.dp),
         )
         Text(
           text = action.label,
@@ -580,6 +605,7 @@ fun EdgeMenuItem(
   testTag: String? = null,
 ) {
   val palette = LocalIdePalette.current
+  val menuStyle = LocalPopupMenuStyle.current.normalized()
   val effectiveAlpha = if (enabled) 1f else 0.45f
 
   val (rowBg, rowBorder, iconWellBg, iconTint, labelTint, badgeFg, badgeBg) =
@@ -636,12 +662,13 @@ fun EdgeMenuItem(
         )
     }
 
-  val shape = RoundedCornerShape(9.dp)
+  val shape = RoundedCornerShape((menuStyle.cornerRadiusDp - 5).coerceAtLeast(6).dp)
+  val iconWellSize = (menuStyle.iconSizeDp + 10).coerceIn(22, 34).dp
   Row(
     modifier =
       modifier
         .fillMaxWidth()
-        .heightIn(min = if (subtitle != null) 44.dp else 38.dp)
+        .heightIn(min = (menuStyle.itemHeightDp + if (subtitle != null) 6 else 0).dp)
         .clip(shape)
         .background(rowBg)
         .then(
@@ -652,7 +679,7 @@ fun EdgeMenuItem(
         .then(if (testTag != null) Modifier.testTag(testTag) else Modifier)
         .padding(horizontal = 8.dp, vertical = if (subtitle != null) 5.dp else 6.dp),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(9.dp),
+    horizontalArrangement = Arrangement.spacedBy(menuStyle.iconSpacingDp.dp),
   ) {
     when {
       leadingContent != null -> leadingContent()
@@ -660,7 +687,7 @@ fun EdgeMenuItem(
         Box(
           modifier =
             Modifier
-              .size(26.dp)
+              .size(iconWellSize)
               .clip(RoundedCornerShape(7.dp))
               .background(iconWellBg),
           contentAlignment = Alignment.Center,
@@ -669,7 +696,7 @@ fun EdgeMenuItem(
             imageVector = icon,
             contentDescription = null,
             tint = iconTint.copy(alpha = effectiveAlpha),
-            modifier = Modifier.size(14.5.dp),
+            modifier = Modifier.size(menuStyle.iconSizeDp.dp),
           )
         }
       }
@@ -752,14 +779,15 @@ fun EdgeMenuCompactItem(
   testTag: String? = null,
 ) {
   val palette = LocalIdePalette.current
-  val shape = RoundedCornerShape(8.dp)
+  val menuStyle = LocalPopupMenuStyle.current.normalized()
+  val shape = RoundedCornerShape((menuStyle.cornerRadiusDp - 6).coerceAtLeast(6).dp)
   val activeTint = accentColor ?: palette.activePillFg
 
   Row(
     modifier =
       modifier
         .fillMaxWidth()
-        .heightIn(min = if (subtitle != null) 40.dp else 36.dp)
+        .heightIn(min = (menuStyle.itemHeightDp - 2 + if (subtitle != null) 4 else 0).coerceAtLeast(30).dp)
         .clip(shape)
         .background(if (selected) palette.activePillBg.copy(alpha = 0.65f) else Color.Transparent)
         .then(
@@ -770,7 +798,7 @@ fun EdgeMenuCompactItem(
         .then(if (testTag != null) Modifier.testTag(testTag) else Modifier)
         .padding(horizontal = 9.dp, vertical = 6.dp),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(8.dp),
+    horizontalArrangement = Arrangement.spacedBy(menuStyle.iconSpacingDp.dp),
   ) {
     if (leadingColorDot != null) {
       Box(
@@ -785,7 +813,7 @@ fun EdgeMenuCompactItem(
         imageVector = icon,
         contentDescription = null,
         tint = if (selected) activeTint else palette.textSecondary,
-        modifier = Modifier.size(15.dp),
+        modifier = Modifier.size(menuStyle.iconSizeDp.dp),
       )
     }
 

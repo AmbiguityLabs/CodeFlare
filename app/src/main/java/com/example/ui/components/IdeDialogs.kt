@@ -33,7 +33,6 @@ import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -360,7 +359,7 @@ fun NewWorkerDialog(
                   verticalAlignment = Alignment.CenterVertically,
                   horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                  CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                  EdgeLoadingIndicator(size = 18.dp, strokeWidth = 2.dp)
                   Text(
                     text = "Inspecting ZIP archive…",
                     style = MaterialTheme.typography.bodySmall,
@@ -500,7 +499,7 @@ fun ZipImportPreviewDialog(
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-              CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp)
+              EdgeLoadingIndicator(size = 22.dp, strokeWidth = 2.5.dp)
               Text(
                 text = "Extracting & analyzing ZIP archive…",
                 style = MaterialTheme.typography.bodyMedium,

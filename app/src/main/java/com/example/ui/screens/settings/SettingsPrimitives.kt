@@ -33,6 +33,7 @@ import androidx.compose.material.icons.outlined.CheckCircleOutline
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Palette
@@ -72,7 +73,8 @@ enum class SettingsCategory(
   val jumpTag: String,
   val icon: ImageVector,
 ) {
-  APPEARANCE("Appearance", "appearance", Icons.Outlined.Palette),
+  APPEARANCE_HOME("Appearance · Home Page", "appearance_home", Icons.Outlined.Home),
+  APPEARANCE_EDITOR("Appearance · Editor", "appearance_editor", Icons.Outlined.Palette),
   EDITOR("Editor", "editor", Icons.Outlined.Code),
   CLOUDFLARE("Cloudflare", "credentials", Icons.Outlined.Key),
   DEPLOY("Deployment", "deploy", Icons.Outlined.RocketLaunch),

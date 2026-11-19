@@ -65,7 +65,6 @@ import androidx.compose.material.icons.outlined.Style
 import androidx.compose.material.icons.outlined.Web
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -107,6 +106,7 @@ import com.example.ui.components.CloudflareInfraPanel
 import com.example.ui.components.CloudflarePagesPanel
 import com.example.ui.components.EdgeBottomDock
 import com.example.ui.components.EdgeBottomDockItem
+import com.example.ui.components.EdgeLoadingIndicator
 import com.example.ui.components.GitHubAndDiffPanel
 import com.example.ui.components.IconRevealButton
 import com.example.ui.components.NewWorkerDialog
@@ -433,7 +433,7 @@ fun HomeScreen(
               }
             }
             if (uiState.isGitHubBusy) {
-              CircularProgressIndicator(modifier = Modifier.size(18.dp).padding(end = 4.dp), strokeWidth = 2.dp)
+              EdgeLoadingIndicator(size = 20.dp, modifier = Modifier.padding(end = 4.dp))
             }
           }
           HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
@@ -501,9 +501,56 @@ fun HomeScreen(
     return
   }
 
+  val isV2Home = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
+  val homeBarStyle = uiState.editorSettings.homeBarStyle.normalized()
+  val projectTotal =
+    if (uiState.workers.isNotEmpty()) uiState.workers.size else uiState.ramWorkspaces.size
+  val infraTotal =
+    uiState.kvNamespaces.size + uiState.d1Databases.size + uiState.r2Buckets.size + uiState.queues.size
+  val homeDockItems =
+    listOf(
+      EdgeBottomDockItem(
+        label = "Projects",
+        icon = Icons.Outlined.Code,
+        selected = uiState.homeTab == HomeTab.PROJECTS,
+        testTag = "home_tab_projects",
+        badgeText = projectTotal.takeIf { it > 0 }?.toString(),
+        onClick = { viewModel.setHomeTab(HomeTab.PROJECTS) },
+      ),
+      EdgeBottomDockItem(
+        label = "Pages",
+        icon = Icons.Outlined.Web,
+        selected = uiState.homeTab == HomeTab.PAGES,
+        testTag = "home_tab_pages",
+        badgeText = uiState.pagesProjects.size.takeIf { it > 0 }?.toString(),
+        onClick = { viewModel.setHomeTab(HomeTab.PAGES) },
+      ),
+      EdgeBottomDockItem(
+        label = "Infra",
+        icon = Icons.Outlined.Storage,
+        selected = uiState.homeTab == HomeTab.INFRA,
+        testTag = "home_tab_infra",
+        badgeText = infraTotal.takeIf { it > 0 }?.toString(),
+        onClick = { viewModel.setHomeTab(HomeTab.INFRA) },
+      ),
+    )
+
   Scaffold(
     containerColor = palette.chromeBg,
-    snackbarHost = { SnackbarHost(snackbarHostState) },
+    snackbarHost = {
+      SnackbarHost(
+        hostState = snackbarHostState,
+        modifier =
+          Modifier.padding(
+            bottom =
+              if (isV2Home && !uiState.isBottomDockHidden) {
+                (homeBarStyle.heightDp + homeBarStyle.bottomMarginDp + 14).dp
+              } else {
+                0.dp
+              },
+          ),
+      )
+    },
     topBar = {
       val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
       val activeStyle = UiStyleVersion.fromKey(uiState.editorSettings.uiStyleVersion)
@@ -623,50 +670,29 @@ fun HomeScreen(
       }
     },
     bottomBar = {
-      val projectTotal =
-        if (uiState.workers.isNotEmpty()) uiState.workers.size else uiState.ramWorkspaces.size
-      val infraTotal =
-        uiState.kvNamespaces.size + uiState.d1Databases.size + uiState.r2Buckets.size + uiState.queues.size
-      AnimatedVisibility(
-        visible = !uiState.isBottomDockHidden,
-        enter = slideInVertically(tween(200)) { it } + fadeIn(tween(180)),
-        exit = slideOutVertically(tween(160)) { it } + fadeOut(tween(140)),
-      ) {
-        EdgeBottomDock(
-          modifier = Modifier.navigationBarsPadding(),
-          onHideDock = { viewModel.setBottomDockHidden(true) },
-          hideDockTestTag = "hide_home_bottom_dock_button",
-          items =
-            listOf(
-              EdgeBottomDockItem(
-                label = "Projects",
-                icon = Icons.Outlined.Code,
-                selected = uiState.homeTab == HomeTab.PROJECTS,
-                testTag = "home_tab_projects",
-                badgeText = projectTotal.takeIf { it > 0 }?.toString(),
-                onClick = { viewModel.setHomeTab(HomeTab.PROJECTS) },
-              ),
-              EdgeBottomDockItem(
-                label = "Pages",
-                icon = Icons.Outlined.Web,
-                selected = uiState.homeTab == HomeTab.PAGES,
-                testTag = "home_tab_pages",
-                badgeText = uiState.pagesProjects.size.takeIf { it > 0 }?.toString(),
-                onClick = { viewModel.setHomeTab(HomeTab.PAGES) },
-              ),
-              EdgeBottomDockItem(
-                label = "Infra",
-                icon = Icons.Outlined.Storage,
-                selected = uiState.homeTab == HomeTab.INFRA,
-                testTag = "home_tab_infra",
-                badgeText = infraTotal.takeIf { it > 0 }?.toString(),
-                onClick = { viewModel.setHomeTab(HomeTab.INFRA) },
-              ),
-            ),
-        )
+      if (!isV2Home) {
+        AnimatedVisibility(
+          visible = !uiState.isBottomDockHidden,
+          enter = slideInVertically(tween(200)) { it } + fadeIn(tween(180)),
+          exit = slideOutVertically(tween(160)) { it } + fadeOut(tween(140)),
+        ) {
+          EdgeBottomDock(
+            modifier = Modifier.navigationBarsPadding(),
+            barStyle = homeBarStyle,
+            onHideDock = { viewModel.setBottomDockHidden(true) },
+            hideDockTestTag = "hide_home_bottom_dock_button",
+            items = homeDockItems,
+          )
+        }
       }
     },
   ) { innerPadding ->
+    val floatingBottomClearance =
+      if (isV2Home && !uiState.isBottomDockHidden) {
+        (homeBarStyle.heightDp + homeBarStyle.bottomMarginDp + 28).dp
+      } else {
+        16.dp
+      }
     Box(
       modifier =
         Modifier
@@ -687,6 +713,7 @@ fun HomeScreen(
           HomeTab.PROJECTS ->
             HomeProjectsTabContent(
               uiState = uiState,
+              bottomContentPadding = floatingBottomClearance,
               searchQuery = projectSearch,
               onSearchChange = { projectSearch = it },
               onNewProject = { showNewProjectDialog = true },
@@ -728,76 +755,106 @@ fun HomeScreen(
             )
 
           HomeTab.PAGES ->
-            CloudflarePagesPanel(
-              uiState = uiState,
-              onRefreshProjects = viewModel::loadPagesProjects,
-              onSelectProject = viewModel::selectPagesProject,
-              onCreateProject = viewModel::createPagesProject,
-              onDeleteProject = viewModel::deletePagesProject,
-              onTriggerDeploy = viewModel::triggerPagesDeployment,
-              onRetryDeploy = viewModel::retryPagesDeployment,
-              onRollbackDeploy = viewModel::rollbackPagesDeployment,
-              onFetchLogs = viewModel::fetchPagesLogs,
-              onSaveEnvVar = viewModel::savePagesEnvVar,
-              onUpdateBuildConfig = viewModel::updatePagesBuildConfig,
-              onUpdateBindings = viewModel::updatePagesBindings,
-              onCreatePagesSpecialFile = viewModel::createPagesSpecialFile,
-              onAddDomain = viewModel::addPagesDomain,
-              onDeleteDomain = viewModel::deletePagesDomain,
-              onPickPagesFolder = { pagesFolderLauncher.launch(null) },
-              onPickPagesZip = {
-                pagesZipLauncher.launch(
-                  arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*"),
-                )
-              },
-              onPickPagesFiles = { pagesFilesLauncher.launch(arrayOf("*/*")) },
-              onStageWorkspaceForPages = viewModel::stageCurrentWorkspaceForPages,
-              onTogglePagesZipStripRoot = viewModel::togglePagesZipStripRoot,
-              onClearStagedPagesAssets = viewModel::clearStagedPagesAssets,
-              onDeployDirectPages = viewModel::deployStagedPagesAssets,
-            )
+            Box(
+              modifier =
+                Modifier
+                  .fillMaxSize()
+                  .padding(bottom = if (isV2Home && !uiState.isBottomDockHidden) (homeBarStyle.heightDp + homeBarStyle.bottomMarginDp + 12).dp else 0.dp),
+            ) {
+              CloudflarePagesPanel(
+                uiState = uiState,
+                onRefreshProjects = viewModel::loadPagesProjects,
+                onSelectProject = viewModel::selectPagesProject,
+                onCreateProject = viewModel::createPagesProject,
+                onDeleteProject = viewModel::deletePagesProject,
+                onTriggerDeploy = viewModel::triggerPagesDeployment,
+                onRetryDeploy = viewModel::retryPagesDeployment,
+                onRollbackDeploy = viewModel::rollbackPagesDeployment,
+                onFetchLogs = viewModel::fetchPagesLogs,
+                onSaveEnvVar = viewModel::savePagesEnvVar,
+                onUpdateBuildConfig = viewModel::updatePagesBuildConfig,
+                onUpdateBindings = viewModel::updatePagesBindings,
+                onCreatePagesSpecialFile = viewModel::createPagesSpecialFile,
+                onAddDomain = viewModel::addPagesDomain,
+                onDeleteDomain = viewModel::deletePagesDomain,
+                onPickPagesFolder = { pagesFolderLauncher.launch(null) },
+                onPickPagesZip = {
+                  pagesZipLauncher.launch(
+                    arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*"),
+                  )
+                },
+                onPickPagesFiles = { pagesFilesLauncher.launch(arrayOf("*/*")) },
+                onStageWorkspaceForPages = viewModel::stageCurrentWorkspaceForPages,
+                onTogglePagesZipStripRoot = viewModel::togglePagesZipStripRoot,
+                onClearStagedPagesAssets = viewModel::clearStagedPagesAssets,
+                onDeployDirectPages = viewModel::deployStagedPagesAssets,
+              )
+            }
 
           HomeTab.INFRA ->
-            CloudflareInfraPanel(
-              uiState = uiState,
-              onRefreshInfra = viewModel::loadCloudflareInfra,
-              onToggleWorkersDev = viewModel::toggleWorkersDev,
-              onUpdateCompat = viewModel::updateCompatibilitySettings,
-              onAddCronSchedule = viewModel::addCronSchedule,
-              onRemoveCronSchedule = viewModel::removeCronSchedule,
-              onAttachZoneRoute = viewModel::attachZoneRoute,
-              onDeleteZoneRoute = viewModel::deleteZoneRoute,
-              onAttachWorkerDomain = viewModel::attachWorkerCustomDomain,
-              onRemoveWorkerDomain = viewModel::removeWorkerCustomDomain,
-              onRollbackVersion = viewModel::rollbackToVersion,
-              onRefreshWorkerVersions = viewModel::loadWorkerVersions,
-              onDeployGradualSplit = viewModel::deployGradualWorkerSplit,
-              onAddEnvVar = viewModel::addEnvVar,
-              onAddSecret = viewModel::addSecret,
-              onBindResource = viewModel::bindResourceToWorker,
-              onDeleteBinding = viewModel::deleteBindingOrSecret,
-              onCreateKvNamespace = viewModel::createKvNamespace,
-              onDeleteKvNamespace = viewModel::deleteKvNamespace,
-              onSelectKvNamespace = viewModel::selectKvNamespace,
-              onInspectKvKey = viewModel::inspectKvKey,
-              onPutKvEntry = viewModel::putKvEntry,
-              onBulkImportKv = viewModel::bulkImportKvJson,
-              onExportKvJson = viewModel::exportSelectedKvJson,
-              onDeleteKvKey = viewModel::deleteKvKey,
-              onCreateD1Database = viewModel::createD1Database,
-              onDeleteD1Database = viewModel::deleteD1Database,
-              onSelectD1Database = viewModel::selectD1Database,
-              onRunD1Sql = viewModel::runD1SqlQuery,
-              onCreateR2Bucket = viewModel::createR2Bucket,
-              onDeleteR2Bucket = viewModel::deleteR2Bucket,
-              onCreateQueue = viewModel::createQueue,
-              onDeleteQueue = viewModel::deleteQueue,
-              onNotifyStatus = viewModel::showStatus,
-              onRenameWorker = { newName, deleteOld ->
-                viewModel.renameExistingWorker(newScriptNameRaw = newName, deleteOldRemote = deleteOld)
-              },
-              onUpdateSubdomain = viewModel::updateAccountWorkersSubdomain,
-            )
+            Box(
+              modifier =
+                Modifier
+                  .fillMaxSize()
+                  .padding(bottom = if (isV2Home && !uiState.isBottomDockHidden) (homeBarStyle.heightDp + homeBarStyle.bottomMarginDp + 12).dp else 0.dp),
+            ) {
+              CloudflareInfraPanel(
+                uiState = uiState,
+                onRefreshInfra = viewModel::loadCloudflareInfra,
+                onToggleWorkersDev = viewModel::toggleWorkersDev,
+                onUpdateCompat = viewModel::updateCompatibilitySettings,
+                onAddCronSchedule = viewModel::addCronSchedule,
+                onRemoveCronSchedule = viewModel::removeCronSchedule,
+                onAttachZoneRoute = viewModel::attachZoneRoute,
+                onDeleteZoneRoute = viewModel::deleteZoneRoute,
+                onAttachWorkerDomain = viewModel::attachWorkerCustomDomain,
+                onRemoveWorkerDomain = viewModel::removeWorkerCustomDomain,
+                onRollbackVersion = viewModel::rollbackToVersion,
+                onRefreshWorkerVersions = viewModel::loadWorkerVersions,
+                onDeployGradualSplit = viewModel::deployGradualWorkerSplit,
+                onAddEnvVar = viewModel::addEnvVar,
+                onAddSecret = viewModel::addSecret,
+                onBindResource = viewModel::bindResourceToWorker,
+                onDeleteBinding = viewModel::deleteBindingOrSecret,
+                onCreateKvNamespace = viewModel::createKvNamespace,
+                onDeleteKvNamespace = viewModel::deleteKvNamespace,
+                onSelectKvNamespace = viewModel::selectKvNamespace,
+                onInspectKvKey = viewModel::inspectKvKey,
+                onPutKvEntry = viewModel::putKvEntry,
+                onBulkImportKv = viewModel::bulkImportKvJson,
+                onExportKvJson = viewModel::exportSelectedKvJson,
+                onDeleteKvKey = viewModel::deleteKvKey,
+                onCreateD1Database = viewModel::createD1Database,
+                onDeleteD1Database = viewModel::deleteD1Database,
+                onSelectD1Database = viewModel::selectD1Database,
+                onRunD1Sql = viewModel::runD1SqlQuery,
+                onCreateR2Bucket = viewModel::createR2Bucket,
+                onDeleteR2Bucket = viewModel::deleteR2Bucket,
+                onCreateQueue = viewModel::createQueue,
+                onDeleteQueue = viewModel::deleteQueue,
+                onNotifyStatus = viewModel::showStatus,
+                onRenameWorker = { newName, deleteOld ->
+                  viewModel.renameExistingWorker(newScriptNameRaw = newName, deleteOldRemote = deleteOld)
+                },
+                onUpdateSubdomain = viewModel::updateAccountWorkersSubdomain,
+              )
+            }
+        }
+      }
+
+      if (isV2Home) {
+        AnimatedVisibility(
+          visible = !uiState.isBottomDockHidden,
+          enter = slideInVertically(tween(220)) { it } + fadeIn(tween(180)),
+          exit = slideOutVertically(tween(160)) { it } + fadeOut(tween(140)),
+          modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
+          EdgeBottomDock(
+            barStyle = homeBarStyle,
+            onHideDock = { viewModel.setBottomDockHidden(true) },
+            hideDockTestTag = "hide_home_bottom_dock_button",
+            items = homeDockItems,
+          )
         }
       }
 
@@ -808,8 +865,6 @@ fun HomeScreen(
         modifier =
           Modifier
             .align(Alignment.BottomEnd)
-            .navigationBarsPadding()
-            .imePadding()
             .padding(end = 16.dp, bottom = 14.dp),
       ) {
         Surface(
@@ -836,6 +891,7 @@ fun HomeScreen(
 @Composable
 private fun HomeProjectsTabContent(
   uiState: IdeUiState,
+  bottomContentPadding: androidx.compose.ui.unit.Dp,
   searchQuery: String,
   onSearchChange: (String) -> Unit,
   onNewProject: () -> Unit,
@@ -873,121 +929,127 @@ private fun HomeProjectsTabContent(
 
   LazyColumn(
     modifier = Modifier.fillMaxSize(),
-    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = bottomContentPadding),
     verticalArrangement = Arrangement.spacedBy(if (isV2) 16.dp else 12.dp),
   ) {
     item(key = "home_actions") {
-      Row(
-        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+      Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
       ) {
+        Row(
+          modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          var importMenuOpen by remember { mutableStateOf(false) }
+          Box {
+            IconRevealButton(
+              icon = Icons.Outlined.CloudDownload,
+              revealedLabel = "Import",
+              onClick = { importMenuOpen = true },
+              height = 42.dp,
+              tag = "home_import_bundle_button",
+            )
+            EdgeMenu(
+              expanded = importMenuOpen,
+              onDismissRequest = { importMenuOpen = false },
+              minWidth = 216.dp,
+              maxWidth = 264.dp,
+            ) {
+              EdgeMenuHeader(
+                title = "Import Project",
+                leadingIcon = Icons.Outlined.CloudDownload,
+              )
+              EdgeMenuItem(
+                label = "Import .zip Archive",
+                icon = Icons.Outlined.Archive,
+                badgeText = ".zip",
+                onClick = {
+                  importMenuOpen = false
+                  onImportZip()
+                },
+              )
+              EdgeMenuItem(
+                label = "Import .json Bundle",
+                icon = Icons.Outlined.CloudDownload,
+                badgeText = ".json",
+                onClick = {
+                  importMenuOpen = false
+                  onImportBundle()
+                },
+              )
+            }
+          }
+
+          IconRevealButton(
+            icon = Icons.Outlined.Search,
+            revealedLabel = "Search",
+            active = showSearchBar || searchQuery.isNotEmpty(),
+            onClick = {
+              showSearchBar = !showSearchBar
+              if (!showSearchBar && searchQuery.isNotEmpty()) onSearchChange("")
+            },
+            height = 42.dp,
+            tag = "home_search_toggle_button",
+          )
+
+          IconRevealButton(
+            icon = Icons.Outlined.Key,
+            revealedLabel = "Vault",
+            statusDotColor = if (uiState.credentials != null) EmeraldLive else AmberWarn,
+            onClick = onOpenSettings,
+            height = 42.dp,
+            tag = "home_vault_shortcut",
+          )
+
+          IconRevealButton(
+            icon = Icons.Outlined.AccountTree,
+            revealedLabel = "GitHub",
+            statusDotColor = if (uiState.gitHubCreds != null) EmeraldLive else null,
+            onClick = onOpenGitHubHub,
+            height = 42.dp,
+            tag = "home_github_shortcut",
+          )
+
+          if (!uiState.projectStorageSummary.hasNativeStorageAccess) {
+            IconRevealButton(
+              icon = Icons.Outlined.Folder,
+              revealedLabel = "Storage",
+              statusDotColor = AmberWarn,
+              onClick = onRequestStorageAccess,
+              height = 42.dp,
+              tag = "home_grant_storage_button",
+            )
+          }
+        }
+
         Surface(
           onClick = onNewProject,
           color = palette.ctaBg,
-          shape = RoundedCornerShape(if (isV2) 999.dp else 10.dp),
-          modifier = Modifier.height(42.dp).testTag("home_new_project_button"),
+          shape = RoundedCornerShape(if (isV2) 999.dp else 12.dp),
+          modifier = Modifier.fillMaxWidth().height(48.dp).testTag("home_new_project_button"),
         ) {
           Row(
-            modifier = Modifier.padding(horizontal = 14.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            horizontalArrangement = Arrangement.Center,
           ) {
             Icon(
               imageVector = Icons.Outlined.Add,
               contentDescription = "Create new project",
               tint = palette.ctaFg,
-              modifier = Modifier.size(18.dp),
+              modifier = Modifier.size(19.dp),
             )
+            Spacer(Modifier.width(8.dp))
             Text(
               text = "Create new project",
-              fontSize = 13.sp,
+              fontSize = 13.5.sp,
               fontWeight = FontWeight.SemiBold,
               color = palette.ctaFg,
               maxLines = 1,
             )
           }
-        }
-
-        var importMenuOpen by remember { mutableStateOf(false) }
-        Box {
-          IconRevealButton(
-            icon = Icons.Outlined.CloudDownload,
-            revealedLabel = "Import",
-            onClick = { importMenuOpen = true },
-            height = 42.dp,
-            tag = "home_import_bundle_button",
-          )
-          EdgeMenu(
-            expanded = importMenuOpen,
-            onDismissRequest = { importMenuOpen = false },
-            minWidth = 216.dp,
-            maxWidth = 264.dp,
-          ) {
-            EdgeMenuHeader(
-              title = "Import Project",
-              leadingIcon = Icons.Outlined.CloudDownload,
-            )
-            EdgeMenuItem(
-              label = "Import .zip Archive",
-              icon = Icons.Outlined.Archive,
-              badgeText = ".zip",
-              onClick = {
-                importMenuOpen = false
-                onImportZip()
-              },
-            )
-            EdgeMenuItem(
-              label = "Import .json Bundle",
-              icon = Icons.Outlined.CloudDownload,
-              badgeText = ".json",
-              onClick = {
-                importMenuOpen = false
-                onImportBundle()
-              },
-            )
-          }
-        }
-
-        IconRevealButton(
-          icon = Icons.Outlined.Search,
-          revealedLabel = "Search",
-          active = showSearchBar || searchQuery.isNotEmpty(),
-          onClick = {
-            showSearchBar = !showSearchBar
-            if (!showSearchBar && searchQuery.isNotEmpty()) onSearchChange("")
-          },
-          height = 42.dp,
-          tag = "home_search_toggle_button",
-        )
-
-        IconRevealButton(
-          icon = Icons.Outlined.Key,
-          revealedLabel = "Vault",
-          statusDotColor = if (uiState.credentials != null) EmeraldLive else AmberWarn,
-          onClick = onOpenSettings,
-          height = 42.dp,
-          tag = "home_vault_shortcut",
-        )
-
-        IconRevealButton(
-          icon = Icons.Outlined.AccountTree,
-          revealedLabel = "GitHub",
-          statusDotColor = if (uiState.gitHubCreds != null) EmeraldLive else null,
-          onClick = onOpenGitHubHub,
-          height = 42.dp,
-          tag = "home_github_shortcut",
-        )
-
-        if (!uiState.projectStorageSummary.hasNativeStorageAccess) {
-          IconRevealButton(
-            icon = Icons.Outlined.Folder,
-            revealedLabel = "Storage",
-            statusDotColor = AmberWarn,
-            onClick = onRequestStorageAccess,
-            height = 42.dp,
-            tag = "home_grant_storage_button",
-          )
         }
       }
     }
@@ -1207,7 +1269,23 @@ private fun HomeProjectsTabContent(
         }
       }
 
-      if (cloudWorkers.isEmpty() && !uiState.isLoadingWorkers) {
+      if (cloudWorkers.isEmpty() && uiState.isLoadingWorkers) {
+        item(key = "cf_loading") {
+          Surface(
+            color = palette.chromeSurface,
+            shape = RoundedCornerShape(if (isV2) 24.dp else 14.dp),
+            border = if (isV2) null else rememberGlassBorderStroke(0.75.dp),
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Box(
+              modifier = Modifier.fillMaxWidth().padding(vertical = 26.dp),
+              contentAlignment = Alignment.Center,
+            ) {
+              EdgeLoadingIndicator(size = 34.dp)
+            }
+          }
+        }
+      } else if (cloudWorkers.isEmpty() && !uiState.isLoadingWorkers) {
         item(key = "cf_empty") {
           Surface(
             color = palette.chromeSurface,

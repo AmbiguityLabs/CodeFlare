@@ -74,7 +74,6 @@ import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.outlined.WarningAmber
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -92,6 +91,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -160,6 +160,7 @@ import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.LocalPopupMenuStyle
 import com.example.ui.theme.UiStyleVersion
 import com.example.ui.theme.edgeGlassDock
 import com.example.ui.theme.edgeGlassSurface
@@ -665,7 +666,7 @@ fun IdeWorkspaceScreen(
         PaletteCommand("Code Mode", "MODE") {
           viewModel.setProjectMode(ProjectMode.CODE)
         },
-        PaletteCommand("Run Locally", "TEST") {
+        PaletteCommand("Run in CLI", "CLI") {
           viewModel.runWorkspaceLocally(openTestWorkspace = true)
         },
         PaletteCommand("Worker Preview", "TEST") {
@@ -788,6 +789,13 @@ fun IdeWorkspaceScreen(
     CommandPaletteDialog(commands = commands, onDismiss = { showCommandPalette = false })
   }
 
+  val editorBarStyle = uiState.editorSettings.editorBarStyle.normalized()
+  val isV2Workspace = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
+  val dockClearanceBottom =
+    if (isV2Workspace) (editorBarStyle.heightDp + editorBarStyle.bottomMarginDp + 14).dp
+    else (editorBarStyle.heightDp + 10).dp
+
+  CompositionLocalProvider(LocalPopupMenuStyle provides uiState.editorSettings.editorMenuStyle) {
   BoxWithConstraints(
     modifier = Modifier.fillMaxSize().background(palette.chromeBg),
   ) {
@@ -897,7 +905,7 @@ fun IdeWorkspaceScreen(
                 text =
                   when {
                     dirtyCount > 0 -> "$fileCount files · $dirtyCount edited"
-                    uiState.isLocalScratchpad -> "$fileCount files · Local"
+                    uiState.isLocalScratchpad -> "$fileCount files · CLI"
                     else -> "$fileCount files · Synced"
                   },
                 tint = if (dirtyCount > 0) AmberWarn else palette.textMuted,
@@ -917,7 +925,7 @@ fun IdeWorkspaceScreen(
             if (uiState.workspace != null) {
               IconRevealButton(
                 icon = Icons.Outlined.PlayArrow,
-                revealedLabel = "Run Local",
+                revealedLabel = "Run CLI",
                 isBusy = uiState.isRunningLocalScript,
                 active = uiState.projectMode == ProjectMode.TEST && uiState.activeBottomTab == BottomPanelTab.LOCAL_RUN,
                 onClick = { viewModel.runWorkspaceLocally(openTestWorkspace = true) },
@@ -1111,6 +1119,7 @@ fun IdeWorkspaceScreen(
             exit = slideOutVertically(tween(160)) { it } + fadeOut(tween(140)),
           ) {
             EdgeBottomDock(
+              barStyle = editorBarStyle,
               onHideDock = { viewModel.setBottomDockHidden(true) },
               hideDockTestTag = "hide_workspace_bottom_dock_button",
               items =
@@ -1496,7 +1505,7 @@ fun IdeWorkspaceScreen(
               .align(Alignment.BottomEnd)
               .padding(
                 end = 14.dp,
-                bottom = if (uiState.isBottomDockHidden) 14.dp else 64.dp,
+                bottom = if (uiState.isBottomDockHidden) 14.dp else dockClearanceBottom,
               ),
         ) {
           Row(
@@ -1557,7 +1566,7 @@ fun IdeWorkspaceScreen(
           modifier =
             Modifier
               .align(Alignment.BottomCenter)
-              .padding(bottom = if (uiState.isBottomDockHidden) 18.dp else 64.dp),
+              .padding(bottom = if (uiState.isBottomDockHidden) 18.dp else dockClearanceBottom),
         )
       }
     }
@@ -1579,6 +1588,7 @@ fun IdeWorkspaceScreen(
         content = workspaceBody,
       )
     }
+  }
   }
 }
 
@@ -1608,7 +1618,7 @@ private fun ProjectTestModeWorkspace(
       ) {
         IconSegmentTab(
           icon = Icons.Outlined.Terminal,
-          label = "Local Run",
+          label = "CLI",
           selected = activeTab == BottomPanelTab.LOCAL_RUN,
           tag = "test_segment_local_run",
           onClick = { viewModel.toggleBottomPanel(BottomPanelTab.LOCAL_RUN) },
@@ -1665,7 +1675,7 @@ private fun ProjectTestModeWorkspace(
         Text(
           text =
             when (activeTab) {
-              BottomPanelTab.LOCAL_RUN -> "Local Runner"
+              BottomPanelTab.LOCAL_RUN -> "CLI Terminal"
               BottomPanelTab.WORKER_TEST -> "Worker HTTP"
               else -> "API Tester"
             },

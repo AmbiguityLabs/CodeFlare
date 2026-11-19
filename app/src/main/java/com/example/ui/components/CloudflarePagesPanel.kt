@@ -34,7 +34,6 @@ import androidx.compose.material.icons.outlined.Replay
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material.icons.outlined.Web
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -164,7 +163,7 @@ fun CloudflarePagesPanel(
       }
 
       if (uiState.isPagesBusy) {
-        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+        EdgeLoadingIndicator(size = 24.dp)
       } else if (uiState.pagesProjects.isEmpty()) {
         Text("No Pages projects found. Tap + to create one.", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
       } else {

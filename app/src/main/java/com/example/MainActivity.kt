@@ -8,19 +8,21 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.ui.components.EdgeLoadingIndicator
 import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.IdeWorkspaceScreen
+import com.example.ui.theme.BarStylePreferences
 import com.example.ui.theme.EdgeCodeTheme
 import com.example.ui.viewmodel.IdeViewModel
 
@@ -51,11 +53,18 @@ class MainActivity : ComponentActivity() {
         dynamicColor = uiState.editorSettings.dynamicColor,
         themePreset = com.example.ui.theme.EditorThemePreset.fromKey(uiState.editorSettings.themePreset),
         uiStyle = com.example.ui.theme.UiStyleVersion.fromKey(uiState.editorSettings.uiStyleVersion),
+        barPreferences =
+          BarStylePreferences(
+            homeBar = uiState.editorSettings.homeBarStyle,
+            editorBar = uiState.editorSettings.editorBarStyle,
+            homeMenu = uiState.editorSettings.homeMenuStyle,
+            editorMenu = uiState.editorSettings.editorMenuStyle,
+          ),
       ) {
         when {
           uiState.isBootstrapping -> {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-              CircularProgressIndicator()
+              EdgeLoadingIndicator(size = 44.dp)
             }
           }
           uiState.credentials == null && !uiState.isLocalScratchpad && !uiState.isGitHubIdeOnlyMode -> {

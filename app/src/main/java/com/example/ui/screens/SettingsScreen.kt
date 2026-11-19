@@ -67,7 +67,8 @@ import androidx.compose.ui.unit.sp
 import com.example.data.remote.CfAccount
 import com.example.data.security.AuthMethod
 import com.example.data.security.EditorSettings
-import com.example.ui.components.AppearanceStudioContent
+import com.example.ui.components.EditorAppearanceStudioContent
+import com.example.ui.components.HomeAppearanceStudioContent
 import com.example.ui.components.IconRevealButton
 import com.example.ui.screens.settings.SettingsCategory
 import com.example.ui.screens.settings.SettingsCloudflarePane
@@ -112,7 +113,7 @@ fun SettingsScreen(
   val activeStyle = UiStyleVersion.fromKey(settings.uiStyleVersion)
 
   var openCategory by rememberSaveable { mutableStateOf<SettingsCategory?>(null) }
-  var wideSelectedCategory by rememberSaveable { mutableStateOf(SettingsCategory.APPEARANCE) }
+  var wideSelectedCategory by rememberSaveable { mutableStateOf(SettingsCategory.APPEARANCE_HOME) }
   var confirmDisconnect by remember { mutableStateOf(false) }
 
   if (confirmDisconnect) {
@@ -169,9 +170,18 @@ fun SettingsScreen(
           verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
           when (category) {
-            SettingsCategory.APPEARANCE -> {
-              Box(modifier = Modifier.fillMaxWidth().testTag("settings_appearance_section")) {
-                AppearanceStudioContent(
+            SettingsCategory.APPEARANCE_HOME -> {
+              Box(modifier = Modifier.fillMaxWidth().testTag("settings_appearance_home_section")) {
+                HomeAppearanceStudioContent(
+                  settings = settings,
+                  onUpdateSettings = onUpdateSettings,
+                )
+              }
+            }
+
+            SettingsCategory.APPEARANCE_EDITOR -> {
+              Box(modifier = Modifier.fillMaxWidth().testTag("settings_appearance_editor_section")) {
+                EditorAppearanceStudioContent(
                   settings = settings,
                   onUpdateSettings = onUpdateSettings,
                   onPickEditorBackgroundImage = onPickEditorBackgroundImage,
@@ -240,6 +250,28 @@ fun SettingsScreen(
             .padding(horizontal = if (railMode) 12.dp else 14.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(if (isV2) 18.dp else 14.dp),
       ) {
+        SettingsGroup(label = "Appearance") {
+          SettingsMenuRow(
+            title = SettingsCategory.APPEARANCE_HOME.title,
+            icon = SettingsCategory.APPEARANCE_HOME.icon,
+            value = if (isV2) null else categoryCompactValue(SettingsCategory.APPEARANCE_HOME, uiState),
+            selected = activeSelection == SettingsCategory.APPEARANCE_HOME,
+            showChevron = !railMode,
+            tag = "settings_jump_${SettingsCategory.APPEARANCE_HOME.jumpTag}",
+            onClick = { select(SettingsCategory.APPEARANCE_HOME) },
+          )
+          SettingsHairlineDivider(startIndent = dividerIndent)
+          SettingsMenuRow(
+            title = SettingsCategory.APPEARANCE_EDITOR.title,
+            icon = SettingsCategory.APPEARANCE_EDITOR.icon,
+            value = if (isV2) null else categoryCompactValue(SettingsCategory.APPEARANCE_EDITOR, uiState),
+            selected = activeSelection == SettingsCategory.APPEARANCE_EDITOR,
+            showChevron = !railMode,
+            tag = "settings_jump_${SettingsCategory.APPEARANCE_EDITOR.jumpTag}",
+            onClick = { select(SettingsCategory.APPEARANCE_EDITOR) },
+          )
+        }
+
         SettingsGroup(label = "Preferences") {
           SettingsMenuRow(
             title = "Style",
@@ -262,16 +294,6 @@ fun SettingsScreen(
             useUnfoldIndicator = true,
             tag = "settings_quick_theme_toggle",
             onClick = { onUpdateSettings { it.copy(darkTheme = !it.darkTheme) } },
-          )
-          SettingsHairlineDivider(startIndent = dividerIndent)
-          SettingsMenuRow(
-            title = SettingsCategory.APPEARANCE.title,
-            icon = SettingsCategory.APPEARANCE.icon,
-            value = if (isV2) null else categoryCompactValue(SettingsCategory.APPEARANCE, uiState),
-            selected = activeSelection == SettingsCategory.APPEARANCE,
-            showChevron = !railMode,
-            tag = "settings_jump_${SettingsCategory.APPEARANCE.jumpTag}",
-            onClick = { select(SettingsCategory.APPEARANCE) },
           )
           SettingsHairlineDivider(startIndent = dividerIndent)
           SettingsMenuRow(
@@ -463,7 +485,8 @@ private fun categoryCompactValue(
 ): String {
   val settings = uiState.editorSettings
   return when (category) {
-    SettingsCategory.APPEARANCE -> EditorThemePreset.fromKey(settings.themePreset).label
+    SettingsCategory.APPEARANCE_HOME -> EditorThemePreset.fromKey(settings.themePreset).label
+    SettingsCategory.APPEARANCE_EDITOR -> "${settings.editorBarStyle.heightDp}dp · ${settings.editorBarStyle.widthPercent}%"
     SettingsCategory.EDITOR -> "${settings.fontSizeSp}sp · ${settings.tabSize}sp"
     SettingsCategory.CLOUDFLARE ->
       when (uiState.credentials?.method) {

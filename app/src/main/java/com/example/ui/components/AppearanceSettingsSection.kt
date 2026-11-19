@@ -24,15 +24,24 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
+import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.CloudDownload
+import androidx.compose.material.icons.outlined.CloudQueue
+import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Dvr
 import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.RestartAlt
-import androidx.compose.material.icons.outlined.Style
+import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Wallpaper
+import androidx.compose.material.icons.outlined.Web
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -64,6 +73,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.remote.WorkerLanguage
 import com.example.data.security.EditorSettings
+import com.example.data.security.FloatingBarStyleConfig
+import com.example.data.security.PopupMenuStyleConfig
 import com.example.editor.SyntaxHighlighter
 import com.example.ui.theme.EditorBackgroundPreset
 import com.example.ui.theme.EditorThemePreset
@@ -76,29 +87,14 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
-fun AppearanceStudioContent(
+fun HomeAppearanceStudioContent(
   settings: EditorSettings,
   onUpdateSettings: ((EditorSettings) -> EditorSettings) -> Unit,
-  onPickEditorBackgroundImage: (Uri) -> Unit,
-  onClearEditorBackgroundImage: () -> Unit,
 ) {
   val palette = LocalIdePalette.current
   val activeStyle = UiStyleVersion.fromKey(settings.uiStyleVersion)
   val isV2 = activeStyle == UiStyleVersion.V2_MINIMAL_OLED
   val activePreset = EditorThemePreset.fromKey(settings.themePreset)
-  val activeBgPreset = EditorBackgroundPreset.fromKey(settings.editorBgPreset)
-  val hasCustomPhotoFile =
-    remember(settings.editorBgImagePath) {
-      settings.editorBgImagePath.isNotBlank() && File(settings.editorBgImagePath).exists()
-    }
-  val hasActiveBg = rememberHasActiveEditorBackground(settings)
-
-  val photoPickerLauncher =
-    rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-      if (uri != null) {
-        onPickEditorBackgroundImage(uri)
-      }
-    }
 
   Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
     Row(
@@ -112,14 +108,50 @@ fun AppearanceStudioContent(
       horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
       UiStyleVersion.entries.forEach { styleChoice ->
-        IconSegmentTab(
-          icon = Icons.Outlined.Style,
-          label = styleChoice.label,
-          selected = activeStyle == styleChoice,
+        val selectedChoice = activeStyle == styleChoice
+        val pillBg =
+          when {
+            selectedChoice -> palette.activePillBg
+            isV2 -> palette.chromeSurface
+            else -> palette.glassSurface
+          }
+        val pillFg = if (selectedChoice) palette.activePillFg else palette.textSecondary
+        Surface(
           onClick = { onUpdateSettings { it.copy(uiStyleVersion = styleChoice.key) } },
-          tag = "settings_style_${styleChoice.key.lowercase()}",
-          modifier = Modifier.weight(1f),
-        )
+          shape = RoundedCornerShape(if (isV2) 999.dp else 9.dp),
+          color = pillBg,
+          border =
+            when {
+              isV2 -> null
+              selectedChoice -> BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.35f))
+              else -> BorderStroke(0.75.dp, palette.glassBorderSubtle)
+            },
+          modifier =
+            Modifier
+              .weight(1f)
+              .height(36.dp)
+              .testTag("settings_style_${styleChoice.key.lowercase()}"),
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+          ) {
+            EdgeLoadingIndicator(
+              size = 17.dp,
+              color = pillFg,
+              styleOverride = styleChoice,
+            )
+            Spacer(Modifier.width(7.dp))
+            Text(
+              text = styleChoice.label,
+              fontSize = 12.sp,
+              fontWeight = FontWeight.SemiBold,
+              color = pillFg,
+              maxLines = 1,
+            )
+          }
+        }
       }
     }
 
@@ -241,11 +273,119 @@ fun AppearanceStudioContent(
       }
     }
 
+    FloatingBarCustomizerSection(
+      title = "Home Bottom Bar",
+      tagPrefix = "home_bar",
+      config = settings.homeBarStyle,
+      defaultConfig = FloatingBarStyleConfig.HOME_DEFAULT,
+      previewItems =
+        listOf(
+          Triple("Projects", Icons.Outlined.Code, "4"),
+          Triple("Pages", Icons.Outlined.Web, "2"),
+          Triple("Infra", Icons.Outlined.Storage, "7"),
+        ),
+      onChange = { transform ->
+        onUpdateSettings { cur -> cur.copy(homeBarStyle = transform(cur.homeBarStyle)) }
+      },
+      onReset = {
+        onUpdateSettings { it.copy(homeBarStyle = FloatingBarStyleConfig.HOME_DEFAULT) }
+      },
+      initiallyExpanded = true,
+    )
+
+    PopupMenuCustomizerSection(
+      title = "Home Menus",
+      tagPrefix = "home_menu",
+      config = settings.homeMenuStyle,
+      defaultConfig = PopupMenuStyleConfig.DEFAULT,
+      previewHeader = "Home Menu",
+      previewRows =
+        listOf(
+          Triple("Import .zip Archive", Icons.Outlined.Archive, ".zip"),
+          Triple("Import .json Bundle", Icons.Outlined.CloudDownload, ".json"),
+          Triple("Cloudflare Account", Icons.Outlined.CloudQueue, null),
+        ),
+      onChange = { transform ->
+        onUpdateSettings { cur -> cur.copy(homeMenuStyle = transform(cur.homeMenuStyle)) }
+      },
+      onReset = {
+        onUpdateSettings { it.copy(homeMenuStyle = PopupMenuStyleConfig.DEFAULT) }
+      },
+      initiallyExpanded = false,
+    )
+  }
+}
+
+@Composable
+fun EditorAppearanceStudioContent(
+  settings: EditorSettings,
+  onUpdateSettings: ((EditorSettings) -> EditorSettings) -> Unit,
+  onPickEditorBackgroundImage: (Uri) -> Unit,
+  onClearEditorBackgroundImage: () -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  val activeBgPreset = EditorBackgroundPreset.fromKey(settings.editorBgPreset)
+  val hasCustomPhotoFile =
+    remember(settings.editorBgImagePath) {
+      settings.editorBgImagePath.isNotBlank() && File(settings.editorBgImagePath).exists()
+    }
+  val hasActiveBg = rememberHasActiveEditorBackground(settings)
+
+  val photoPickerLauncher =
+    rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+      if (uri != null) {
+        onPickEditorBackgroundImage(uri)
+      }
+    }
+
+  Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    FloatingBarCustomizerSection(
+      title = "Editor Bottom Bar",
+      tagPrefix = "editor_bar",
+      config = settings.editorBarStyle,
+      defaultConfig = FloatingBarStyleConfig.EDITOR_DEFAULT,
+      previewItems =
+        listOf(
+          Triple("Code", Icons.Outlined.Code, null),
+          Triple("Test", Icons.Outlined.PlayArrow, null),
+          Triple("Config", Icons.Outlined.Tune, null),
+          Triple("Console", Icons.Outlined.Dvr, "3"),
+        ),
+      onChange = { transform ->
+        onUpdateSettings { cur -> cur.copy(editorBarStyle = transform(cur.editorBarStyle)) }
+      },
+      onReset = {
+        onUpdateSettings { it.copy(editorBarStyle = FloatingBarStyleConfig.EDITOR_DEFAULT) }
+      },
+      initiallyExpanded = true,
+    )
+
+    PopupMenuCustomizerSection(
+      title = "Editor Menus",
+      tagPrefix = "editor_menu",
+      config = settings.editorMenuStyle,
+      defaultConfig = PopupMenuStyleConfig.DEFAULT,
+      previewHeader = "Project Actions",
+      previewRows =
+        listOf(
+          Triple("Run in CLI", Icons.Outlined.PlayArrow, "CLI"),
+          Triple("Format Code", Icons.Outlined.Code, null),
+          Triple("Git Sync", Icons.Outlined.AccountTree, "GIT"),
+        ),
+      onChange = { transform ->
+        onUpdateSettings { cur -> cur.copy(editorMenuStyle = transform(cur.editorMenuStyle)) }
+      },
+      onReset = {
+        onUpdateSettings { it.copy(editorMenuStyle = PopupMenuStyleConfig.DEFAULT) }
+      },
+      initiallyExpanded = false,
+    )
+
     val bgSummary =
       if (activeBgPreset == EditorBackgroundPreset.CUSTOM && hasCustomPhotoFile) "Custom"
       else activeBgPreset.label
     SettingsFoldableSection(
-      title = "Background",
+      title = "Editor Background",
       icon = Icons.Outlined.Wallpaper,
       summary = bgSummary,
       initiallyExpanded = false,

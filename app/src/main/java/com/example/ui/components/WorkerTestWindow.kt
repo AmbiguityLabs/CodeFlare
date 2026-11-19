@@ -40,7 +40,6 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -281,7 +280,7 @@ fun WorkerTestWindow(
         modifier = Modifier.height(40.dp).minimumInteractiveComponentSize().testTag("worker_test_send_button"),
       ) {
         if (uiState.isRunningPreviewHttp) {
-          CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+          EdgeLoadingIndicator(size = 16.dp, color = MaterialTheme.colorScheme.onPrimary)
         } else {
           Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "Send HTTP test", modifier = Modifier.size(16.dp))
           Spacer(Modifier.width(5.dp))

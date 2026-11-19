@@ -60,7 +60,6 @@ import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -1020,7 +1019,7 @@ private fun ExplorerPanel(
         if (uiState.isLoadingWorkers) {
           item {
             Box(modifier = Modifier.fillMaxWidth().padding(18.dp), contentAlignment = Alignment.Center) {
-              CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+              EdgeLoadingIndicator(size = 24.dp)
             }
           }
         } else {

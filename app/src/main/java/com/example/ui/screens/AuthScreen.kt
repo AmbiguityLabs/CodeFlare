@@ -40,7 +40,6 @@ import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -85,6 +84,7 @@ import coil.compose.AsyncImage
 import com.example.R
 import com.example.data.auth.CloudflareOAuthManager
 import com.example.data.auth.GitHubOAuthManager
+import com.example.ui.components.EdgeLoadingIndicator
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.viewmodel.IdeUiState
 
@@ -295,7 +295,7 @@ fun AuthScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                       ) {
-                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        EdgeLoadingIndicator(size = 20.dp)
                         Text(
                           text = stringResource(R.string.auth_oauth_waiting),
                           style = MaterialTheme.typography.bodySmall,
@@ -403,9 +403,8 @@ fun AuthScreen(
                       .testTag("verify_token_button"),
                 ) {
                   if (uiState.isAuthenticating) {
-                    CircularProgressIndicator(
-                      modifier = Modifier.size(20.dp),
-                      strokeWidth = 2.dp,
+                    EdgeLoadingIndicator(
+                      size = 20.dp,
                       color = MaterialTheme.colorScheme.onPrimary,
                     )
                   } else {
@@ -516,9 +515,8 @@ fun AuthScreen(
                       .testTag("verify_global_key_button"),
                 ) {
                   if (uiState.isAuthenticating) {
-                    CircularProgressIndicator(
-                      modifier = Modifier.size(20.dp),
-                      strokeWidth = 2.dp,
+                    EdgeLoadingIndicator(
+                      size = 20.dp,
                       color = MaterialTheme.colorScheme.onPrimary,
                     )
                   } else {
@@ -753,7 +751,7 @@ fun AuthScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                       ) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        EdgeLoadingIndicator(size = 18.dp)
                         Text(
                           text = "Waiting for GitHub browser authorization…",
                           style = MaterialTheme.typography.labelSmall,
@@ -787,7 +785,7 @@ fun AuthScreen(
                     modifier = Modifier.fillMaxWidth().height(50.dp).testTag("github_device_oauth_button"),
                   ) {
                     if (uiState.isWaitingGitHubOAuth) {
-                      CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                      EdgeLoadingIndicator(size = 18.dp)
                     } else {
                       Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
                       Spacer(Modifier.width(8.dp))
@@ -836,7 +834,7 @@ fun AuthScreen(
                   modifier = Modifier.fillMaxWidth().height(50.dp).testTag("auth_github_pat_submit"),
                 ) {
                   if (uiState.isGitHubBusy) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                    EdgeLoadingIndicator(size = 18.dp, color = MaterialTheme.colorScheme.onPrimary)
                   } else {
                     Text("Authorize & Open GitHub Hub", fontWeight = FontWeight.SemiBold)
                   }

@@ -32,7 +32,6 @@ import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -63,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.remote.CfAccount
 import com.example.data.security.AuthMethod
+import com.example.ui.components.EdgeLoadingIndicator
 import com.example.ui.components.IconRevealButton
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
@@ -449,7 +449,7 @@ fun SettingsCloudflarePane(
                 modifier = Modifier.fillMaxWidth().height(44.dp).testTag("settings_save_cf_token"),
               ) {
                 if (uiState.isTestingCfCredentials) {
-                  CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp, color = palette.ctaFg)
+                  EdgeLoadingIndicator(size = 16.dp, color = palette.ctaFg)
                   Spacer(Modifier.width(8.dp))
                 }
                 Text("Save API Token", fontWeight = FontWeight.SemiBold)
@@ -511,7 +511,7 @@ fun SettingsCloudflarePane(
                 modifier = Modifier.fillMaxWidth().height(44.dp).testTag("settings_save_cf_global_key"),
               ) {
                 if (uiState.isTestingCfCredentials) {
-                  CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp, color = palette.ctaFg)
+                  EdgeLoadingIndicator(size = 16.dp, color = palette.ctaFg)
                   Spacer(Modifier.width(8.dp))
                 }
                 Text("Save Global Key", fontWeight = FontWeight.SemiBold)
@@ -525,7 +525,7 @@ fun SettingsCloudflarePane(
                   shape = RoundedCornerShape(11.dp),
                   modifier = Modifier.fillMaxWidth().height(44.dp),
                 ) {
-                  CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp)
+                  EdgeLoadingIndicator(size = 16.dp)
                   Spacer(Modifier.width(8.dp))
                   Text("Cancel OAuth")
                 }

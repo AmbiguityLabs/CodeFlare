@@ -44,7 +44,6 @@ import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -503,7 +502,7 @@ fun ApiTesterPane(
           horizontalArrangement = Arrangement.spacedBy(5.dp),
         ) {
           if (uiState.isRunningHttpTest) {
-            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = palette.activePillFg)
+            EdgeLoadingIndicator(size = 16.dp, color = palette.activePillFg)
           } else {
             Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "Send HTTP request", tint = palette.activePillFg, modifier = Modifier.size(15.dp))
             Text("Send", style = MaterialTheme.typography.labelLarge, color = palette.activePillFg, fontWeight = FontWeight.Bold)

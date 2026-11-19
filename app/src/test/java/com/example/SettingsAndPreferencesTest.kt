@@ -6,6 +6,8 @@ import com.example.data.remote.CloudflareClientFactory
 import com.example.data.repository.CloudflareRepository
 import com.example.data.security.AuthPreferencesStore
 import com.example.data.security.EditorSettings
+import com.example.data.security.FloatingBarStyleConfig
+import com.example.data.security.PopupMenuStyleConfig
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -118,5 +120,119 @@ class SettingsAndPreferencesTest {
     val emptyGlobalResult = repository.updateGlobalKeyCredentials("", "abc")
     assertTrue(emptyGlobalResult.isFailure)
     assertEquals("Email and Global API Key are required", emptyGlobalResult.exceptionOrNull()?.message)
+  }
+
+  @Test
+  fun homeAndEditorBarAndMenuStylesPersistAndClampCleanly() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val store = AuthPreferencesStore(context)
+
+    val customHomeBar =
+      FloatingBarStyleConfig(
+        heightDp = 66,
+        widthPercent = 74,
+        iconSpacingDp = 28,
+        iconSizeDp = 24,
+        opacity = 0.62f,
+        borderOpacity = 0.55f,
+        cornerRadiusDp = 36,
+        bottomMarginDp = 18,
+        activePillOpacity = 0.34f,
+        showLabels = true,
+        showBadges = false,
+      )
+    val customEditorBar =
+      FloatingBarStyleConfig(
+        heightDp = 50,
+        widthPercent = 92,
+        iconSpacingDp = 10,
+        iconSizeDp = 19,
+        opacity = 0.88f,
+        borderOpacity = 0.20f,
+        cornerRadiusDp = 22,
+        bottomMarginDp = 6,
+        activePillOpacity = 0.18f,
+        showLabels = false,
+        showBadges = true,
+      )
+    val customHomeMenu =
+      PopupMenuStyleConfig(
+        widthDp = 284,
+        itemHeightDp = 46,
+        iconSpacingDp = 14,
+        iconSizeDp = 18,
+        opacity = 0.82f,
+        borderOpacity = 0.48f,
+        cornerRadiusDp = 20,
+      )
+    val customEditorMenu =
+      PopupMenuStyleConfig(
+        widthDp = 212,
+        itemHeightDp = 36,
+        iconSpacingDp = 8,
+        iconSizeDp = 15,
+        opacity = 0.90f,
+        borderOpacity = 0.25f,
+        cornerRadiusDp = 12,
+      )
+
+    store.updateEditorSettings {
+      it.copy(
+        homeBarStyle = customHomeBar,
+        editorBarStyle = customEditorBar,
+        homeMenuStyle = customHomeMenu,
+        editorMenuStyle = customEditorMenu,
+      )
+    }
+
+    val loaded = store.editorSettingsFlow.first()
+    assertEquals(customHomeBar, loaded.homeBarStyle)
+    assertEquals(customEditorBar, loaded.editorBarStyle)
+    assertEquals(customHomeMenu, loaded.homeMenuStyle)
+    assertEquals(customEditorMenu, loaded.editorMenuStyle)
+
+    // Verify out-of-range values clamp safely on normalize & decode
+    val clampedBar =
+      FloatingBarStyleConfig(
+        heightDp = 120,
+        widthPercent = 10,
+        iconSpacingDp = 99,
+        iconSizeDp = 4,
+        opacity = 2.0f,
+        borderOpacity = -0.5f,
+        cornerRadiusDp = 100,
+        bottomMarginDp = -10,
+        activePillOpacity = 1.5f,
+      ).normalized()
+    assertEquals(78, clampedBar.heightDp)
+    assertEquals(52, clampedBar.widthPercent)
+    assertEquals(40, clampedBar.iconSpacingDp)
+    assertEquals(16, clampedBar.iconSizeDp)
+    assertEquals(1.0f, clampedBar.opacity, 0.001f)
+    assertEquals(0.0f, clampedBar.borderOpacity, 0.001f)
+    assertEquals(40, clampedBar.cornerRadiusDp)
+    assertEquals(0, clampedBar.bottomMarginDp)
+    assertEquals(0.60f, clampedBar.activePillOpacity, 0.001f)
+
+    val decodedFallback = FloatingBarStyleConfig.decode("corrupted", FloatingBarStyleConfig.HOME_DEFAULT)
+    assertEquals(FloatingBarStyleConfig.HOME_DEFAULT, decodedFallback)
+
+    val clampedMenu =
+      PopupMenuStyleConfig(
+        widthDp = 999,
+        itemHeightDp = 5,
+        iconSpacingDp = 99,
+        iconSizeDp = 40,
+        opacity = 0.01f,
+        borderOpacity = 2.0f,
+        cornerRadiusDp = 1,
+      ).normalized()
+    assertEquals(320, clampedMenu.widthDp)
+    assertEquals(32, clampedMenu.itemHeightDp)
+    assertEquals(20, clampedMenu.iconSpacingDp)
+    assertEquals(22, clampedMenu.iconSizeDp)
+    assertEquals(0.35f, clampedMenu.opacity, 0.001f)
+    assertEquals(0.75f, clampedMenu.borderOpacity, 0.001f)
+    assertEquals(8, clampedMenu.cornerRadiusDp)
   }
 }

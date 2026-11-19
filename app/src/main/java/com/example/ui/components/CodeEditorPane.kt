@@ -459,7 +459,7 @@ fun CodeEditorPane(
       } else if (!activeFile.isVirtualReadOnly) {
         IconRevealButton(
           icon = Icons.Outlined.PlayArrow,
-          revealedLabel = "Run Local",
+          revealedLabel = "Run CLI",
           isBusy = uiState.isRunningLocalScript,
           onClick = { flushThen(onRunLocalScript) },
           tag = "editor_run_local_button",
@@ -1460,7 +1460,7 @@ private fun EmptyWorkspaceWelcome(
       Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
         IconRevealButton(
           icon = Icons.Outlined.PlayArrow,
-          revealedLabel = "Run Local",
+          revealedLabel = "Run CLI",
           onClick = onRunLocalScript,
           height = 46.dp,
           tag = "welcome_local_run_button",
@@ -1982,7 +1982,7 @@ private fun AllTabsClosedState(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           IconRevealButton(
             icon = Icons.Outlined.PlayArrow,
-            revealedLabel = "Run Local",
+            revealedLabel = "Run CLI",
             accentContainer = true,
             onClick = onRunLocalScript,
             height = 36.dp,

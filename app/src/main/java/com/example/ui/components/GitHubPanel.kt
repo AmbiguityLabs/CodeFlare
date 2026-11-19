@@ -49,7 +49,6 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -684,7 +683,7 @@ private fun GitSourceControlTab(
 
     if (uiState.isGitHubBusy) {
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+        EdgeLoadingIndicator(size = 18.dp)
         Text("Syncing with GitHub…", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
       }
     }
@@ -1703,7 +1702,7 @@ private fun GitCloneAndReposTab(
           modifier = Modifier.fillMaxWidth().height(44.dp).testTag("git_clone_submit_button"),
         ) {
           if (uiState.isGitHubBusy && !uiState.isWaitingGitHubOAuth) {
-            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+            EdgeLoadingIndicator(size = 18.dp)
           } else {
             Icon(Icons.Outlined.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))

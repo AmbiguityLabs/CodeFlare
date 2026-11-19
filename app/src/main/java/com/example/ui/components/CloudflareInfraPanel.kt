@@ -36,7 +36,6 @@ import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -202,7 +201,7 @@ fun CloudflareInfraPanel(
         modifier = Modifier.weight(1f),
       )
       if (uiState.isInfraBusy) {
-        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+        EdgeLoadingIndicator(size = 16.dp, strokeWidth = 2.dp)
       } else {
         IconButton(onClick = onRefreshInfra, modifier = Modifier.size(28.dp)) {
           Icon(Icons.Outlined.Refresh, contentDescription = "Refresh Cloudflare Infra", modifier = Modifier.size(16.dp))
