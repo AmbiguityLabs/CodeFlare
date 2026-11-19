@@ -291,6 +291,7 @@ object LocalScriptRunner {
         put("DENO_DIR", denoCacheDir.absolutePath)
         put("HOME", context.cacheDir.absolutePath)
         put("NO_COLOR", "1")
+        put("DENO_NO_UPDATE_CHECK", "1")
         val existingLd = get("LD_LIBRARY_PATH").orEmpty()
         val nativeDir = context.applicationInfo.nativeLibraryDir
         put("LD_LIBRARY_PATH", if (existingLd.isBlank()) nativeDir else "$nativeDir:$existingLd")

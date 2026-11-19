@@ -70,6 +70,160 @@ jobs:
 
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
 
+      - name: Bundle Android arm64 Deno binary (libdeno.so)
+        run: |
+          set -euo pipefail
+          if [ -s app/src/main/jniLibs/arm64-v8a/libdeno.so ]; then
+            echo "Using repository-provided libdeno.so"
+            ls -lh app/src/main/jniLibs/arm64-v8a/
+            exit 0
+          fi
+
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq patchelf binutils file
+
+          python3 - <<'PY'
+          import hashlib, os, re, shutil, subprocess, urllib.request
+
+          MIRRORS = [
+            "https://packages-cf.termux.dev/apt/termux-main",
+            "https://packages.termux.org/apt/termux-main",
+          ]
+          WORK_DIR = "/tmp/termux_deno"
+          EXTRACT_DIR = os.path.join(WORK_DIR, "root")
+          JNI_DIR = "app/src/main/jniLibs/arm64-v8a"
+          os.makedirs(WORK_DIR, exist_ok=True)
+          os.makedirs(EXTRACT_DIR, exist_ok=True)
+          os.makedirs(JNI_DIR, exist_ok=True)
+
+          def fetch_bytes(rel_url):
+            last_err = None
+            for base in MIRRORS:
+              url = f"{base}/{rel_url.lstrip('/')}"
+              try:
+                req = urllib.request.Request(url, headers={"User-Agent": "EdgeCode-CI/1.0"})
+                with urllib.request.urlopen(req, timeout=90) as r:
+                  return r.read()
+              except Exception as e:
+                last_err = e
+            raise RuntimeError(f"Failed fetching {rel_url}: {last_err}")
+
+          print("Fetching Termux aarch64 Packages index...")
+          try:
+            packages_txt = fetch_bytes("dists/stable/main/binary-aarch64/Packages").decode("utf-8", errors="replace")
+          except Exception:
+            import gzip
+            packages_txt = gzip.decompress(fetch_bytes("dists/stable/main/binary-aarch64/Packages.gz")).decode("utf-8", errors="replace")
+
+          pkgs = {}
+          for stanza in packages_txt.strip().split("\n\n"):
+            info = {}
+            cur_key = None
+            for line in stanza.splitlines():
+              if line.startswith((" ", "\t")) and cur_key:
+                info[cur_key] += " " + line.strip()
+              elif ":" in line:
+                k, v = line.split(":", 1)
+                cur_key = k.strip()
+                info[cur_key] = v.strip()
+            if "Package" in info:
+              pkgs[info["Package"]] = info
+
+          SKIP_PKGS = {"libandroid-stub", "ndk-sysroot", "termux-tools", "dash", "bash", "coreutils"}
+          needed_pkgs = []
+          seen = set()
+          queue = ["deno"]
+          while queue:
+            name = queue.pop(0)
+            if name in seen or name in SKIP_PKGS or name not in pkgs:
+              continue
+            seen.add(name)
+            needed_pkgs.append(pkgs[name])
+            deps_raw = pkgs[name].get("Depends", "")
+            for alt in deps_raw.split(","):
+              dep = alt.split("|")[0].strip().split("(")[0].strip()
+              if dep and dep not in seen:
+                queue.append(dep)
+
+          for info in needed_pkgs:
+            pkg_name = info["Package"]
+            rel = info["Filename"]
+            expected_sha = info.get("SHA256", "")
+            print(f"Downloading {pkg_name} ({rel})...")
+            data = fetch_bytes(rel)
+            if expected_sha:
+              actual_sha = hashlib.sha256(data).hexdigest()
+              if actual_sha != expected_sha:
+                raise RuntimeError(f"SHA256 mismatch for {pkg_name}: {actual_sha} != {expected_sha}")
+            deb_path = os.path.join(WORK_DIR, f"{pkg_name}.deb")
+            with open(deb_path, "wb") as f:
+              f.write(data)
+            subprocess.check_call(["dpkg-deb", "-x", deb_path, EXTRACT_DIR])
+
+          usr_bin_deno = os.path.join(EXTRACT_DIR, "data/data/com.termux/files/usr/bin/deno")
+          usr_lib_dir = os.path.join(EXTRACT_DIR, "data/data/com.termux/files/usr/lib")
+          if not os.path.isfile(usr_bin_deno):
+            raise RuntimeError(f"deno binary missing inside extracted tree: {usr_bin_deno}")
+
+          deno_dest = os.path.join(JNI_DIR, "libdeno.so")
+          shutil.copy2(usr_bin_deno, deno_dest)
+          os.chmod(deno_dest, 0o755)
+
+          SYSTEM_LIBS = {
+            "libc.so", "libdl.so", "libm.so", "liblog.so", "libandroid.so",
+            "libOpenSLES.so", "libGLESv2.so", "libEGL.so", "libvulkan.so",
+          }
+
+          def read_needed(elf_path):
+            out = subprocess.check_output(["readelf", "-d", elf_path], text=True, stderr=subprocess.DEVNULL)
+            return re.findall(r"\(NEEDED\)\s+Shared library:\s+\[([^\]]+)\]", out)
+
+          def safe_so_name(orig):
+            stripped = re.sub(r"\.so(\.\d+)+$", ".so", orig)
+            if stripped == "libz.so":
+              return "libz_tmx.so"
+            return stripped
+
+          remap = {}
+          processed_elves = [deno_dest]
+          copied_libs = set()
+          lib_queue = list(read_needed(deno_dest))
+
+          while lib_queue:
+            lib = lib_queue.pop(0)
+            if lib in SYSTEM_LIBS or lib in copied_libs:
+              continue
+            src_candidate = os.path.join(usr_lib_dir, lib)
+            if not os.path.exists(src_candidate):
+              print(f"Warning: {lib} not found in {usr_lib_dir}, assuming Android runtime or optional")
+              continue
+            real_src = os.path.realpath(src_candidate)
+            target_name = safe_so_name(lib)
+            remap[lib] = target_name
+            dest_path = os.path.join(JNI_DIR, target_name)
+            if not os.path.exists(dest_path):
+              shutil.copy2(real_src, dest_path)
+              os.chmod(dest_path, 0o755)
+              processed_elves.append(dest_path)
+              for sub in read_needed(dest_path):
+                if sub not in SYSTEM_LIBS and sub not in copied_libs:
+                  lib_queue.append(sub)
+            copied_libs.add(lib)
+
+          for elf in processed_elves:
+            subprocess.check_call(["patchelf", "--set-rpath", "$ORIGIN", elf])
+            if os.path.basename(elf) != "libdeno.so":
+              subprocess.check_call(["patchelf", "--set-soname", os.path.basename(elf), elf])
+            for orig, target in remap.items():
+              if orig != target and orig in read_needed(elf):
+                subprocess.check_call(["patchelf", "--replace-needed", orig, target, elf])
+
+          print("Final libdeno.so ELF info:")
+          subprocess.check_call(["file", deno_dest])
+          print("NEEDED libs for libdeno.so:", read_needed(deno_dest))
+          print("Packaged jniLibs:", sorted(os.listdir(JNI_DIR)))
+          PY
+
       - name: Build release APK
         run: |
           for attempt in 1 2 3; do
@@ -85,6 +239,7 @@ jobs:
         run: |
           APK=app/build/outputs/apk/release/app-release.apk
           test -f "$APK"
+          unzip -l "$APK" | grep "lib/arm64-v8a/libdeno.so"
           APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1 || true)
           if [ -n "$APKSIGNER" ]; then "$APKSIGNER" verify --verbose "$APK"; else echo "apksigner not found, skipping"; fi
           cp "$APK" EdgeCode.apk

@@ -328,26 +328,44 @@ function renderHtml(apkPath) {
     });
 
     const stopBtn = document.getElementById("stopEnvBtn");
+    let isStopped = false;
     stopBtn.addEventListener("click", async () => {
+      isStopped = !isStopped;
       stopBtn.disabled = true;
-      stopBtn.textContent = "Stopping...";
       try {
-        await fetch("/api/stop", { method: "POST" });
+        await fetch(isStopped ? "/api/stop" : "/api/resume", { method: "POST" });
       } catch {}
-      document.getElementById("envDot").classList.add("stopped");
-      document.getElementById("envLabel").textContent = "Stopped";
-      stopBtn.textContent = "Stopped";
+      stopBtn.disabled = false;
+      const dot = document.getElementById("envDot");
+      const label = document.getElementById("envLabel");
+      if (isStopped) {
+        dot.classList.add("stopped");
+        label.textContent = "Environment Stopped";
+        stopBtn.textContent = "Resume Demo";
+        stopBtn.className = "btn ghost";
+      } else {
+        dot.classList.remove("stopped");
+        label.textContent = "Demo Only";
+        stopBtn.textContent = "Stop Environment";
+        stopBtn.className = "btn danger";
+      }
     });
   </script>
 </body>
 </html>`;
 }
 
+let isEnvironmentStopped = false;
+
 const server = http.createServer((req, res) => {
   const urlPath = (req.url || "/").split("?")[0];
 
   if (urlPath === "/health") {
-    const payload = JSON.stringify({ status: "ok", mode: "static-demo", app: "EdgeCode" });
+    const payload = JSON.stringify({
+      status: "ok",
+      mode: isEnvironmentStopped ? "stopped-idle" : "static-demo",
+      app: "EdgeCode",
+    });
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
       "Content-Length": Buffer.byteLength(payload),
@@ -359,22 +377,26 @@ const server = http.createServer((req, res) => {
   }
 
   if (urlPath === "/api/stop" && req.method === "POST") {
-    const payload = JSON.stringify({ stopped: true });
+    isEnvironmentStopped = true;
+    const payload = JSON.stringify({ stopped: true, portAlive: true });
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
       "Content-Length": Buffer.byteLength(payload),
       "Cache-Control": "no-store",
     });
-    res.end(payload, () => {
-      setTimeout(() => {
-        removePidFile();
-        server.close(() => process.exit(0));
-        if (typeof server.closeAllConnections === "function") {
-          server.closeAllConnections();
-        }
-        process.exit(0);
-      }, 80);
+    res.end(payload);
+    return;
+  }
+
+  if (urlPath === "/api/resume" && req.method === "POST") {
+    isEnvironmentStopped = false;
+    const payload = JSON.stringify({ stopped: false, portAlive: true });
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Length": Buffer.byteLength(payload),
+      "Cache-Control": "no-store",
     });
+    res.end(payload);
     return;
   }
 
@@ -457,7 +479,7 @@ function terminatePreviousServer() {
 
 let listenRetries = 0;
 let terminatedPrevious = false;
-const maxListenRetries = 20;
+const maxListenRetries = 60;
 
 server.on("error", (err) => {
   if (err && err.code === "EADDRINUSE" && listenRetries < maxListenRetries) {
@@ -468,7 +490,7 @@ server.on("error", (err) => {
     listenRetries += 1;
     setTimeout(() => {
       server.listen(port, "0.0.0.0");
-    }, 150);
+    }, 250);
     return;
   }
   console.error("Server error:", err);
