@@ -3,18 +3,26 @@ package com.example.ui.components
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -36,7 +44,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -48,6 +61,9 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.UiStyleVersion
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlinx.coroutines.delay
 
 @Composable
@@ -320,6 +336,254 @@ fun IconToggleRevealText(
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
+    }
+  }
+}
+
+private data class ThinkingDotSeed(
+  val gridX: Float, // -1f, 0f, +1f
+  val gridY: Float, // -1f, 0f, +1f
+  val pulsePhaseA: Float,
+  val pulsePhaseB: Float,
+  val driftPhaseX: Float,
+  val driftPhaseY: Float,
+  val freqPulse: Int,
+  val freqDrift: Int,
+)
+
+// Nine organically de-phased seeds (3x3 field) whose integer harmonic multipliers
+// guarantee a 100% seamless infinite loop while moving & shimmering unpredictably.
+private val THINKING_DOT_SEEDS: List<ThinkingDotSeed> =
+  listOf(
+    ThinkingDotSeed(-1f, -1f, 0.25f, 1.90f, 0.70f, 2.80f, 2, 1),
+    ThinkingDotSeed(0f, -1f, 2.40f, 0.65f, 3.10f, 1.15f, 3, 2),
+    ThinkingDotSeed(1f, -1f, 4.15f, 3.30f, 5.20f, 4.40f, 2, 1),
+    ThinkingDotSeed(-1f, 0f, 5.10f, 2.15f, 1.85f, 5.60f, 3, 2),
+    ThinkingDotSeed(0f, 0f, 1.35f, 4.85f, 4.25f, 0.45f, 2, 1),
+    ThinkingDotSeed(1f, 0f, 3.60f, 5.75f, 2.40f, 3.95f, 3, 1),
+    ThinkingDotSeed(-1f, 1f, 2.95f, 0.40f, 4.90f, 2.20f, 2, 2),
+    ThinkingDotSeed(0f, 1f, 0.80f, 3.70f, 0.15f, 5.05f, 3, 1),
+    ThinkingDotSeed(1f, 1f, 4.70f, 1.55f, 3.65f, 1.60f, 2, 2),
+  )
+
+/**
+ * Dual-style loading indicator bound to the active [UiStyleVersion]:
+ * - [UiStyleVersion.V1_DEFAULT]: Crisp round circular sweeping arc spinner.
+ * - [UiStyleVersion.V2_MINIMAL_OLED]: Fluid organic 3x3 thinking-dots constellation
+ *   with staggered pseudo-random pulsing, breathing radius, and gentle harmonic drift.
+ */
+@Composable
+fun EdgeLoadingIndicator(
+  modifier: Modifier = Modifier,
+  size: Dp = 28.dp,
+  color: Color? = null,
+  strokeWidth: Dp = (size * 0.115f).coerceIn(2.dp, 3.5.dp),
+  styleOverride: UiStyleVersion? = null,
+) {
+  val palette = LocalIdePalette.current
+  val resolvedStyle = styleOverride ?: palette.uiStyle
+  val resolvedColor = color ?: palette.activePillFg
+
+  when (resolvedStyle) {
+    UiStyleVersion.V1_DEFAULT -> {
+      RoundArcLoadingIndicator(
+        size = size,
+        color = resolvedColor,
+        strokeWidth = strokeWidth,
+        modifier = modifier,
+      )
+    }
+
+    UiStyleVersion.V2_MINIMAL_OLED -> {
+      val secondaryTint =
+        when {
+          color != null -> color
+          palette.isDark -> Color(0xFF93C5FD)
+          else -> Color(0xFF3B82F6)
+        }
+      ThinkingDotsLoadingIndicator(
+        size = size,
+        baseColor = color ?: palette.textPrimary,
+        accentColor = secondaryTint,
+        modifier = modifier,
+      )
+    }
+  }
+}
+
+@Composable
+private fun RoundArcLoadingIndicator(
+  size: Dp,
+  color: Color,
+  strokeWidth: Dp,
+  modifier: Modifier = Modifier,
+) {
+  val transition = rememberInfiniteTransition(label = "edge_v1_round_loader")
+  val rotation by
+    transition.animateFloat(
+      initialValue = 0f,
+      targetValue = 360f,
+      animationSpec =
+        infiniteRepeatable(
+          animation = tween(durationMillis = 1050, easing = LinearEasing),
+          repeatMode = RepeatMode.Restart,
+        ),
+      label = "round_rotation",
+    )
+  val sweepBreath by
+    transition.animateFloat(
+      initialValue = 0f,
+      targetValue = 1f,
+      animationSpec =
+        infiniteRepeatable(
+          animation = tween(durationMillis = 1350, easing = FastOutSlowInEasing),
+          repeatMode = RepeatMode.Reverse,
+        ),
+      label = "round_sweep",
+    )
+
+  Canvas(
+    modifier = modifier.size(size).testTag("edge_loader_v1_round"),
+  ) {
+    val strokePx = strokeWidth.toPx().coerceAtMost(this.size.minDimension * 0.28f)
+    val inset = strokePx / 2f
+    val arcSize = Size(this.size.width - strokePx, this.size.height - strokePx)
+    val topLeft = Offset(inset, inset)
+    val stroke = Stroke(width = strokePx, cap = StrokeCap.Round)
+
+    drawArc(
+      color = color.copy(alpha = 0.16f),
+      startAngle = 0f,
+      sweepAngle = 360f,
+      useCenter = false,
+      topLeft = topLeft,
+      size = arcSize,
+      style = stroke,
+    )
+
+    val sweepAngle = 52f + (sweepBreath * 196f)
+    val startAngle = (rotation + sweepBreath * 72f) % 360f
+    drawArc(
+      color = color,
+      startAngle = startAngle,
+      sweepAngle = sweepAngle,
+      useCenter = false,
+      topLeft = topLeft,
+      size = arcSize,
+      style = stroke,
+    )
+  }
+}
+
+@Composable
+private fun ThinkingDotsLoadingIndicator(
+  size: Dp,
+  baseColor: Color,
+  accentColor: Color,
+  modifier: Modifier = Modifier,
+) {
+  val transition = rememberInfiniteTransition(label = "edge_v2_thinking_dots")
+  val phase by
+    transition.animateFloat(
+      initialValue = 0f,
+      targetValue = 1f,
+      animationSpec =
+        infiniteRepeatable(
+          animation = tween(durationMillis = 3600, easing = LinearEasing),
+          repeatMode = RepeatMode.Restart,
+        ),
+      label = "thinking_phase",
+    )
+
+  val twoPi = (2.0 * PI).toFloat()
+  val drawSoftHalo = size >= 26.dp
+
+  Canvas(
+    modifier = modifier.size(size).testTag("edge_loader_v2_dots"),
+  ) {
+    val minDim = this.size.minDimension
+    val centerX = this.size.width / 2f
+    val centerY = this.size.height / 2f
+    val gridStride = minDim * 0.295f
+    val maxDotRadius = minDim * 0.118f
+    val driftAmplitude = gridStride * 0.21f
+
+    for (seed in THINKING_DOT_SEEDS) {
+      val waveA = sin(twoPi * phase * seed.freqPulse + seed.pulsePhaseA)
+      val waveB = cos(twoPi * phase * (seed.freqPulse + 1) + seed.pulsePhaseB)
+      val intensity = (0.50f + 0.34f * waveA + 0.16f * waveB).coerceIn(0f, 1f)
+
+      val driftX =
+        driftAmplitude *
+          (0.68f * sin(twoPi * phase * seed.freqDrift + seed.driftPhaseX) +
+            0.32f * cos(twoPi * phase * 2 + seed.driftPhaseY))
+      val driftY =
+        driftAmplitude *
+          (0.68f * cos(twoPi * phase * seed.freqDrift + seed.driftPhaseY) +
+            0.32f * sin(twoPi * phase * 3 + seed.driftPhaseX))
+
+      val cx = centerX + seed.gridX * gridStride + driftX
+      val cy = centerY + seed.gridY * gridStride + driftY
+
+      val radius = maxDotRadius * (0.38f + 0.64f * intensity)
+      val alpha = 0.20f + 0.80f * intensity
+      val dotColor = lerp(baseColor, accentColor, (intensity * 0.55f).coerceIn(0f, 1f))
+
+      if (drawSoftHalo && intensity > 0.58f) {
+        val haloStrength = ((intensity - 0.58f) / 0.42f).coerceIn(0f, 1f)
+        drawCircle(
+          color = dotColor.copy(alpha = 0.20f * haloStrength),
+          radius = radius * 1.85f,
+          center = Offset(cx, cy),
+        )
+      }
+
+      drawCircle(
+        color = dotColor.copy(alpha = alpha),
+        radius = radius,
+        center = Offset(cx, cy),
+      )
+    }
+  }
+}
+
+/**
+ * Centered pane overlay displaying [EdgeLoadingIndicator] cleanly above loading content.
+ */
+@Composable
+fun EdgeLoadingOverlay(
+  visible: Boolean,
+  modifier: Modifier = Modifier,
+  indicatorSize: Dp = 44.dp,
+  scrimAlpha: Float = 0.90f,
+) {
+  val palette = LocalIdePalette.current
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
+
+  AnimatedVisibility(
+    visible = visible,
+    enter = fadeIn(tween(140)),
+    exit = fadeOut(tween(220)),
+    modifier = modifier.fillMaxSize(),
+  ) {
+    Box(
+      modifier =
+        Modifier
+          .fillMaxSize()
+          .background(palette.editorBg.copy(alpha = scrimAlpha))
+          .testTag("edge_loading_overlay"),
+      contentAlignment = Alignment.Center,
+    ) {
+      Box(
+        modifier =
+          Modifier
+            .clip(RoundedCornerShape(if (isV2) 24.dp else 18.dp))
+            .background(palette.chromeSurface.copy(alpha = 0.92f))
+            .size(indicatorSize + 36.dp),
+        contentAlignment = Alignment.Center,
+      ) {
+        EdgeLoadingIndicator(size = indicatorSize)
+      }
     }
   }
 }
