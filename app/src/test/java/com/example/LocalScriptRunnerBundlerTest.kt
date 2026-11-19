@@ -1,10 +1,14 @@
 package com.example
 
+import com.example.data.remote.CfWorkerBinding
 import com.example.data.remote.WorkerFile
 import com.example.data.remote.WorkerWorkspace
-import com.example.editor.LocalModuleBundler
+import com.example.editor.LocalScriptRunner
+import java.io.File
+import kotlin.io.path.createTempDirectory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -60,127 +64,82 @@ class LocalScriptRunnerBundlerTest {
         accountSubdomain = "demo",
       )
 
-    // Non-executable helper falls back to workspace entry module
-    assertEquals("src/index.js", LocalModuleBundler.resolveTargetEntryPath(ws, "src/helper.ts"))
-    // Previewable HTML resolves directly
-    assertEquals("public/index.html", LocalModuleBundler.resolveTargetEntryPath(ws, "public/index.html"))
-    // Standalone script with console.log resolves directly
-    assertEquals("scripts/bench.js", LocalModuleBundler.resolveTargetEntryPath(ws, "scripts/bench.js"))
+    assertEquals("src/index.js", LocalScriptRunner.resolveTargetEntryPath(ws, "src/helper.ts"))
+    assertEquals("public/index.html", LocalScriptRunner.resolveTargetEntryPath(ws, "public/index.html"))
+    assertEquals("scripts/bench.js", LocalScriptRunner.resolveTargetEntryPath(ws, "scripts/bench.js"))
   }
 
   @Test
-  fun stripBasicTypeScriptRemovesInterfacesTypesAndAnnotations() {
-    val ts =
-      """
-      import type { Env } from './types';
-      export interface Config {
-        mode: string;
-      }
-      type Flags = Record<string, string>;
-      export default {
-        async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-          const id = 'edge' as const;
-          return new Response(id);
-        }
-      };
-      """.trimIndent()
-
-    val stripped = LocalModuleBundler.stripBasicTypeScript(ts, "src/worker.ts")
-    assertFalse(stripped.contains("import type"))
-    assertFalse(stripped.contains("interface Config"))
-    assertFalse(stripped.contains("type Flags"))
-    assertFalse(stripped.contains(": Promise<Response>"))
-    assertFalse(stripped.contains("as const"))
-    assertTrue(stripped.contains("async fetch(request, env, ctx)"))
+  fun resolveDenoBinaryPathPointsToNativeLibraryDirLibdenoSo() {
+    assertEquals(
+      "/data/app/edgecode/lib/arm64/libdeno.so",
+      LocalScriptRunner.resolveDenoBinaryPath("/data/app/edgecode/lib/arm64"),
+    )
+    assertEquals(
+      "/data/app/edgecode/lib/arm64/libdeno.so",
+      LocalScriptRunner.resolveDenoBinaryPath("/data/app/edgecode/lib/arm64/"),
+    )
   }
 
   @Test
-  fun transpileEsmToCjsRewritesImportsAndExports() {
-    val esm =
-      """
-      import helper, { greet as sayHi } from './helper';
-      import * as utils from './utils';
-      export const answer = 42;
-      export function runTask() {
-        return sayHi(helper) + utils.tag;
-      }
-      export default {
-        async fetch(req) {
-          return new Response(String(answer));
-        }
-      };
-      """.trimIndent()
+  fun stageWorkspaceFilesWritesEditableModulesAndRunnerWithoutPathTraversal() {
+    val tmpDir = createTempDirectory("deno-stage-test").toFile()
+    try {
+      val files =
+        listOf(
+          WorkerFile(
+            path = "src/index.ts",
+            content = "import { Readable } from 'node:stream'; export default { fetch() { return new Response(typeof Readable); } };",
+            originalContent = "",
+            contentType = "application/javascript+module",
+            isEntryPoint = true,
+          ),
+          WorkerFile(
+            path = "../../etc/passwd",
+            content = "blocked",
+            originalContent = "",
+            contentType = "text/plain",
+            isEntryPoint = false,
+          ),
+          WorkerFile(
+            path = ".edgecode/bindings.json",
+            content = "{}",
+            originalContent = "{}",
+            contentType = "application/json",
+            isEntryPoint = false,
+            isVirtualReadOnly = true,
+          ),
+        )
 
-    val cjs = LocalModuleBundler.transpileEsmToCjs(esm, "src/index.js")
-    assertTrue(cjs.contains("__require(\"./helper\")"))
-    assertTrue(cjs.contains("const utils = __require(\"./utils\")"))
-    assertTrue(cjs.contains("exports.default ="))
-    assertTrue(cjs.contains("exports.answer = answer"))
-    assertTrue(cjs.contains("exports.runTask = runTask"))
+      val runner =
+        LocalScriptRunner.stageWorkspaceFiles(
+          workspaceDir = tmpDir,
+          files = files,
+          runnerSource = "// universal runner",
+        )
+
+      assertNotNull(runner)
+      assertTrue(runner!!.exists())
+      assertTrue(File(tmpDir, "src/index.ts").exists())
+      assertFalse(File(tmpDir, ".edgecode/bindings.json").exists())
+      assertFalse(File(tmpDir.parentFile, "etc/passwd").exists())
+    } finally {
+      tmpDir.deleteRecursively()
+    }
   }
 
   @Test
-  fun buildModuleMapJsonExcludesVirtualFilesAndTransformsJsonAndModules() {
-    val files =
-      listOf(
-        WorkerFile(
-          path = "src/index.ts",
-          content = "import cfg from './cfg.json'; export default { fetch() { return Response.json(cfg); } };",
-          originalContent = "import cfg from './cfg.json'; export default { fetch() { return Response.json(cfg); } };",
-          contentType = "application/javascript+module",
-          isEntryPoint = true,
-        ),
-        WorkerFile(
-          path = "src/cfg.json",
-          content = """{"ok":true}""",
-          originalContent = """{"ok":true}""",
-          contentType = "application/json",
-          isEntryPoint = false,
-        ),
-        WorkerFile(
-          path = ".edgecode/bindings.json",
-          content = "{}",
-          originalContent = "{}",
-          contentType = "application/json",
-          isEntryPoint = false,
-          isVirtualReadOnly = true,
+  fun buildBindingsJsonSerializesWorkerBindingsCleanly() {
+    val json =
+      LocalScriptRunner.buildBindingsJson(
+        listOf(
+          CfWorkerBinding(name = "API_URL", type = "plain_text", text = "https://example.com"),
+          CfWorkerBinding(name = "SESSION_KV", type = "kv_namespace"),
         ),
       )
-
-    val map = LocalModuleBundler.buildModuleMapJson(files)
-    assertTrue(map.has("src/index.ts"))
-    assertTrue(map.has("src/cfg.json"))
-    assertFalse(map.has(".edgecode/bindings.json"))
-    assertTrue(map.getString("src/cfg.json").contains("exports.default = {\"ok\":true}"))
-  }
-
-  @Test
-  fun transpileEsmToCjsHandlesNodeImportsAndReExports() {
-    val src =
-      """
-      import { Readable, Transform } from 'node:stream';
-      import { type ExecutionContext } from '@cloudflare/workers-types';
-      export { Readable as StreamReader } from 'node:stream';
-      export * from './shared';
-      export default {
-        fetch() { return new Response(typeof Readable); }
-      };
-      """.trimIndent()
-
-    val cjs = LocalModuleBundler.transpileEsmToCjs(src, "src/index.ts")
-    assertTrue(cjs.contains("""__require("node:stream")"""))
-    assertTrue(cjs.contains("exports.StreamReader = __reexp.Readable;"))
-    assertTrue(cjs.contains("""Object.assign(exports, __require("./shared"));"""))
-  }
-
-  @Test
-  fun buildHarnessJsIncludesNodeStreamAndCloudflareBuiltins() {
-    val harness = com.example.editor.LocalScriptRunner.buildHarnessJs("""{"entryPath":"index.js","modules":{},"bindings":[],"request":{"url":"https://local.edgecode.app/","method":"GET","headers":{},"body":""}}""")
-    assertTrue(harness.contains("register('stream', streamMod)"))
-    assertTrue(harness.contains("register('stream/web', streamWebMod)"))
-    assertTrue(harness.contains("register('stream/consumers', streamConsumersMod)"))
-    assertTrue(harness.contains("register('buffer'"))
-    assertTrue(harness.contains("register('crypto', cryptoMod)"))
-    assertTrue(harness.contains("__builtins['cloudflare:workers']"))
+    assertTrue(json.contains("API_URL"))
+    assertTrue(json.contains("https://example.com"))
+    assertTrue(json.contains("SESSION_KV"))
+    assertTrue(json.contains("kv_namespace"))
   }
 }

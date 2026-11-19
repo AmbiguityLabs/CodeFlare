@@ -40,6 +40,7 @@ function findApkPath() {
   const candidates = [
     path.join(cwd, ".build-outputs", "app-debug.apk"),
     path.join(cwd, "app", "build", "outputs", "apk", "debug", "app-debug.apk"),
+    path.join(cwd, "EdgeCode.apk"),
   ];
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
@@ -52,10 +53,9 @@ function findApkPath() {
 function renderHtml(apkPath) {
   const hasApk = Boolean(apkPath);
   const sizeMb = hasApk ? (fs.statSync(apkPath).size / (1024 * 1024)).toFixed(1) : null;
-  const statusLabel = hasApk ? `APK Ready (${sizeMb} MB)` : "Android Kotlin Project";
-  const ctaHtml = hasApk
-    ? `<a class="btn" href="/app-debug.apk" download="EdgeCode-debug.apk">Download APK (${sizeMb} MB)</a>`
-    : `<div class="note">Build via Gradle (<code>gradle assembleDebug</code>) to generate the APK.</div>`;
+  const apkChip = hasApk
+    ? `<a class="btn primary" href="/app-debug.apk" download="EdgeCode.apk">Download APK (${sizeMb} MB)</a>`
+    : `<a class="btn ghost" href="https://github.com/AmbiguityLabs/CodeFlare/releases" target="_blank" rel="noreferrer">GitHub Releases</a>`;
 
   return `<!doctype html>
 <html lang="en">
@@ -69,107 +69,276 @@ function renderHtml(apkPath) {
   <style>
     :root {
       color-scheme: dark;
-      --bg: #1B1C17;
-      --surface: #21231D;
-      --pill: #262821;
-      --border: #343846;
-      --accent-bg: #4F6223;
-      --accent-fg: #D6F58D;
-      --text: #E7E9E2;
-      --muted: #A7ACA0;
+      --bg: #000000;
+      --card: #141416;
+      --card-elev: #1C1C1F;
+      --divider: #242428;
+      --text: #F2F2F7;
+      --muted: #8E8E93;
+      --accent: #FFFFFF;
+      --accent-fg: #000000;
+      --rose: #F87171;
       --emerald: #34D399;
+      --amber: #FBBF24;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-height: 100vh;
       background: var(--bg);
       color: var(--text);
-      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
       display: flex;
       align-items: center;
       justify-content: center;
       padding: 20px;
     }
-    .card {
+    .shell {
       width: 100%;
-      max-width: 440px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      padding: 24px;
+      max-width: 460px;
+      display: grid;
+      gap: 14px;
     }
-    .badge {
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 6px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+    .status {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      background: rgba(52, 211, 153, 0.14);
-      color: var(--emerald);
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: var(--card);
       font-size: 12px;
-      font-weight: 600;
-      padding: 5px 10px;
-      border-radius: 8px;
-      margin-bottom: 14px;
+      font-weight: 500;
+      color: var(--muted);
     }
     .dot {
       width: 7px;
       height: 7px;
       border-radius: 50%;
-      background: var(--emerald);
+      background: var(--amber);
     }
-    h1 {
-      margin: 0 0 14px;
-      font-size: 24px;
-      font-weight: 700;
-      letter-spacing: -0.02em;
+    .dot.stopped { background: var(--rose); }
+    .card {
+      background: var(--card);
+      border-radius: 24px;
+      overflow: hidden;
     }
-    .meta {
-      background: var(--pill);
-      border: 1px solid rgba(52, 56, 70, 0.65);
-      border-radius: 12px;
-      padding: 12px 14px;
-      margin-bottom: 18px;
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 18px;
+      font-size: 15px;
+      border-bottom: 0.5px solid var(--divider);
+      cursor: pointer;
+      user-select: none;
+      transition: background 140ms ease;
+    }
+    .row:last-child { border-bottom: 0; }
+    .row:hover { background: var(--card-elev); }
+    .row-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .row-val {
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+    }
+    .row-detail {
+      display: none;
+      padding: 0 18px 14px 48px;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 12px;
       color: var(--muted);
-      display: grid;
-      gap: 6px;
+      border-bottom: 0.5px solid var(--divider);
     }
-    .meta strong { color: var(--text); font-weight: 600; }
+    .row-detail.open { display: block; }
+    .tabs {
+      display: flex;
+      gap: 6px;
+      padding: 12px 14px 0;
+    }
+    .tab {
+      flex: 1;
+      border: 0;
+      border-radius: 999px;
+      background: var(--card-elev);
+      color: var(--muted);
+      padding: 8px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .tab.active {
+      background: var(--accent);
+      color: var(--accent-fg);
+    }
+    .preview-box {
+      padding: 16px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.55;
+      color: var(--text);
+      min-height: 112px;
+    }
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
     .btn {
+      appearance: none;
+      border: 0;
+      border-radius: 999px;
+      height: 44px;
+      padding: 0 16px;
+      font-size: 13.5px;
+      font-weight: 600;
+      text-decoration: none;
       display: flex;
       align-items: center;
       justify-content: center;
-      width: 100%;
-      background: var(--accent-bg);
-      color: var(--accent-fg);
-      text-decoration: none;
-      font-weight: 600;
-      font-size: 15px;
-      padding: 14px 18px;
-      border-radius: 12px;
+      cursor: pointer;
     }
-    .note {
-      background: var(--pill);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 12px 14px;
-      font-size: 13px;
+    .btn.primary {
+      background: var(--accent);
+      color: var(--accent-fg);
+    }
+    .btn.ghost {
+      background: var(--card);
+      color: var(--text);
+    }
+    .btn.danger {
+      background: rgba(248, 113, 113, 0.14);
+      color: var(--rose);
+    }
+    .btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .svg {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.75;
+      stroke-linecap: round;
+      stroke-linejoin: round;
       color: var(--muted);
-      line-height: 1.45;
+      flex-shrink: 0;
     }
   </style>
 </head>
 <body>
-  <main class="card">
-    <div class="badge"><span class="dot"></span> ${statusLabel}</div>
-    <h1>EdgeCode</h1>
-    <div class="meta">
-      <div>Package: <strong>com.aistudio.edgecode.wqznxm</strong></div>
-      <div>Runtime: <strong>Android Kotlin &amp; Jetpack Compose</strong></div>
+  <main class="shell">
+    <div class="header">
+      <div class="brand">
+        <svg class="svg" style="color:#fff" viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        <span>EdgeCode</span>
+      </div>
+      <div class="status" id="envStatus">
+        <span class="dot" id="envDot"></span>
+        <span id="envLabel">Demo Only</span>
+      </div>
     </div>
-    ${ctaHtml}
+
+    <section class="card">
+      <div class="row" data-detail="d-pkg">
+        <div class="row-left">
+          <svg class="svg" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="4"/></svg>
+          <span>Runtime</span>
+        </div>
+        <span class="row-val">Android arm64</span>
+      </div>
+      <div class="row-detail" id="d-pkg">com.aistudio.edgecode.wqznxm · Native APK</div>
+
+      <div class="row" data-detail="d-deno">
+        <div class="row-left">
+          <svg class="svg" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <span>Local Script Engine</span>
+        </div>
+        <span class="row-val">libdeno.so</span>
+      </div>
+      <div class="row-detail" id="d-deno">jniLibs/arm64-v8a/libdeno.so + universal_runner.ts</div>
+
+      <div class="row" data-detail="d-ais">
+        <div class="row-left">
+          <svg class="svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+          <span>AI Studio Host</span>
+        </div>
+        <span class="row-val">Idle</span>
+      </div>
+      <div class="row-detail" id="d-ais">App execution disabled inside AI Studio preview</div>
+    </section>
+
+    <section class="card">
+      <div class="tabs">
+        <button class="tab active" data-tab="worker">Worker</button>
+        <button class="tab" data-tab="sw">ServiceWorker</button>
+        <button class="tab" data-tab="script">TS/JS</button>
+      </div>
+      <pre class="preview-box" id="demoPreview">export default {
+  async fetch(request, env, ctx) {
+    return Response.json({ edge: "deno-local", ok: true });
+  }
+};</pre>
+    </section>
+
+    <div class="actions">
+      ${apkChip}
+      <button class="btn danger" id="stopEnvBtn" type="button">Stop Environment</button>
+    </div>
   </main>
+
+  <script>
+    const snippets = {
+      worker: 'export default {\\n  async fetch(request, env, ctx) {\\n    return Response.json({ edge: "deno-local", ok: true });\\n  }\\n};',
+      sw: 'addEventListener("fetch", (event) => {\\n  event.respondWith(new Response("ServiceWorker OK"));\\n});',
+      script: 'import { Readable } from "node:stream";\\nconsole.log("Deno + Node compat ready:", typeof Readable);'
+    };
+
+    document.querySelectorAll(".row[data-detail]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const panel = document.getElementById(el.dataset.detail);
+        if (panel) panel.classList.toggle("open");
+      });
+    });
+
+    document.querySelectorAll(".tab").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        document.getElementById("demoPreview").textContent = snippets[btn.dataset.tab] || "";
+      });
+    });
+
+    const stopBtn = document.getElementById("stopEnvBtn");
+    stopBtn.addEventListener("click", async () => {
+      stopBtn.disabled = true;
+      stopBtn.textContent = "Stopping...";
+      try {
+        await fetch("/api/stop", { method: "POST" });
+      } catch {}
+      document.getElementById("envDot").classList.add("stopped");
+      document.getElementById("envLabel").textContent = "Stopped";
+      stopBtn.textContent = "Stopped";
+    });
+  </script>
 </body>
 </html>`;
 }
@@ -178,7 +347,7 @@ const server = http.createServer((req, res) => {
   const urlPath = (req.url || "/").split("?")[0];
 
   if (urlPath === "/health") {
-    const payload = JSON.stringify({ status: "ok", app: "EdgeCode" });
+    const payload = JSON.stringify({ status: "ok", mode: "static-demo", app: "EdgeCode" });
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
       "Content-Length": Buffer.byteLength(payload),
@@ -186,6 +355,26 @@ const server = http.createServer((req, res) => {
     });
     if (req.method !== "HEAD") res.end(payload);
     else res.end();
+    return;
+  }
+
+  if (urlPath === "/api/stop" && req.method === "POST") {
+    const payload = JSON.stringify({ stopped: true });
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Length": Buffer.byteLength(payload),
+      "Cache-Control": "no-store",
+    });
+    res.end(payload, () => {
+      setTimeout(() => {
+        removePidFile();
+        server.close(() => process.exit(0));
+        if (typeof server.closeAllConnections === "function") {
+          server.closeAllConnections();
+        }
+        process.exit(0);
+      }, 80);
+    });
     return;
   }
 
@@ -210,7 +399,7 @@ const server = http.createServer((req, res) => {
     const stat = fs.statSync(apkPath);
     res.writeHead(200, {
       "Content-Type": "application/vnd.android.package-archive",
-      "Content-Disposition": 'attachment; filename="EdgeCode-debug.apk"',
+      "Content-Disposition": 'attachment; filename="EdgeCode.apk"',
       "Content-Length": stat.size,
       "Cache-Control": "no-store",
     });
@@ -300,5 +489,5 @@ process.on("exit", removePidFile);
 
 server.listen(port, "0.0.0.0", () => {
   writePidFile();
-  console.log(`EdgeCode server listening on http://0.0.0.0:${port}`);
+  console.log(`EdgeCode static demo server listening on http://0.0.0.0:${port}`);
 });

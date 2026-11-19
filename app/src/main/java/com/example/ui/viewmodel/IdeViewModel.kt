@@ -679,6 +679,7 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
 
   override fun onCleared() {
     super.onCleared()
+    LocalScriptRunner.stopActiveServer()
     flushAutoSaveNow(clearSessionPointer = false)
     val accountId = _uiState.value.selectedAccount?.id
     val scriptName = _uiState.value.workspace?.scriptName

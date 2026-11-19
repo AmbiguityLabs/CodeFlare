@@ -53,7 +53,6 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
@@ -110,7 +109,6 @@ import com.example.ui.components.EdgeBottomDock
 import com.example.ui.components.EdgeBottomDockItem
 import com.example.ui.components.GitHubAndDiffPanel
 import com.example.ui.components.IconRevealButton
-import com.example.ui.components.IconToggleRevealText
 import com.example.ui.components.NewWorkerDialog
 import com.example.ui.components.RenameWorkerDialog
 import com.example.ui.components.ZipImportPreviewDialog
@@ -884,14 +882,32 @@ private fun HomeProjectsTabContent(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
       ) {
-        IconRevealButton(
-          icon = Icons.Outlined.Add,
-          revealedLabel = "New",
-          accentContainer = true,
+        Surface(
           onClick = onNewProject,
-          height = 42.dp,
-          tag = "home_new_project_button",
-        )
+          color = palette.ctaBg,
+          shape = RoundedCornerShape(if (isV2) 999.dp else 10.dp),
+          modifier = Modifier.height(42.dp).testTag("home_new_project_button"),
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+          ) {
+            Icon(
+              imageVector = Icons.Outlined.Add,
+              contentDescription = "Create new project",
+              tint = palette.ctaFg,
+              modifier = Modifier.size(18.dp),
+            )
+            Text(
+              text = "Create new project",
+              fontSize = 13.sp,
+              fontWeight = FontWeight.SemiBold,
+              color = palette.ctaFg,
+              maxLines = 1,
+            )
+          }
+        }
 
         var importMenuOpen by remember { mutableStateOf(false) }
         Box {
@@ -1004,7 +1020,6 @@ private fun HomeProjectsTabContent(
     if (latestProject != null && q.isEmpty()) {
       item(key = "resume_featured_card") {
         val ws = latestProject.workingWorkspace
-        var showResumeMeta by remember { mutableStateOf(false) }
         val fileCount = ws.files.count { !it.isVirtualReadOnly }
         Surface(
           onClick = { onOpenRamWorkspace(latestProject.key) },
@@ -1014,7 +1029,7 @@ private fun HomeProjectsTabContent(
           modifier = Modifier.fillMaxWidth(),
         ) {
           Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 15.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
           ) {
@@ -1024,35 +1039,29 @@ private fun HomeProjectsTabContent(
               tint = if (isV2) palette.activePillFg else palette.featuredCardFg,
               modifier = Modifier.size(22.dp),
             )
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+              Text(
+                text = "Pick up where you left off",
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Medium,
+                color = if (isV2) palette.textSecondary else palette.featuredCardMuted,
+                maxLines = 1,
+              )
               Text(
                 text = ws.scriptName,
-                fontSize = 15.5.sp,
+                fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = if (isV2) palette.textPrimary else palette.featuredCardFg,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
               )
-              AnimatedVisibility(visible = showResumeMeta) {
-                Text(
-                  text = "$fileCount · ${ws.entryModulePath}",
-                  fontFamily = JetBrainsMono,
-                  fontSize = 11.sp,
-                  color = if (isV2) palette.textSecondary else palette.featuredCardMuted,
-                  maxLines = 1,
-                  overflow = TextOverflow.Ellipsis,
-                )
-              }
-            }
-            IconButton(
-              onClick = { showResumeMeta = !showResumeMeta },
-              modifier = Modifier.size(32.dp),
-            ) {
-              Icon(
-                imageVector = Icons.Outlined.Info,
-                contentDescription = "Info",
-                tint = if (isV2) palette.textSecondary else palette.featuredCardMuted,
-                modifier = Modifier.size(18.dp),
+              Text(
+                text = "$fileCount files · ${ws.entryModulePath}",
+                fontFamily = JetBrainsMono,
+                fontSize = 11.sp,
+                color = if (isV2) palette.textMuted else palette.featuredCardMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
               )
             }
             Icon(
@@ -1090,9 +1099,8 @@ private fun HomeProjectsTabContent(
 
     if (ramWorkspaces.isEmpty()) {
       item(key = "ram_empty") {
-        var showEmptyInfo by remember { mutableStateOf(false) }
         Surface(
-          onClick = { showEmptyInfo = !showEmptyInfo },
+          onClick = onNewProject,
           color = palette.chromeSurface,
           shape = RoundedCornerShape(if (isV2) 24.dp else 14.dp),
           border = if (isV2) null else rememberGlassBorderStroke(0.75.dp),
@@ -1104,16 +1112,12 @@ private fun HomeProjectsTabContent(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
           ) {
             Icon(Icons.Outlined.Folder, contentDescription = null, tint = palette.textMuted, modifier = Modifier.size(18.dp))
-            AnimatedVisibility(visible = showEmptyInfo, modifier = Modifier.weight(1f)) {
-              Text(
-                text = "Tap +",
-                fontFamily = JetBrainsMono,
-                fontSize = 12.sp,
-                color = palette.textSecondary,
-              )
-            }
-            if (!showEmptyInfo) Spacer(Modifier.weight(1f))
-            Icon(Icons.Outlined.Info, contentDescription = "Info", tint = palette.textMuted, modifier = Modifier.size(16.dp))
+            Text(
+              text = "No local projects yet — tap Create new project",
+              fontSize = 13.sp,
+              color = palette.textSecondary,
+              modifier = Modifier.weight(1f),
+            )
           }
         }
       }
@@ -1205,9 +1209,7 @@ private fun HomeProjectsTabContent(
 
       if (cloudWorkers.isEmpty() && !uiState.isLoadingWorkers) {
         item(key = "cf_empty") {
-          var showCfEmptyInfo by remember { mutableStateOf(false) }
           Surface(
-            onClick = { showCfEmptyInfo = !showCfEmptyInfo },
             color = palette.chromeSurface,
             shape = RoundedCornerShape(if (isV2) 24.dp else 14.dp),
             border = if (isV2) null else rememberGlassBorderStroke(0.75.dp),
@@ -1219,16 +1221,12 @@ private fun HomeProjectsTabContent(
               horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
               Icon(Icons.Outlined.CloudQueue, contentDescription = null, tint = palette.textMuted, modifier = Modifier.size(18.dp))
-              AnimatedVisibility(visible = showCfEmptyInfo, modifier = Modifier.weight(1f)) {
-                Text(
-                  text = "0 Workers",
-                  fontFamily = JetBrainsMono,
-                  fontSize = 12.sp,
-                  color = palette.textSecondary,
-                )
-              }
-              if (!showCfEmptyInfo) Spacer(Modifier.weight(1f))
-              Icon(Icons.Outlined.Info, contentDescription = "Info", tint = palette.textMuted, modifier = Modifier.size(16.dp))
+              Text(
+                text = "No deployed Workers found",
+                fontSize = 13.sp,
+                color = palette.textSecondary,
+                modifier = Modifier.weight(1f),
+              )
             }
           }
         }
@@ -1315,46 +1313,42 @@ private fun RamProjectRowContent(
   val ws = record.workingWorkspace
   val fileCount = ws.files.count { !it.isVirtualReadOnly }
   val dirty = record.hasPendingChanges
-  var showDetails by remember { mutableStateOf(false) }
 
-  Column(
+  Row(
     modifier =
       modifier
         .fillMaxWidth()
         .clickable(onClick = onOpen)
         .padding(horizontal = if (isV2) 18.dp else 13.dp, vertical = if (isV2) 14.dp else 12.dp),
-    verticalArrangement = Arrangement.spacedBy(6.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(if (isV2) 14.dp else 10.dp),
   ) {
-    Row(
-      modifier = Modifier.fillMaxWidth(),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(if (isV2) 14.dp else 10.dp),
-    ) {
-      if (isV2) {
-        Icon(
-          imageVector = Icons.Outlined.Folder,
-          contentDescription = null,
-          tint = if (dirty) AmberWarn else palette.textPrimary,
-          modifier = Modifier.size(20.dp),
-        )
-      } else {
-        Surface(
-          color = if (dirty) AmberWarn.copy(alpha = 0.16f) else EmeraldLive.copy(alpha = 0.16f),
-          shape = RoundedCornerShape(10.dp),
-          border = BorderStroke(0.75.dp, (if (dirty) AmberWarn else EmeraldLive).copy(alpha = 0.35f)),
-          modifier = Modifier.size(38.dp),
-        ) {
-          Box(contentAlignment = Alignment.Center) {
-            Icon(
-              imageVector = Icons.Outlined.Folder,
-              contentDescription = null,
-              tint = if (dirty) AmberWarn else EmeraldLive,
-              modifier = Modifier.size(19.dp),
-            )
-          }
+    if (isV2) {
+      Icon(
+        imageVector = Icons.Outlined.Folder,
+        contentDescription = null,
+        tint = if (dirty) AmberWarn else palette.textPrimary,
+        modifier = Modifier.size(20.dp),
+      )
+    } else {
+      Surface(
+        color = if (dirty) AmberWarn.copy(alpha = 0.16f) else EmeraldLive.copy(alpha = 0.16f),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(0.75.dp, (if (dirty) AmberWarn else EmeraldLive).copy(alpha = 0.35f)),
+        modifier = Modifier.size(38.dp),
+      ) {
+        Box(contentAlignment = Alignment.Center) {
+          Icon(
+            imageVector = Icons.Outlined.Folder,
+            contentDescription = null,
+            tint = if (dirty) AmberWarn else EmeraldLive,
+            modifier = Modifier.size(19.dp),
+          )
         }
       }
+    }
 
+    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
       Text(
         text = ws.scriptName,
         fontSize = 15.5.sp,
@@ -1362,62 +1356,47 @@ private fun RamProjectRowContent(
         color = palette.textPrimary,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.weight(1f),
       )
-
-      IconButton(
-        onClick = { showDetails = !showDetails },
-        modifier = Modifier.size(30.dp),
-      ) {
-        Icon(
-          imageVector = Icons.Outlined.Info,
-          contentDescription = "Details",
-          tint = if (showDetails) palette.activePillFg else palette.textMuted,
-          modifier = Modifier.size(16.dp),
-        )
-      }
-
-      IconButton(
-        onClick = onRename,
-        modifier = Modifier.size(30.dp).testTag("rename_ram_project_${ws.scriptName}"),
-      ) {
-        Icon(
-          imageVector = Icons.Outlined.DriveFileRenameOutline,
-          contentDescription = "Rename ${ws.scriptName}",
-          tint = palette.textSecondary,
-          modifier = Modifier.size(17.dp),
-        )
-      }
-
-      IconButton(
-        onClick = onDelete,
-        modifier = Modifier.size(30.dp).testTag("delete_ram_project_${ws.scriptName}"),
-      ) {
-        Icon(
-          imageVector = Icons.Outlined.DeleteOutline,
-          contentDescription = "Remove ${ws.scriptName}",
-          tint = palette.textMuted,
-          modifier = Modifier.size(17.dp),
-        )
-      }
-
-      Icon(
-        imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-        contentDescription = "Open project",
-        tint = palette.textSecondary,
-        modifier = Modifier.size(19.dp),
-      )
-    }
-
-    AnimatedVisibility(visible = showDetails) {
       Text(
-        text = "$fileCount · ${ws.entryModulePath}",
+        text = "$fileCount files · ${ws.entryModulePath}",
         fontFamily = JetBrainsMono,
         fontSize = 11.sp,
         color = palette.textSecondary,
-        modifier = Modifier.padding(start = if (isV2) 34.dp else 48.dp),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
       )
     }
+
+    IconButton(
+      onClick = onRename,
+      modifier = Modifier.size(30.dp).testTag("rename_ram_project_${ws.scriptName}"),
+    ) {
+      Icon(
+        imageVector = Icons.Outlined.DriveFileRenameOutline,
+        contentDescription = "Rename ${ws.scriptName}",
+        tint = palette.textSecondary,
+        modifier = Modifier.size(17.dp),
+      )
+    }
+
+    IconButton(
+      onClick = onDelete,
+      modifier = Modifier.size(30.dp).testTag("delete_ram_project_${ws.scriptName}"),
+    ) {
+      Icon(
+        imageVector = Icons.Outlined.DeleteOutline,
+        contentDescription = "Remove ${ws.scriptName}",
+        tint = palette.textMuted,
+        modifier = Modifier.size(17.dp),
+      )
+    }
+
+    Icon(
+      imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+      contentDescription = "Open project",
+      tint = palette.textSecondary,
+      modifier = Modifier.size(19.dp),
+    )
   }
 }
 
@@ -1433,46 +1412,46 @@ private fun CloudWorkerRowContent(
 ) {
   val palette = LocalIdePalette.current
   val hasRamEdits = cachedRecord?.hasPendingChanges == true
-  var showDetails by remember { mutableStateOf(false) }
+  val subtitle =
+    cachedRecord?.let { "${it.workingWorkspace.files.count { f -> !f.isVirtualReadOnly }} files · ${it.workingWorkspace.entryModulePath}" }
+      ?: script.modifiedOn?.take(10)
+      ?: "Cloudflare Worker"
 
-  Column(
+  Row(
     modifier =
       modifier
         .fillMaxWidth()
         .clickable(onClick = onOpen)
         .padding(horizontal = if (isV2) 18.dp else 13.dp, vertical = if (isV2) 14.dp else 12.dp),
-    verticalArrangement = Arrangement.spacedBy(6.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(if (isV2) 14.dp else 12.dp),
   ) {
-    Row(
-      modifier = Modifier.fillMaxWidth(),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(if (isV2) 14.dp else 12.dp),
-    ) {
-      if (isV2) {
-        Icon(
-          imageVector = Icons.Outlined.CloudQueue,
-          contentDescription = null,
-          tint = if (hasRamEdits) AmberWarn else if (cachedRecord != null) EmeraldLive else palette.textPrimary,
-          modifier = Modifier.size(20.dp),
-        )
-      } else {
-        Surface(
-          color = if (cachedRecord != null) palette.activePillBg else palette.chromeSurface,
-          shape = RoundedCornerShape(10.dp),
-          border = rememberGlassBorderStroke(0.75.dp),
-          modifier = Modifier.size(38.dp),
-        ) {
-          Box(contentAlignment = Alignment.Center) {
-            Icon(
-              imageVector = Icons.Outlined.CloudQueue,
-              contentDescription = null,
-              tint = if (cachedRecord != null) palette.activePillFg else palette.textSecondary,
-              modifier = Modifier.size(19.dp),
-            )
-          }
+    if (isV2) {
+      Icon(
+        imageVector = Icons.Outlined.CloudQueue,
+        contentDescription = null,
+        tint = if (hasRamEdits) AmberWarn else if (cachedRecord != null) EmeraldLive else palette.textPrimary,
+        modifier = Modifier.size(20.dp),
+      )
+    } else {
+      Surface(
+        color = if (cachedRecord != null) palette.activePillBg else palette.chromeSurface,
+        shape = RoundedCornerShape(10.dp),
+        border = rememberGlassBorderStroke(0.75.dp),
+        modifier = Modifier.size(38.dp),
+      ) {
+        Box(contentAlignment = Alignment.Center) {
+          Icon(
+            imageVector = Icons.Outlined.CloudQueue,
+            contentDescription = null,
+            tint = if (cachedRecord != null) palette.activePillFg else palette.textSecondary,
+            modifier = Modifier.size(19.dp),
+          )
         }
       }
+    }
 
+    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
       Text(
         text = script.id,
         fontSize = 15.5.sp,
@@ -1480,65 +1459,46 @@ private fun CloudWorkerRowContent(
         color = palette.textPrimary,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.weight(1f),
       )
-
-      IconButton(
-        onClick = { showDetails = !showDetails },
-        modifier = Modifier.size(30.dp),
-      ) {
-        Icon(
-          imageVector = Icons.Outlined.Info,
-          contentDescription = "Details",
-          tint = if (showDetails) palette.activePillFg else palette.textMuted,
-          modifier = Modifier.size(16.dp),
-        )
-      }
-
-      IconButton(
-        onClick = onRename,
-        modifier = Modifier.size(30.dp).testTag("rename_worker_${script.id}"),
-      ) {
-        Icon(
-          imageVector = Icons.Outlined.DriveFileRenameOutline,
-          contentDescription = "Rename ${script.id}",
-          tint = palette.textSecondary,
-          modifier = Modifier.size(17.dp),
-        )
-      }
-
-      IconButton(
-        onClick = onDelete,
-        modifier = Modifier.size(30.dp).testTag("delete_worker_${script.id}"),
-      ) {
-        Icon(
-          imageVector = Icons.Outlined.DeleteOutline,
-          contentDescription = "Delete ${script.id}",
-          tint = palette.textMuted,
-          modifier = Modifier.size(17.dp),
-        )
-      }
-
-      Icon(
-        imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-        contentDescription = "Open ${script.id}",
-        tint = palette.textSecondary,
-        modifier = Modifier.size(19.dp),
-      )
-    }
-
-    AnimatedVisibility(visible = showDetails) {
-      val detailText =
-        cachedRecord?.let { "${it.workingWorkspace.files.count { f -> !f.isVirtualReadOnly }} · ${it.workingWorkspace.entryModulePath}" }
-          ?: script.modifiedOn?.take(10)
-          ?: "Worker"
       Text(
-        text = detailText,
+        text = subtitle,
         fontFamily = JetBrainsMono,
         fontSize = 11.sp,
         color = palette.textSecondary,
-        modifier = Modifier.padding(start = if (isV2) 34.dp else 50.dp),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
       )
     }
+
+    IconButton(
+      onClick = onRename,
+      modifier = Modifier.size(30.dp).testTag("rename_worker_${script.id}"),
+    ) {
+      Icon(
+        imageVector = Icons.Outlined.DriveFileRenameOutline,
+        contentDescription = "Rename ${script.id}",
+        tint = palette.textSecondary,
+        modifier = Modifier.size(17.dp),
+      )
+    }
+
+    IconButton(
+      onClick = onDelete,
+      modifier = Modifier.size(30.dp).testTag("delete_worker_${script.id}"),
+    ) {
+      Icon(
+        imageVector = Icons.Outlined.DeleteOutline,
+        contentDescription = "Delete ${script.id}",
+        tint = palette.textMuted,
+        modifier = Modifier.size(17.dp),
+      )
+    }
+
+    Icon(
+      imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+      contentDescription = "Open ${script.id}",
+      tint = palette.textSecondary,
+      modifier = Modifier.size(19.dp),
+    )
   }
 }
