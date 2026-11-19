@@ -1,9 +1,40 @@
 import http from "node:http";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 const cwd = process.cwd();
-const port = Number(process.env.DEFAULT_APP_PORT || process.env.PORT || 3000);
+const pidFilePath = path.join(os.tmpdir(), "edgecode-dev-server.pid");
+
+function resolvePort() {
+  const args = process.argv.slice(2);
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === "--port" || args[i] === "-p") {
+      const parsed = Number(args[i + 1]);
+      if (Number.isInteger(parsed) && parsed > 0 && parsed < 65536) {
+        return parsed;
+      }
+    } else if (args[i].startsWith("--port=")) {
+      const parsed = Number(args[i].slice("--port=".length));
+      if (Number.isInteger(parsed) && parsed > 0 && parsed < 65536) {
+        return parsed;
+      }
+    }
+  }
+  const nginxPort = Number(process.env.NGINX_PORT || 8080);
+  const cpPort = Number(process.env.CONTROL_PLANE_PORT || 8000);
+  const envPort = Number(process.env.PORT);
+  if (Number.isInteger(envPort) && envPort > 0 && envPort < 65536 && envPort !== nginxPort && envPort !== cpPort) {
+    return envPort;
+  }
+  const defaultAppPort = Number(process.env.DEFAULT_APP_PORT);
+  if (Number.isInteger(defaultAppPort) && defaultAppPort > 0 && defaultAppPort < 65536) {
+    return defaultAppPort;
+  }
+  return 3000;
+}
+
+const port = resolvePort();
 
 function findApkPath() {
   const candidates = [
@@ -21,18 +52,20 @@ function findApkPath() {
 function renderHtml(apkPath) {
   const hasApk = Boolean(apkPath);
   const sizeMb = hasApk ? (fs.statSync(apkPath).size / (1024 * 1024)).toFixed(1) : null;
-  const statusLabel = hasApk ? `Native Android APK Ready (${sizeMb} MB)` : "Native Kotlin Android Project";
+  const statusLabel = hasApk ? `APK Ready (${sizeMb} MB)` : "Android Kotlin Project";
   const ctaHtml = hasApk
-    ? `<a class="btn" href="/app-debug.apk" download="EdgeCode-debug.apk">Download Installable APK (${sizeMb} MB)</a>`
-    : `<div class="note">Open this project in Android Studio or build via Gradle (<code>gradle assembleDebug</code>) to generate the installable APK.</div>`;
+    ? `<a class="btn" href="/app-debug.apk" download="EdgeCode-debug.apk">Download APK (${sizeMb} MB)</a>`
+    : `<div class="note">Build via Gradle (<code>gradle assembleDebug</code>) to generate the APK.</div>`;
 
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>EdgeCode — Cloudflare Workers Mobile IDE</title>
-  <meta name="description" content="Cloudflare Workers mobile IDE featuring native Cloudflare authorization, multi-file code editor, bindings manager, and live HTTP worker tester." />
+  <title>EdgeCode</title>
+  <meta name="description" content="Cloudflare Workers mobile IDE featuring native Cloudflare authorization, multi-file VS Code-style code editor, bindings manager, and live HTTP worker tester." />
+  <meta property="og:title" content="EdgeCode" />
+  <meta property="og:description" content="Cloudflare Workers mobile IDE featuring native Cloudflare authorization, multi-file VS Code-style code editor, bindings manager, and live HTTP worker tester." />
   <style>
     :root {
       color-scheme: dark;
@@ -60,7 +93,7 @@ function renderHtml(apkPath) {
     }
     .card {
       width: 100%;
-      max-width: 480px;
+      max-width: 440px;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 20px;
@@ -85,16 +118,10 @@ function renderHtml(apkPath) {
       background: var(--emerald);
     }
     h1 {
-      margin: 0 0 6px;
+      margin: 0 0 14px;
       font-size: 24px;
       font-weight: 700;
       letter-spacing: -0.02em;
-    }
-    .sub {
-      margin: 0 0 18px;
-      color: var(--muted);
-      font-size: 14px;
-      line-height: 1.5;
     }
     .meta {
       background: var(--pill);
@@ -131,37 +158,17 @@ function renderHtml(apkPath) {
       color: var(--muted);
       line-height: 1.45;
     }
-    .steps {
-      margin-top: 18px;
-      padding-top: 14px;
-      border-top: 1px solid rgba(52, 56, 70, 0.6);
-      font-size: 13px;
-      color: var(--muted);
-      line-height: 1.5;
-    }
-    .steps ul { margin: 8px 0 0; padding-left: 18px; }
-    .steps li { margin-bottom: 4px; }
   </style>
 </head>
 <body>
   <main class="card">
     <div class="badge"><span class="dot"></span> ${statusLabel}</div>
     <h1>EdgeCode</h1>
-    <p class="sub">Cloudflare Workers mobile IDE built natively with Kotlin &amp; Jetpack Compose.</p>
     <div class="meta">
-      <div>Package: <strong>com.aistudio.edgecode.wqznxm (v1.1)</strong></div>
-      <div>Architecture: <strong>Home &rarr; Project (Code / Test / Config / Console)</strong></div>
-      <div>Integrations: <strong>Cloudflare Workers, Pages, Infra &amp; Optional GitHub</strong></div>
+      <div>Package: <strong>com.aistudio.edgecode.wqznxm</strong></div>
+      <div>Runtime: <strong>Android Kotlin &amp; Jetpack Compose</strong></div>
     </div>
     ${ctaHtml}
-    <div class="steps">
-      <strong>Workspace Structure:</strong>
-      <ul>
-        <li>Home Hub for Projects, Pages, Infra, and optional GitHub</li>
-        <li>Single-project workspace with Code, Test, Config, and Console modes</li>
-        <li>Project-scoped Files, Search, and Snippets drawer</li>
-      </ul>
-    </div>
   </main>
 </body>
 </html>`;
@@ -179,6 +186,12 @@ const server = http.createServer((req, res) => {
     });
     if (req.method !== "HEAD") res.end(payload);
     else res.end();
+    return;
+  }
+
+  if (urlPath === "/favicon.ico") {
+    res.writeHead(204, { "Cache-Control": "no-store" });
+    res.end();
     return;
   }
 
@@ -225,10 +238,49 @@ const server = http.createServer((req, res) => {
   else res.end();
 });
 
+function writePidFile() {
+  try {
+    fs.writeFileSync(pidFilePath, String(process.pid), "utf8");
+  } catch {
+  }
+}
+
+function removePidFile() {
+  try {
+    if (fs.existsSync(pidFilePath) && fs.readFileSync(pidFilePath, "utf8").trim() === String(process.pid)) {
+      fs.unlinkSync(pidFilePath);
+    }
+  } catch {
+  }
+}
+
+function terminatePreviousServer() {
+  try {
+    if (!fs.existsSync(pidFilePath)) return false;
+    const prevPid = Number(fs.readFileSync(pidFilePath, "utf8").trim());
+    if (!Number.isInteger(prevPid) || prevPid <= 1 || prevPid === process.pid) return false;
+    process.kill(prevPid, "SIGTERM");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+let listenRetries = 0;
+let terminatedPrevious = false;
+const maxListenRetries = 20;
+
 server.on("error", (err) => {
-  if (err && err.code === "EADDRINUSE") {
-    console.log(`Port ${port} is already in use; assuming existing EdgeCode server is active.`);
-    process.exit(0);
+  if (err && err.code === "EADDRINUSE" && listenRetries < maxListenRetries) {
+    if (!terminatedPrevious) {
+      terminatedPrevious = true;
+      terminatePreviousServer();
+    }
+    listenRetries += 1;
+    setTimeout(() => {
+      server.listen(port, "0.0.0.0");
+    }, 150);
+    return;
   }
   console.error("Server error:", err);
   process.exit(1);
@@ -236,10 +288,17 @@ server.on("error", (err) => {
 
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, () => {
+    removePidFile();
     server.close(() => process.exit(0));
+    if (typeof server.closeAllConnections === "function") {
+      server.closeAllConnections();
+    }
   });
 }
 
+process.on("exit", removePidFile);
+
 server.listen(port, "0.0.0.0", () => {
+  writePidFile();
   console.log(`EdgeCode server listening on http://0.0.0.0:${port}`);
 });

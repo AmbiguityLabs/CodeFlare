@@ -91,7 +91,6 @@ import com.example.data.remote.ApiRequestUtils
 import com.example.data.remote.ApiTesterRequest
 import com.example.data.remote.WorkerLanguage
 import com.example.editor.SyntaxHighlighter
-import com.example.terminal.JqEvaluator
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.BadgeTs
 import com.example.ui.theme.EmeraldLive
@@ -968,7 +967,7 @@ fun ApiTesterPane(
                 when (responseSubTab) {
                   0 -> {
                     val pretty = remember(res.body, res.errorMessage) {
-                      res.errorMessage ?: JqEvaluator.prettyPrintIfJson(res.body)
+                      res.errorMessage ?: ApiRequestUtils.prettyPrintIfJson(res.body)
                     }
                     val trimmed = pretty.trimStart()
                     val isJson = res.errorMessage == null && (trimmed.startsWith("{") || trimmed.startsWith("["))
@@ -1009,7 +1008,7 @@ fun ApiTesterPane(
                   else -> {
                     val previewText =
                       remember(res.body, res.errorMessage) {
-                        res.errorMessage ?: JqEvaluator.prettyPrintIfJson(res.body)
+                        res.errorMessage ?: ApiRequestUtils.prettyPrintIfJson(res.body)
                       }
                     Text(
                       text = previewText.ifBlank { "(no preview content)" },
@@ -1294,7 +1293,7 @@ private fun ApiBodyEditor(
         modifier = Modifier.fillMaxWidth().testTag("api_body_input"),
       )
       if (req.bodyType == ApiBodyType.JSON) {
-        TextButton(onClick = { onUpdateRequest { it.copy(rawBody = JqEvaluator.prettyPrintIfJson(it.rawBody)) } }) {
+        TextButton(onClick = { onUpdateRequest { it.copy(rawBody = ApiRequestUtils.prettyPrintIfJson(it.rawBody)) } }) {
           Text("Format JSON")
         }
       }

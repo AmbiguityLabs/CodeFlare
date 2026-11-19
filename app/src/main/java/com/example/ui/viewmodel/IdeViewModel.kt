@@ -122,18 +122,11 @@ import com.example.idecore.search.ProjectTextMatch
 import com.example.idecore.search.RenamePreview
 import com.example.idecore.search.WorkspaceSearchAndRefactor
 import com.example.ui.components.DiffReviewIntent
-import com.example.terminal.LinuxTerminalEngine
-import com.example.terminal.ShellExecutionResult
-import com.example.terminal.TerminalEntry
-import com.example.terminal.TerminalEntryKind
-import com.example.terminal.TerminalQuickEditTarget
-import com.example.terminal.TerminalSessionTab
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -181,7 +174,6 @@ enum class BottomPanelTab {
   WORKER_PREVIEW,
   WORKER_TEST,
   API_TESTER,
-  TERMINAL,
   PROBLEMS,
   TAIL_LOGS,
   CONSOLE,
@@ -269,7 +261,6 @@ data class IdeUiState(
   val isEditorBottomBarsHidden: Boolean = false,
   val showHomeGitHubHub: Boolean = false,
   val showHomeSettings: Boolean = false,
-  val showHomeTerminal: Boolean = false,
   val isTestingCfCredentials: Boolean = false,
   val cfCredentialTestMessage: String? = null,
   val isCfCredentialTestError: Boolean = false,
@@ -350,17 +341,6 @@ data class IdeUiState(
   val workerVersions: List<CfWorkerVersion> = emptyList(),
   val selectedWorkflowRunId: Long? = null,
   val selectedWorkflowJobs: List<GitHubWorkflowJob> = emptyList(),
-  val terminalEntries: List<TerminalEntry> = emptyList(),
-  val terminalInput: String = "",
-  val terminalPromptPath: String = "~/scratch",
-  val isTerminalBusy: Boolean = false,
-  val terminalRunningCommand: String? = null,
-  val terminalLiveOutput: String = "",
-  val terminalHistory: List<String> = emptyList(),
-  val terminalHistoryCursor: Int = -1,
-  val terminalSessions: List<TerminalSessionTab> = listOf(TerminalSessionTab("sh-1", "sh-1", "~/scratch", false)),
-  val activeTerminalSessionId: String = "sh-1",
-  val terminalQuickEdit: TerminalQuickEditTarget? = null,
   val isTailRunning: Boolean = false,
   val tailLogs: List<ConsoleLogEntry> = emptyList(),
   val consoleLogs: List<ConsoleLogEntry> = emptyList(),
@@ -449,19 +429,11 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   private val repository = CloudflareRepository(prefsStore, clientFactory)
   private val gitHubRepository = GitHubRepository(prefsStore, clientFactory.moshi)
   private val projectDirManager = ProjectDirectoryManager(application)
-  private val terminalEngine = LinuxTerminalEngine(application, repository, projectDirManager.projectsDir)
   private val draftManager = DraftPersistenceManager(application)
   private val autoSaveStore = AutoSaveDraftStore(application)
   private val autoSaveIoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
   private val ramDb = RamWorkspaceDatabase()
-  private val terminalIdGen = AtomicLong(1L)
-  private val terminalBuffersBySession = ConcurrentHashMap<String, List<TerminalEntry>>()
-  private val terminalHistoryBySession = ConcurrentHashMap<String, List<String>>()
-  private val terminalInputBySession = ConcurrentHashMap<String, String>()
-  private val terminalCursorBySession = ConcurrentHashMap<String, Int>()
-  private val terminalDraftBySession = ConcurrentHashMap<String, String>()
 
-  // IDE Core engines adapted from CodeAssist ide-core
   private val ideCoreIndexExecutor = IdeBackgroundThreads.single("ide-core-index")
   private val localHistoryStore = LocalHistoryStore(File(application.filesDir, "local_history"))
   private val fileOpJournal = WorkspaceFileOpJournal()
@@ -618,7 +590,6 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
       val (diskWorkspaces, initialSummary, restoredDrafts, lastPointer) =
         withContext(Dispatchers.IO) {
           projectDirManager.refreshRootDirectoryAndMigrate()
-          terminalEngine.updateRootWorkspacesDir(projectDirManager.projectsDir)
           val diskList = projectDirManager.loadAllWorkspaces()
           val drafts = autoSaveStore.loadAllDrafts()
           val pointer = autoSaveStore.loadLastSessionPointer()
@@ -894,7 +865,6 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
       ramDb.setActiveWorkspaceKey(ramKey)
       val ws = existingRecord.workingWorkspace
       val diags = rebuildDiagnosticsFull(ws.files)
-      terminalEngine.syncWorkspaceToDisk(ws)
       _uiState.update {
         it.copy(
           isLocalScratchpad = true,
@@ -909,10 +879,8 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
           restoredDraftBanner = null,
           activeWorkspaceHasPendingConfig = existingRecord.hasPendingChanges,
           ramDbStats = ramDb.computeStats(ramKey),
-          terminalPromptPath = terminalEngine.currentPromptPath(ws),
         )
       }
-      appendTerminalWelcome(ws)
       appendLog("INFO", "Restored Local Project from '${projectDirManager.displayRootPath()}'")
       recordActiveSessionPointer()
       syncPeriodicAutoSaveLoop()
@@ -1007,7 +975,6 @@ export default {
         isNewUnexported = false,
       )
     val diags = rebuildDiagnosticsFull(ws.files)
-    terminalEngine.syncWorkspaceToDisk(ws)
     persistWorkspaceToProjectDirAsync(ramKey)
     _uiState.update {
       it.copy(
@@ -1023,10 +990,8 @@ export default {
         restoredDraftBanner = null,
         activeWorkspaceHasPendingConfig = false,
         ramDbStats = ramDb.computeStats(ramKey),
-        terminalPromptPath = terminalEngine.currentPromptPath(ws),
       )
     }
-    appendTerminalWelcome(ws)
     appendLog("INFO", "Initialized project in '${projectDirManager.displayRootPath()}'")
     recordActiveSessionPointer()
     syncPeriodicAutoSaveLoop()
@@ -1153,7 +1118,6 @@ export default {
         withContext(Dispatchers.IO) {
           projectDirManager.refreshRootDirectoryAndMigrate()
         }
-      terminalEngine.updateRootWorkspacesDir(projectDirManager.projectsDir)
       if (migrated) {
         val activeKey = activeWorkspaceKey()
         syncActiveStateToRamDb()
@@ -1171,12 +1135,10 @@ export default {
       }
       val summary = withContext(Dispatchers.IO) { projectDirManager.computeStorageSummary() }
       _uiState.update { state ->
-        val activeWs = state.workspace
         state.copy(
           projectStorageSummary = summary,
           ramWorkspaces = ramDb.listWorkspaces(),
           ramDbStats = ramDb.computeStats(activeWorkspaceKey(state)),
-          terminalPromptPath = if (activeWs != null) terminalEngine.currentPromptPath(activeWs) else state.terminalPromptPath,
           statusMessage =
             if (migrated && summary.isUsingNativeDeviceStorage) {
               "Dedicated folder active: ${summary.rootAbsolutePath}"
@@ -1204,7 +1166,6 @@ export default {
         rawWs
       }
     val diags = rebuildDiagnosticsFull(ws.files)
-    terminalEngine.syncWorkspaceToDisk(ws)
     val isLocal = key.startsWith("local_")
     val baselineMap =
       record.importedSnapshot.files
@@ -1239,10 +1200,8 @@ export default {
             state.apiRequest
           },
         gitWorkingBaseline = baselineMap,
-        terminalPromptPath = terminalEngine.currentPromptPath(ws),
       )
     }
-    appendTerminalWelcome(ws)
     appendLog("INFO", "Opened '${ws.scriptName}' from ${projectDirManager.displayRootPath()}")
     recordActiveSessionPointer()
     syncPeriodicAutoSaveLoop()
@@ -1321,10 +1280,10 @@ export default {
               BottomPanelTab.WORKER_PREVIEW
             }
           ProjectMode.CONSOLE ->
-            if (state.activeBottomTab in setOf(BottomPanelTab.TERMINAL, BottomPanelTab.TAIL_LOGS, BottomPanelTab.PROBLEMS, BottomPanelTab.CONSOLE)) {
+            if (state.activeBottomTab in setOf(BottomPanelTab.TAIL_LOGS, BottomPanelTab.PROBLEMS, BottomPanelTab.CONSOLE)) {
               state.activeBottomTab
             } else {
-              BottomPanelTab.TERMINAL
+              BottomPanelTab.TAIL_LOGS
             }
           else -> state.activeBottomTab
         }
@@ -1345,48 +1304,6 @@ export default {
 
   fun setShowHomeSettings(show: Boolean) {
     _uiState.update { it.copy(showHomeSettings = show) }
-  }
-
-  fun setShowHomeTerminal(show: Boolean) {
-    if (show) {
-      val ws = _uiState.value.workspace
-      if (_uiState.value.terminalEntries.isEmpty()) {
-        val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
-        val prompt = terminalEngine.currentPromptPath(ws)
-        val welcome =
-          TerminalEntry(
-            id = terminalIdGen.getAndIncrement(),
-            timestamp = ts,
-            promptPrefix = "dev@edgecode:$prompt$",
-            command = "sysinfo --quick",
-            output =
-              "EdgeCode Lightweight Linux Terminal (${terminalEngine.getActiveSessionId()})\n" +
-                "Working dir: ${terminalEngine.currentDirPath()}\n" +
-                "Type 'help', 'pkg' to view installed utilities, or 'sysinfo' for environment stats.",
-            kind = TerminalEntryKind.SYSTEM,
-          )
-        val activeId = terminalEngine.getActiveSessionId()
-        terminalBuffersBySession[activeId] = listOf(welcome)
-        _uiState.update {
-          it.copy(
-            showHomeTerminal = true,
-            terminalEntries = listOf(welcome),
-            terminalPromptPath = prompt,
-            terminalSessions = terminalEngine.listSessionTabs(ws),
-          )
-        }
-      } else {
-        _uiState.update {
-          it.copy(
-            showHomeTerminal = true,
-            terminalPromptPath = terminalEngine.currentPromptPath(ws),
-            terminalSessions = terminalEngine.listSessionTabs(ws),
-          )
-        }
-      }
-    } else {
-      _uiState.update { it.copy(showHomeTerminal = false) }
-    }
   }
 
   fun exitScratchpadToAuth() {
@@ -1518,7 +1435,6 @@ export default {
           rawWs
         }
       val diags = rebuildDiagnosticsFull(ws.files)
-      terminalEngine.syncWorkspaceToDisk(ws)
       val baselineMap =
         cachedRecord.importedSnapshot.files
           .filterNot { it.isVirtualReadOnly || it.path == "wrangler.jsonc" }
@@ -1554,7 +1470,6 @@ export default {
               state.apiRequest
             },
           gitWorkingBaseline = baselineMap,
-          terminalPromptPath = terminalEngine.currentPromptPath(ws),
         )
       }
       appendLog("INFO", "Switched to '${ws.scriptName}' from local project directory")
@@ -1624,7 +1539,6 @@ export default {
 
           val ws = activeRecord.workingWorkspace
           val diags = rebuildDiagnosticsFull(ws.files)
-          terminalEngine.syncWorkspaceToDisk(ws)
           persistWorkspaceToProjectDirAsync(ramKey)
           val baselineMap =
             fetchedWs.files
@@ -1674,10 +1588,8 @@ export default {
               gitUnstagedExcludedPaths = emptySet(),
               localGitCommits = emptyList(),
               gitPushStatusMessage = null,
-              terminalPromptPath = terminalEngine.currentPromptPath(ws),
             )
           }
-          appendTerminalWelcome(ws)
           appendLog("INFO", "Synced Worker '${ws.scriptName}' (${ws.files.size} files) into project folder")
           recordActiveSessionPointer()
           syncPeriodicAutoSaveLoop()
@@ -1705,7 +1617,6 @@ export default {
     val key = activeWorkspaceKey() ?: return
     val reverted = ramDb.revertWorkspaceToImportedBaseline(key) ?: return
     val ws = reverted.workingWorkspace
-    terminalEngine.syncWorkspaceToDisk(ws)
     persistWorkspaceToProjectDirAsync(key)
     lastPersistedDraftDigests.remove(key)
     autoSaveIoScope.launch { autoSaveStore.clearWorkspaceDraft(key) }
@@ -1772,7 +1683,6 @@ export default {
         defaultActivePath = "index.js",
         isNewUnexported = !isScratchpad,
       )
-    terminalEngine.syncWorkspaceToDisk(ws)
     val diags = rebuildDiagnosticsFull(ws.files)
     val initialPreview = resolveDefaultPreviewUrl(ws)
     _uiState.update { state ->
@@ -1806,10 +1716,8 @@ export default {
         statusMessage =
           if (isScratchpad) "Created '$cleanName' in ${projectDirManager.displayRootPath()}"
           else "Created '$cleanName' — deploying to Cloudflare…",
-        terminalPromptPath = terminalEngine.currentPromptPath(ws),
       )
     }
-    appendTerminalWelcome(ws)
     appendLog("INFO", "Created '$cleanName' in ${projectDirManager.displayRootPath()}")
     recordActiveSessionPointer()
     syncPeriodicAutoSaveLoop()
@@ -1894,7 +1802,6 @@ export default {
           defaultActivePath = resolvedEntry,
           isNewUnexported = !isScratchpad,
         )
-      terminalEngine.syncWorkspaceToDisk(ws)
       withContext(Dispatchers.IO) {
         projectDirManager.recordOrganizedImport(cleanName, finalFiles)
         projectDirManager.saveWorkspaceRecord(record)
@@ -1934,10 +1841,8 @@ export default {
           statusMessage =
             if (isScratchpad) "Imported ${finalFiles.size} file(s) into '$cleanName'"
             else "Imported ${finalFiles.size} file(s) — deploying '$cleanName'…",
-          terminalPromptPath = terminalEngine.currentPromptPath(ws),
         )
       }
-      appendTerminalWelcome(ws)
       appendLog("INFO", "Organized & imported ${finalFiles.size} file(s) into '$cleanName'")
       recordActiveSessionPointer()
       syncPeriodicAutoSaveLoop()
@@ -2086,7 +1991,6 @@ export default {
           else "Imported ${importedBatchFiles.size} file(s) from $sourceLabel",
       )
     }
-    terminalEngine.syncWorkspaceToDisk(updatedWs)
     activeWorkspaceKey()?.let { key ->
       val latest = _uiState.value
       val updatedRecord =
@@ -2214,7 +2118,6 @@ export default {
             defaultActivePath = ws.entryModulePath,
             isNewUnexported = true,
           )
-        terminalEngine.syncWorkspaceToDisk(ws)
         withContext(Dispatchers.IO) {
           projectDirManager.recordOrganizedImport(ws.scriptName, ws.files, bundleJson = rawJson)
           projectDirManager.saveWorkspaceRecord(record)
@@ -2255,10 +2158,8 @@ export default {
             ramWorkspaces = ramDb.listWorkspaces(),
             zipImportPreview = null,
             statusMessage = "Imported & organized '${ws.scriptName}' (${ws.files.size} files)",
-            terminalPromptPath = terminalEngine.currentPromptPath(ws),
           )
         }
-        appendTerminalWelcome(ws)
         appendLog("INFO", "Imported & organized bundle '${ws.scriptName}' into project directory")
         recordActiveSessionPointer()
         syncPeriodicAutoSaveLoop()
@@ -2448,7 +2349,6 @@ export default {
           defaultActivePath = plan.entryModulePath,
           isNewUnexported = !isScratchpad,
         )
-      terminalEngine.syncWorkspaceToDisk(ws)
       withContext(Dispatchers.IO) {
         projectDirManager.recordOrganizedImport(cleanName, ws.files)
         projectDirManager.saveWorkspaceRecord(record)
@@ -2497,10 +2397,8 @@ export default {
             } else {
               "Imported ZIP '$cleanName' (${plan.files.size} file(s)$skippedNote)"
             },
-          terminalPromptPath = terminalEngine.currentPromptPath(ws),
         )
       }
-      appendTerminalWelcome(ws)
       appendLog("INFO", "Imported ZIP archive '${plan.archiveName}' into '$cleanName' (${plan.files.size} files)")
       recordActiveSessionPointer()
       syncPeriodicAutoSaveLoop()
@@ -3670,7 +3568,6 @@ export default {
         }
         lastPersistedDraftDigests.remove(workspaceKey)
         pendingCloudDrafts.remove(workspaceKey)
-        terminalEngine.syncWorkspaceToDisk(updatedWs)
         val summary = withContext(Dispatchers.IO) { projectDirManager.computeStorageSummary() }
         val liveUrl = resolveDefaultPreviewUrl(updatedWs)
 
@@ -4061,7 +3958,7 @@ export default {
         val nextMode =
           when (tab) {
             BottomPanelTab.WORKER_PREVIEW, BottomPanelTab.WORKER_TEST, BottomPanelTab.API_TESTER -> ProjectMode.TEST
-            BottomPanelTab.TERMINAL, BottomPanelTab.TAIL_LOGS, BottomPanelTab.PROBLEMS, BottomPanelTab.CONSOLE -> ProjectMode.CONSOLE
+            BottomPanelTab.TAIL_LOGS, BottomPanelTab.PROBLEMS, BottomPanelTab.CONSOLE -> ProjectMode.CONSOLE
           }
         state.copy(projectMode = nextMode, showBottomPanel = true, activeBottomTab = tab)
       }
@@ -4158,9 +4055,7 @@ export default {
           val activeKey = activeWorkspaceKey()
           val updatedActiveWs =
             _uiState.value.workspace?.let { cur ->
-              val updated = cur.copy(accountSubdomain = confirmedSub)
-              terminalEngine.syncWorkspaceToDisk(updated)
-              updated
+              cur.copy(accountSubdomain = confirmedSub)
             }
           val liveUrl = resolveDefaultPreviewUrl(updatedActiveWs)
           _uiState.update { s ->
@@ -4283,7 +4178,6 @@ export default {
             _uiState.update { it.copy(projectStorageSummary = summary) }
           }
           if (isTargetActive) {
-            terminalEngine.syncWorkspaceToDisk(updatedWs)
             val diags = rebuildDiagnosticsFull(updatedWs.files)
             val liveUrl = resolveDefaultPreviewUrl(updatedWs)
             _uiState.update { s ->
@@ -4302,7 +4196,6 @@ export default {
                   if (liveUrl.isNotBlank()) ApiRequestUtils.applyDeployedWorkerUrl(s.apiRequest, liveUrl, forceReplace = true)
                   else s.apiRequest,
                 statusMessage = "Renamed Worker '$oldName' to '$cleanName'",
-                terminalPromptPath = terminalEngine.currentPromptPath(updatedWs),
               )
             }
             recordActiveSessionPointer()
@@ -4367,7 +4260,6 @@ export default {
                   outcome.warningMessage?.let { append(" · Note: $it") }
                 }
               if (isTargetActive) {
-                terminalEngine.syncWorkspaceToDisk(finalWs)
                 val diags = rebuildDiagnosticsFull(finalWs.files)
                 _uiState.update { s ->
                   s.copy(
@@ -4388,7 +4280,6 @@ export default {
                       else s.apiRequest,
                     deployBannerMessage = banner,
                     statusMessage = null,
-                    terminalPromptPath = terminalEngine.currentPromptPath(finalWs),
                   )
                 }
                 recordActiveSessionPointer()
@@ -4852,19 +4743,7 @@ export default {
             val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
             _uiState.update { state ->
               val next = (state.tailLogs + ConsoleLogEntry(ts, "TAIL", raw)).takeLast(120)
-              val nextTerm =
-                if (state.activeBottomTab == BottomPanelTab.TERMINAL) {
-                  (state.terminalEntries +
-                    TerminalEntry(
-                      id = terminalIdGen.getAndIncrement(),
-                      timestamp = ts,
-                      promptPrefix = "tail",
-                      command = "edge event",
-                      output = raw,
-                      kind = TerminalEntryKind.WRANGLER,
-                    )).takeLast(120)
-                } else state.terminalEntries
-              state.copy(tailLogs = next, terminalEntries = nextTerm)
+              state.copy(tailLogs = next)
             }
           },
           onClosed = { reason ->
@@ -6682,7 +6561,6 @@ jobs:
             )
           }
           appendLog("INFO", "Cloned ${bundle.repo.fullName}@${bundle.branch} (${bundle.files.size} files)")
-          terminalEngine.syncWorkspaceToDisk(_uiState.value.workspace)
         }
         .onFailure { err ->
           _uiState.update {
@@ -7079,780 +6957,6 @@ jobs:
     pushQueuedAndActiveChangesToGitHub(commitMessageOverride = commitMessage)
   }
 
-  fun setTerminalInput(input: String) {
-    val activeId = _uiState.value.activeTerminalSessionId
-    terminalInputBySession[activeId] = input
-    terminalCursorBySession[activeId] = -1
-    terminalDraftBySession[activeId] = input
-    _uiState.update { it.copy(terminalInput = input, terminalHistoryCursor = -1) }
-  }
-
-  fun insertTerminalToken(token: String) {
-    val activeId = _uiState.value.activeTerminalSessionId
-    _uiState.update { state ->
-      val next = state.terminalInput + token
-      terminalInputBySession[activeId] = next
-      terminalCursorBySession[activeId] = -1
-      terminalDraftBySession[activeId] = next
-      state.copy(terminalInput = next, terminalHistoryCursor = -1)
-    }
-  }
-
-  fun pasteIntoTerminal(clipboardText: String) {
-    val clean = clipboardText.replace("\r\n", "\n")
-    val activeId = _uiState.value.activeTerminalSessionId
-    _uiState.update { state ->
-      val current = state.terminalInput
-      val next = if (current.isEmpty()) clean else "$current$clean"
-      terminalInputBySession[activeId] = next
-      terminalCursorBySession[activeId] = -1
-      terminalDraftBySession[activeId] = next
-      state.copy(terminalInput = next, terminalHistoryCursor = -1)
-    }
-  }
-
-  fun autocompleteTerminal() {
-    val state = _uiState.value
-    val completed = terminalEngine.autocomplete(state.terminalInput, state.workspace, state.activeTerminalSessionId)
-    terminalInputBySession[state.activeTerminalSessionId] = completed
-    terminalDraftBySession[state.activeTerminalSessionId] = completed
-    _uiState.update { it.copy(terminalInput = completed) }
-  }
-
-  fun recallTerminalHistory(older: Boolean) {
-    val state = _uiState.value
-    val history = state.terminalHistory
-    if (history.isEmpty()) return
-    val sessionId = state.activeTerminalSessionId
-    if (older && state.terminalHistoryCursor < 0) {
-      terminalDraftBySession[sessionId] = state.terminalInput
-    }
-    val nextCursor =
-      if (older) {
-        if (state.terminalHistoryCursor < 0) history.lastIndex
-        else (state.terminalHistoryCursor - 1).coerceAtLeast(0)
-      } else {
-        if (state.terminalHistoryCursor < 0) -1
-        else if (state.terminalHistoryCursor >= history.lastIndex) -1
-        else state.terminalHistoryCursor + 1
-      }
-    val nextText =
-      if (nextCursor in history.indices) history[nextCursor]
-      else terminalDraftBySession[sessionId].orEmpty()
-    terminalInputBySession[sessionId] = nextText
-    terminalCursorBySession[sessionId] = nextCursor
-    _uiState.update { it.copy(terminalInput = nextText, terminalHistoryCursor = nextCursor) }
-  }
-
-  fun clearTerminal() {
-    val activeId = _uiState.value.activeTerminalSessionId
-    terminalBuffersBySession[activeId] = emptyList()
-    _uiState.update { it.copy(terminalEntries = emptyList()) }
-  }
-
-  fun createTerminalSession() {
-    val ws = _uiState.value.workspace
-    val prevId = _uiState.value.activeTerminalSessionId
-    terminalBuffersBySession[prevId] = _uiState.value.terminalEntries
-    terminalInputBySession[prevId] = _uiState.value.terminalInput
-    terminalHistoryBySession[prevId] = _uiState.value.terminalHistory
-    terminalCursorBySession[prevId] = _uiState.value.terminalHistoryCursor
-
-    val created = terminalEngine.createSession(ws)
-    val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
-    val banner =
-      TerminalEntry(
-        id = terminalIdGen.getAndIncrement(),
-        timestamp = ts,
-        promptPrefix = "dev@edgecode:${created.promptPath}$",
-        command = "pwd",
-        output = "New Linux shell session '${created.title}' started in ${terminalEngine.currentDirPath(created.id)}",
-        kind = TerminalEntryKind.SYSTEM,
-      )
-    terminalBuffersBySession[created.id] = listOf(banner)
-    terminalInputBySession[created.id] = ""
-    terminalHistoryBySession[created.id] = emptyList()
-    terminalCursorBySession[created.id] = -1
-
-    _uiState.update {
-      it.copy(
-        activeTerminalSessionId = created.id,
-        terminalSessions = terminalEngine.listSessionTabs(ws),
-        terminalEntries = listOf(banner),
-        terminalInput = "",
-        terminalPromptPath = created.promptPath,
-        terminalHistory = emptyList(),
-        terminalHistoryCursor = -1,
-        terminalLiveOutput = "",
-        terminalRunningCommand = null,
-        isTerminalBusy = false,
-      )
-    }
-  }
-
-  fun switchTerminalSession(sessionId: String) {
-    val currentId = _uiState.value.activeTerminalSessionId
-    if (currentId == sessionId) return
-    val ws = _uiState.value.workspace
-    terminalBuffersBySession[currentId] = _uiState.value.terminalEntries
-    terminalInputBySession[currentId] = _uiState.value.terminalInput
-    terminalHistoryBySession[currentId] = _uiState.value.terminalHistory
-    terminalCursorBySession[currentId] = _uiState.value.terminalHistoryCursor
-
-    if (!terminalEngine.switchSession(sessionId)) return
-    val tabs = terminalEngine.listSessionTabs(ws)
-    val targetTab = tabs.firstOrNull { it.id == sessionId }
-    _uiState.update {
-      it.copy(
-        activeTerminalSessionId = sessionId,
-        terminalSessions = tabs,
-        terminalEntries = terminalBuffersBySession[sessionId].orEmpty(),
-        terminalInput = terminalInputBySession[sessionId].orEmpty(),
-        terminalPromptPath = targetTab?.promptPath ?: terminalEngine.currentPromptPath(ws, sessionId),
-        terminalHistory = terminalHistoryBySession[sessionId].orEmpty(),
-        terminalHistoryCursor = terminalCursorBySession[sessionId] ?: -1,
-        isTerminalBusy = targetTab?.isBusy == true,
-        terminalLiveOutput = "",
-        terminalRunningCommand = null,
-      )
-    }
-  }
-
-  fun closeTerminalSession(sessionId: String) {
-    val ws = _uiState.value.workspace
-    val nextActive = terminalEngine.closeSession(sessionId)
-    terminalBuffersBySession.remove(sessionId)
-    terminalInputBySession.remove(sessionId)
-    terminalHistoryBySession.remove(sessionId)
-    terminalCursorBySession.remove(sessionId)
-    val tabs = terminalEngine.listSessionTabs(ws)
-    val activeTab = tabs.firstOrNull { it.id == nextActive }
-    _uiState.update {
-      it.copy(
-        activeTerminalSessionId = nextActive,
-        terminalSessions = tabs,
-        terminalEntries = terminalBuffersBySession[nextActive].orEmpty(),
-        terminalInput = terminalInputBySession[nextActive].orEmpty(),
-        terminalPromptPath = activeTab?.promptPath ?: terminalEngine.currentPromptPath(ws, nextActive),
-        terminalHistory = terminalHistoryBySession[nextActive].orEmpty(),
-        terminalHistoryCursor = terminalCursorBySession[nextActive] ?: -1,
-        isTerminalBusy = activeTab?.isBusy == true,
-        terminalLiveOutput = "",
-        terminalRunningCommand = null,
-      )
-    }
-  }
-
-  fun interruptTerminalCommand() {
-    val activeId = _uiState.value.activeTerminalSessionId
-    if (terminalEngine.interruptSession(activeId)) {
-      _uiState.update { it.copy(statusMessage = "Sent SIGINT (^C) to running process") }
-    }
-  }
-
-  fun sendTerminalStdin(inputLine: String) {
-    val activeId = _uiState.value.activeTerminalSessionId
-    if (terminalEngine.sendStdin(inputLine, activeId)) {
-      _uiState.update { state ->
-        val appended =
-          if (state.terminalLiveOutput.isBlank()) "> $inputLine"
-          else "${state.terminalLiveOutput}\n> $inputLine"
-        state.copy(terminalLiveOutput = appended)
-      }
-    }
-  }
-
-  fun dismissTerminalQuickEdit() {
-    _uiState.update { it.copy(terminalQuickEdit = null) }
-  }
-
-  fun saveTerminalQuickEditFile(
-    filePath: String,
-    newContent: String,
-  ) {
-    viewModelScope.launch {
-      val file = File(filePath)
-      runCatching {
-        withContext(Dispatchers.IO) {
-          file.parentFile?.mkdirs()
-          file.writeText(newContent, Charsets.UTF_8)
-        }
-      }.onSuccess {
-        val ws = _uiState.value.workspace
-        if (ws != null) {
-          val wsDir = File(projectDirManager.projectsDir, ws.scriptName).canonicalFile
-          if (file.canonicalPath.startsWith(wsDir.canonicalPath + "/")) {
-            val rel = file.canonicalFile.relativeTo(wsDir).path.replace('\\', '/')
-            val existing = ws.files.any { it.path == rel }
-            val nextFiles =
-              if (existing) {
-                ws.files.map { wf -> if (wf.path == rel) wf.copy(content = newContent) else wf }
-              } else {
-                ws.files +
-                  WorkerFile(
-                    path = rel,
-                    content = newContent,
-                    originalContent = "",
-                    contentType = MultipartWorkerParser.inferModuleMimeType(rel),
-                    isEntryPoint = false,
-                  )
-              }
-            val organized = ProjectDirectoryManager.organizeWorkspaceFiles(nextFiles)
-            val updatedWs = ws.copy(files = organized, hasModuleSetChanged = true)
-            _uiState.update { state ->
-              val updatedFields =
-                state.editorFieldValues.toMutableMap().apply {
-                  put(rel, TextFieldValue(newContent))
-                }
-              state.copy(
-                workspace = updatedWs,
-                editorFieldValues = updatedFields,
-                editorRevision = state.editorRevision + 1L,
-                terminalQuickEdit = null,
-                statusMessage = "Saved ${file.name}",
-              )
-            }
-            return@launch
-          }
-        }
-        _uiState.update {
-          it.copy(
-            terminalQuickEdit = null,
-            statusMessage = "Saved ${file.name}",
-          )
-        }
-      }.onFailure { err ->
-        _uiState.update {
-          it.copy(statusMessage = "Save failed: ${err.localizedMessage ?: "error"}")
-        }
-      }
-    }
-  }
-
-  fun runActiveFileInTerminal() {
-    flushAutoSaveNow()
-    val state = _uiState.value
-    val ws = state.workspace ?: return
-    val targetPath =
-      state.activeFile?.takeUnless { it.isVirtualReadOnly }?.path
-        ?: ws.entryModulePath
-    val cmd =
-      if (targetPath.isNotBlank()) {
-        val quoted = if (targetPath.contains(' ')) "\"$targetPath\"" else targetPath
-        "run $quoted"
-      } else {
-        "run"
-      }
-    _uiState.update {
-      it.copy(
-        showHomeTerminal = false,
-        projectMode = ProjectMode.CONSOLE,
-        showBottomPanel = true,
-        activeBottomTab = BottomPanelTab.TERMINAL,
-      )
-    }
-    runTerminalCommand(cmd)
-  }
-
-  fun runTerminalCommand(rawCommand: String = _uiState.value.terminalInput) {
-    val cmd = rawCommand.trim()
-    if (cmd.isEmpty()) return
-    val currentState = _uiState.value
-    if (currentState.isTerminalBusy) return
-    val sessionId = currentState.activeTerminalSessionId
-    val promptSnapshot = "dev@edgecode:${terminalEngine.currentPromptPath(currentState.workspace, sessionId)}$"
-    val nextHistory =
-      if (currentState.terminalHistory.lastOrNull() == cmd) currentState.terminalHistory
-      else (currentState.terminalHistory + cmd).takeLast(100)
-    terminalHistoryBySession[sessionId] = nextHistory
-    terminalInputBySession[sessionId] = ""
-    terminalCursorBySession[sessionId] = -1
-    terminalDraftBySession[sessionId] = ""
-
-    _uiState.update { state ->
-      val keepHomeOverlay = state.workspace == null || state.showHomeTerminal
-      state.copy(
-        terminalInput = "",
-        terminalHistory = nextHistory,
-        terminalHistoryCursor = -1,
-        isTerminalBusy = true,
-        terminalRunningCommand = cmd,
-        terminalLiveOutput = "",
-        terminalSessions = terminalEngine.listSessionTabs(state.workspace),
-        projectMode = if (keepHomeOverlay) state.projectMode else ProjectMode.CONSOLE,
-        showBottomPanel = if (keepHomeOverlay) state.showBottomPanel else true,
-        activeBottomTab = if (keepHomeOverlay) state.activeBottomTab else BottomPanelTab.TERMINAL,
-      )
-    }
-
-    viewModelScope.launch {
-      try {
-        val result =
-          terminalEngine.execute(
-            rawInput = cmd,
-            workspace = _uiState.value.workspace,
-            account = _uiState.value.selectedAccount,
-            history = nextHistory,
-            onWranglerDeploy = {
-              if (_uiState.value.isLocalScratchpad) {
-                "Local Scratchpad mode — connect Cloudflare to deploy live."
-              } else {
-                val acc = _uiState.value.selectedAccount?.id
-                val ws = _uiState.value.workspace
-                if (acc == null || ws == null) "No active Cloudflare account or Worker."
-                else {
-                  repository.deployWorkerWorkspace(acc, ws).fold(
-                    onSuccess = {
-                      val cleanFiles = ws.files.map { f -> f.copy(originalContent = f.content) }
-                      _uiState.update { s ->
-                        s.copy(workspace = ws.copy(files = cleanFiles, hasModuleSetChanged = false))
-                      }
-                      "Deployed '${ws.scriptName}' live to ${ws.workersDevUrl ?: "Cloudflare Edge"}"
-                    },
-                    onFailure = { err -> "Deploy failed: ${err.localizedMessage}" },
-                  )
-                }
-              }
-            },
-            onWranglerTailStart = {
-              if (_uiState.value.isLocalScratchpad) {
-                "Connect Cloudflare account first to stream edge tail logs."
-              } else if (_uiState.value.isTailRunning) {
-                "Live Tail already streaming below."
-              } else {
-                val acc = _uiState.value.selectedAccount?.id
-                val ws = _uiState.value.workspace
-                if (acc == null || ws == null) "Open a Worker first."
-                else {
-                  repository.startLiveTail(
-                    accountId = acc,
-                    scriptName = ws.scriptName,
-                    onTailEvent = { raw ->
-                      val evTs = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
-                      _uiState.update { s ->
-                        val nextTail = (s.tailLogs + ConsoleLogEntry(evTs, "TAIL", raw)).takeLast(120)
-                        val nextTerm =
-                          (s.terminalEntries +
-                            TerminalEntry(
-                              id = terminalIdGen.getAndIncrement(),
-                              timestamp = evTs,
-                              promptPrefix = "tail",
-                              command = "edge event",
-                              output = raw,
-                              kind = TerminalEntryKind.WRANGLER,
-                            )).takeLast(120)
-                        terminalBuffersBySession[s.activeTerminalSessionId] = nextTerm
-                        s.copy(tailLogs = nextTail, terminalEntries = nextTerm)
-                      }
-                    },
-                    onClosed = {
-                      activeTailSession = null
-                      _uiState.update { s -> s.copy(isTailRunning = false) }
-                    },
-                  ).fold(
-                    onSuccess = { session ->
-                      activeTailSession = session
-                      _uiState.update { s -> s.copy(isTailRunning = true) }
-                      "Connected WebSocket Live Tail for '${ws.scriptName}' (run 'wrangler tail stop' to close)"
-                    },
-                    onFailure = { err -> "Live Tail failed: ${err.localizedMessage}" },
-                  )
-                }
-              }
-            },
-            onWranglerTailStop = {
-              stopTailIfRunning()
-              "Stopped Live Tail session."
-            },
-            onWranglerRollback = { versionId ->
-              val acc = _uiState.value.selectedAccount?.id
-              val ws = _uiState.value.workspace
-              if (acc == null || ws == null) "Connect Cloudflare and open a Worker first."
-              else {
-                repository.rollbackToVersion(acc, ws.scriptName, versionId).fold(
-                  onSuccess = { "Rolled back '${ws.scriptName}' to version $versionId" },
-                  onFailure = { err -> "Rollback failed: ${err.localizedMessage}" },
-                )
-              }
-            },
-            onGitCommand = { args -> executeTerminalGitCommand(args) },
-            sessionId = sessionId,
-            onLiveOutput = { chunk ->
-              _uiState.update { s ->
-                if (s.activeTerminalSessionId == sessionId) {
-                  s.copy(terminalLiveOutput = chunk)
-                } else s
-              }
-            },
-          )
-
-        val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
-        val existingEntries = terminalBuffersBySession[sessionId] ?: _uiState.value.terminalEntries
-        val updatedEntries =
-          if (result.clearedScreen) emptyList()
-          else {
-            val newEntry =
-              TerminalEntry(
-                id = terminalIdGen.getAndIncrement(),
-                timestamp = ts,
-                promptPrefix = promptSnapshot,
-                command = cmd,
-                output = result.output,
-                isError = result.isError,
-                exitCode = result.exitCode,
-                kind = result.kind,
-                httpMeta = result.httpMeta,
-              )
-            (existingEntries + newEntry).takeLast(150)
-          }
-        terminalBuffersBySession[sessionId] = updatedEntries
-
-        _uiState.update { state ->
-          var nextWs = state.workspace
-          var nextFields = state.editorFieldValues
-          if (result.updatedWorkspaceFiles != null && nextWs != null) {
-            nextWs =
-              nextWs.copy(
-                files = result.updatedWorkspaceFiles,
-                hasModuleSetChanged = true,
-              )
-            nextFields =
-              result.updatedWorkspaceFiles.associate { f ->
-                f.path to (nextFields[f.path]?.takeIf { it.text == f.content } ?: TextFieldValue(f.content))
-              }
-          }
-          val isActiveSession = state.activeTerminalSessionId == sessionId
-          state.copy(
-            workspace = nextWs,
-            editorFieldValues = nextFields,
-            editorRevision = state.editorRevision + 1L,
-            diagnostics = nextWs?.files?.flatMap { CodeAnalyzer.analyzeFile(it) } ?: state.diagnostics,
-            terminalEntries = if (isActiveSession) updatedEntries else state.terminalEntries,
-            terminalPromptPath =
-              if (isActiveSession) terminalEngine.currentPromptPath(nextWs, sessionId)
-              else state.terminalPromptPath,
-            terminalSessions = terminalEngine.listSessionTabs(nextWs),
-            isTerminalBusy = if (isActiveSession) false else state.isTerminalBusy,
-            terminalLiveOutput = if (isActiveSession) "" else state.terminalLiveOutput,
-            terminalRunningCommand = if (isActiveSession) null else state.terminalRunningCommand,
-          )
-        }
-
-        if (!result.openTabRequest.isNullOrBlank()) {
-          val target = result.openTabRequest
-          val match = _uiState.value.workspace?.files?.firstOrNull { it.path == target || it.fileName == target }
-          if (match != null) openFileTab(match.path)
-        }
-
-        result.editFileRequest?.let { file ->
-          val content =
-            withContext(Dispatchers.IO) {
-              if (file.exists() && file.isFile) runCatching { file.readText(Charsets.UTF_8) }.getOrDefault("")
-              else ""
-            }
-          _uiState.update {
-            it.copy(
-              terminalQuickEdit =
-                TerminalQuickEditTarget(
-                  filePath = file.absolutePath,
-                  displayName = file.name,
-                  content = content,
-                ),
-            )
-          }
-        }
-
-        if (!result.openProjectRequest.isNullOrBlank()) {
-          val reqName = result.openProjectRequest
-          val ramMatch =
-            _uiState.value.ramWorkspaces.firstOrNull {
-              it.workingWorkspace.scriptName.equals(reqName, ignoreCase = true)
-            }
-          if (ramMatch != null) {
-            _uiState.update { it.copy(showHomeTerminal = false) }
-            openRamWorkspace(ramMatch.key)
-          } else {
-            val dir = File(projectDirManager.projectsDir, reqName)
-            if (dir.exists() && dir.isDirectory) {
-              _uiState.update { it.copy(showHomeTerminal = false) }
-              createNewWorker(reqName, WorkerTemplate.HELLO_FETCH)
-            } else {
-              _uiState.update { it.copy(statusMessage = "Project '$reqName' not found") }
-            }
-          }
-        }
-
-        if (!result.importZipPathRequest.isNullOrBlank()) {
-          val zipFile = File(result.importZipPathRequest)
-          if (zipFile.exists()) {
-            _uiState.update { it.copy(showHomeTerminal = false) }
-            inspectZipForImport(Uri.fromFile(zipFile), ZipImportTargetMode.NEW_PROJECT)
-          }
-        }
-
-        if (result.httpMeta != null) {
-          appendLog(
-            if (result.httpMeta.statusCode in 200..399) "HTTP" else "WARN",
-            "${result.httpMeta.method} ${result.httpMeta.url} -> ${result.httpMeta.statusCode} (${result.httpMeta.durationMs}ms)",
-          )
-        }
-      } catch (ce: CancellationException) {
-        throw ce
-      } catch (t: Throwable) {
-        val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
-        val existingEntries = terminalBuffersBySession[sessionId] ?: _uiState.value.terminalEntries
-        val errEntry =
-          TerminalEntry(
-            id = terminalIdGen.getAndIncrement(),
-            timestamp = ts,
-            promptPrefix = promptSnapshot,
-            command = cmd,
-            output = t.localizedMessage ?: "Command execution failed",
-            isError = true,
-            exitCode = 1,
-            kind = TerminalEntryKind.ERROR,
-          )
-        val updatedEntries = (existingEntries + errEntry).takeLast(150)
-        terminalBuffersBySession[sessionId] = updatedEntries
-        _uiState.update { state ->
-          if (state.activeTerminalSessionId == sessionId) {
-            state.copy(
-              terminalEntries = updatedEntries,
-              isTerminalBusy = false,
-              terminalLiveOutput = "",
-              terminalRunningCommand = null,
-            )
-          } else state
-        }
-      } finally {
-        _uiState.update { state ->
-          if (state.activeTerminalSessionId == sessionId && state.isTerminalBusy) {
-            state.copy(
-              isTerminalBusy = false,
-              terminalLiveOutput = "",
-              terminalRunningCommand = null,
-              terminalSessions = terminalEngine.listSessionTabs(state.workspace),
-            )
-          } else state
-        }
-      }
-    }
-  }
-
-  private fun appendTerminalWelcome(ws: WorkerWorkspace) {
-    val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
-    val urlHint = ws.workersDevUrl ?: "(Scratchpad offline — pass any https:// URL to curl)"
-    val welcome =
-      TerminalEntry(
-        id = terminalIdGen.getAndIncrement(),
-        timestamp = ts,
-        promptPrefix = "dev@edgecode:~/${ws.scriptName}$",
-        command = "echo \$BASE_URL && help --quick",
-        output =
-          "Worker: ${ws.scriptName}\nBASE_URL: $urlHint\nShell: Lightweight Linux (/system/bin/sh + Toybox + zip/unzip + curl/wget + jq + wrangler + git)\nTip: Run 'sysinfo' or 'pkg' to inspect installed Linux tools, or 'nano <file>' to edit.",
-        kind = TerminalEntryKind.SYSTEM,
-      )
-    val activeId = terminalEngine.getActiveSessionId()
-    _uiState.update { state ->
-      if (state.terminalEntries.isEmpty()) {
-        terminalBuffersBySession[activeId] = listOf(welcome)
-        state.copy(
-          terminalEntries = listOf(welcome),
-          terminalSessions = terminalEngine.listSessionTabs(ws),
-        )
-      } else state
-    }
-  }
-
-  private suspend fun executeTerminalGitCommand(args: List<String>): ShellExecutionResult {
-    if (args.isEmpty()) {
-      return ShellExecutionResult(
-        output = "Usage: git <status|branch|checkout|add|reset|diff|commit|push|pull|log|clone|whoami>",
-        kind = TerminalEntryKind.SYSTEM,
-      )
-    }
-    val sub = args[0].lowercase()
-    val state = _uiState.value
-    val linked = state.linkedGitRepo
-    val selected = state.selectedGitHubRepo
-    val branch = linked?.branch ?: state.selectedGitHubBranch
-
-    return when (sub) {
-      "whoami" -> {
-        val creds = state.gitHubCreds
-        if (creds == null) {
-          ShellExecutionResult("Not signed into GitHub. Open Auth or Source Control -> Connect GitHub.", kind = TerminalEntryKind.SYSTEM)
-        } else {
-          ShellExecutionResult(
-            "User: @${creds.login}\nAuth: ${creds.method.name}\nScopes: ${creds.scopes.ifBlank { "(default)" }}\nRate Limit: ${state.gitHubRateLimitLabel ?: "unknown"}",
-            kind = TerminalEntryKind.SYSTEM,
-          )
-        }
-      }
-      "status" -> {
-        val header =
-          if (linked != null) "On repo ${linked.fullName} (branch $branch, HEAD ${linked.headCommitSha.take(7).ifBlank { "unborn" }})"
-          else "No remote GitHub repo linked yet (use 'git clone owner/repo' or Source Control)."
-        val changes = state.gitChangedFiles
-        val staged = changes.filter { it.isStaged }
-        val unstaged = changes.filterNot { it.isStaged }
-        val out = buildString {
-          appendLine(header)
-          if (state.localGitCommits.isNotEmpty()) {
-            appendLine("Your branch is ahead of 'origin/$branch' by ${state.localGitCommits.size} commit(s).")
-          }
-          if (changes.isEmpty()) {
-            append("nothing to commit, working tree clean")
-          } else {
-            if (staged.isNotEmpty()) {
-              appendLine("Changes to be committed:")
-              staged.forEach { appendLine("  [${it.status.name.first()}] ${it.path}") }
-            }
-            if (unstaged.isNotEmpty()) {
-              appendLine("Changes not staged for commit:")
-              unstaged.forEach { appendLine("  [${it.status.name.first()}] ${it.path}") }
-            }
-          }
-        }.trimEnd()
-        ShellExecutionResult(out, kind = TerminalEntryKind.SYSTEM)
-      }
-      "branch" -> {
-        val flag = args.getOrNull(1)
-        if (flag == "-b" || flag == "--create") {
-          val newName = args.getOrNull(2).orEmpty().trim()
-          if (newName.isBlank()) {
-            return ShellExecutionResult("Usage: git branch -b <new-branch>", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
-          }
-          createGitHubBranch(newName)
-          ShellExecutionResult("Creating branch '$newName' from '$branch'…", kind = TerminalEntryKind.SYSTEM)
-        } else if (!flag.isNullOrBlank() && !flag.startsWith("-")) {
-          createGitHubBranch(flag)
-          ShellExecutionResult("Creating branch '$flag' from '$branch'…", kind = TerminalEntryKind.SYSTEM)
-        } else {
-          val names = state.gitHubBranches.map { it.name }.ifEmpty { listOf(branch) }
-          val out = names.joinToString("\n") { if (it == branch) "* $it" else "  $it" }
-          ShellExecutionResult(out, kind = TerminalEntryKind.SYSTEM)
-        }
-      }
-      "checkout", "switch" -> {
-        val targetBranch = args.getOrNull(1).orEmpty().trim()
-        if (targetBranch.isBlank()) {
-          ShellExecutionResult("Usage: git $sub <branch>", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
-        } else if (selected == null) {
-          ShellExecutionResult("Select or clone a repository first.", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
-        } else {
-          selectGitHubBranch(targetBranch)
-          ShellExecutionResult("Switched branch view to '$targetBranch' on ${selected.fullName}", kind = TerminalEntryKind.SYSTEM)
-        }
-      }
-      "add" -> {
-        val target = args.getOrNull(1) ?: "."
-        if (target == "." || target == "-A" || target == "--all") {
-          stageAllGitChanges()
-          ShellExecutionResult("Staged all modified files.", kind = TerminalEntryKind.SYSTEM)
-        } else {
-          _uiState.update { s -> s.copy(gitUnstagedExcludedPaths = s.gitUnstagedExcludedPaths - target) }
-          ShellExecutionResult("Staged '$target'.", kind = TerminalEntryKind.SYSTEM)
-        }
-      }
-      "reset" -> {
-        val target = args.getOrNull(1) ?: "."
-        if (target == "." || target == "--all") {
-          unstageAllGitChanges()
-          ShellExecutionResult("Unstaged all working changes.", kind = TerminalEntryKind.SYSTEM)
-        } else {
-          _uiState.update { s -> s.copy(gitUnstagedExcludedPaths = s.gitUnstagedExcludedPaths + target) }
-          ShellExecutionResult("Unstaged '$target'.", kind = TerminalEntryKind.SYSTEM)
-        }
-      }
-      "diff" -> {
-        val changes = state.gitChangedFiles
-        if (changes.isEmpty()) {
-          ShellExecutionResult("(no working tree diff)", kind = TerminalEntryKind.SYSTEM)
-        } else {
-          val diffText = buildString {
-            changes.take(8).forEach { ch ->
-              appendLine("diff --git a/${ch.path} b/${ch.path}")
-              val hunks = CodeFormatter.computeLineDiff(ch.baseContent, ch.currentContent).filter { it.type != DiffType.UNCHANGED }
-              hunks.take(25).forEach { line ->
-                val sign = if (line.type == DiffType.ADDED) "+" else "-"
-                appendLine("$sign ${line.text}")
-              }
-            }
-          }.trimEnd()
-          ShellExecutionResult(diffText, kind = TerminalEntryKind.SYSTEM)
-        }
-      }
-      "commit" -> {
-        val mIndex = args.indexOfFirst { it == "-m" || it == "--message" }
-        val msg =
-          if (mIndex >= 0 && mIndex + 1 < args.size) args.drop(mIndex + 1).joinToString(" ").trim()
-          else args.drop(1).joinToString(" ").trim()
-        if (msg.isBlank()) {
-          return ShellExecutionResult("Usage: git commit -m \"your commit message\"", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
-        }
-        val stagedCount = state.gitChangedFiles.count { it.isStaged }
-        if (stagedCount == 0) {
-          return ShellExecutionResult("No staged changes to commit. Run 'git add .' first.", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
-        }
-        commitStagedChangesLocally(msg)
-        ShellExecutionResult("[$branch] $msg ($stagedCount file(s) committed locally; run 'git push' to sync)", kind = TerminalEntryKind.SYSTEM)
-      }
-      "push" -> {
-        if (state.gitHubCreds == null) {
-          return ShellExecutionResult("git push: authenticate GitHub (OAuth or PAT) first.", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
-        }
-        val owner = linked?.owner ?: selected?.owner?.login
-        val repoName = linked?.repoName ?: selected?.name
-        if (owner == null || repoName == null) {
-          return ShellExecutionResult("git push: no linked remote repository.", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
-        }
-        pushQueuedAndActiveChangesToGitHub()
-        ShellExecutionResult("Pushing commits & staged edits to $owner/$repoName ($branch)…", kind = TerminalEntryKind.SYSTEM)
-      }
-      "pull" -> {
-        if (linked == null && selected == null) {
-          return ShellExecutionResult("git pull: link or clone a repository first.", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
-        }
-        val targetSlug = linked?.fullName ?: selected?.fullName.orEmpty()
-        cloneGitHubRepository(targetSlug, branch, mergeIntoCurrentWorker = true)
-        ShellExecutionResult("Pulling latest files from $targetSlug@$branch…", kind = TerminalEntryKind.SYSTEM)
-      }
-      "clone" -> {
-        val urlArg = args.getOrNull(1)
-        if (urlArg.isNullOrBlank()) {
-          return ShellExecutionResult("Usage: git clone <github-url|owner/repo> [branch]", isError = true, exitCode = 1, kind = TerminalEntryKind.ERROR)
-        }
-        val branchArg = args.getOrNull(2)
-        cloneGitHubRepository(urlArg, branchArg, mergeIntoCurrentWorker = false)
-        ShellExecutionResult("Cloning $urlArg${branchArg?.let { "@$it" }.orEmpty()} into workspace…", kind = TerminalEntryKind.SYSTEM)
-      }
-      "log" -> {
-        val out = buildString {
-          state.localGitCommits.reversed().forEach { lc ->
-            appendLine("commit ${lc.id} (LOCAL / UNPUSHED)")
-            appendLine("Author: ${lc.author}  Time: ${lc.timestamp}")
-            appendLine("    ${lc.message}\n")
-          }
-          state.gitHubCommits.take(8).forEach { rc ->
-            appendLine("commit ${rc.sha.take(7)} (origin/$branch)")
-            appendLine("Author: ${rc.commit.author?.name.orEmpty()}")
-            appendLine("    ${rc.commit.message.lineSequence().firstOrNull().orEmpty()}\n")
-          }
-        }.trimEnd().ifBlank { "(no commits fetched yet — open or clone a repo)" }
-        ShellExecutionResult(out, kind = TerminalEntryKind.SYSTEM)
-      }
-      else ->
-        ShellExecutionResult(
-          output = "git: '$sub' is not supported. Run 'git' with no arguments for usage.",
-          isError = true,
-          exitCode = 1,
-          kind = TerminalEntryKind.ERROR,
-        )
-    }
-  }
-
-  // Diff Viewer & 3-Way Merge Conflict Resolver Actions
   private data class WorkspaceMergeOutput(
     val mergedEditable: List<WorkerFile>,
     val virtualFiles: List<WorkerFile>,
@@ -8117,7 +7221,6 @@ jobs:
         statusMessage = "Applied merged changes across ${conflicts.size} resolved file(s)",
       )
     }
-    terminalEngine.syncWorkspaceToDisk(nextWs)
     appendLog("INFO", "Resolved merge conflicts for ${conflicts.joinToString { it.path }}")
   }
 
@@ -8362,51 +7465,6 @@ jobs:
     }
   }
 
-  fun saveTerminalOutputToWorkspaceFile(fileName: String, content: String) {
-    val clean = fileName.trim().removePrefix("/")
-    if (clean.isBlank()) return
-    val ws = _uiState.value.workspace
-    if (ws == null) {
-      addModuleFile(clean)
-      updateEditorValue(TextFieldValue(content))
-      return
-    }
-    val exists = ws.files.any { it.path == clean }
-    val nextFiles =
-      if (exists) {
-        ws.files.map { if (it.path == clean) it.copy(content = content) else it }
-      } else {
-        ws.files +
-          WorkerFile(
-            path = clean,
-            content = content,
-            originalContent = "",
-            contentType = MultipartWorkerParser.inferModuleMimeType(clean),
-            isEntryPoint = false,
-          )
-      }
-    val nextWs = ws.copy(files = nextFiles, hasModuleSetChanged = true)
-    val ramKey = activeWorkspaceKey()
-    _uiState.update { state ->
-      val nextFields = state.editorFieldValues + (clean to TextFieldValue(content))
-      val nextTabs = (state.openTabPaths + clean).distinct()
-      if (ramKey != null) {
-        ramDb.updateWorkspace(ramKey) { rec ->
-          rec.copy(workingWorkspace = nextWs, openTabPaths = nextTabs, activeFilePath = clean, fieldValues = nextFields)
-        }
-      }
-      state.copy(
-        workspace = nextWs,
-        openTabPaths = nextTabs,
-        activeFilePath = clean,
-        editorFieldValues = nextFields,
-        editorRevision = state.editorRevision + 1L,
-        ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else state.ramDbStats,
-        statusMessage = "Saved terminal output -> $clean",
-      )
-    }
-  }
-
   fun dismissDraftBanner() {
     _uiState.update { it.copy(restoredDraftBanner = null) }
   }
@@ -8593,7 +7651,6 @@ jobs:
     ramDb.setActiveWorkspaceKey(draft.workspaceKey)
     val ws = record.workingWorkspace
     val diags = rebuildDiagnosticsFull(ws.files)
-    terminalEngine.syncWorkspaceToDisk(ws)
     val hasDirty = ws.files.any { it.isDirty }
     val banner =
       if (hasDirty && draft.savedAtEpochMs > 0L) {
@@ -8618,10 +7675,8 @@ jobs:
         activeWorkspaceHasPendingConfig = record.hasPendingChanges,
         ramDbStats = ramDb.computeStats(draft.workspaceKey),
         ramWorkspaces = ramDb.listWorkspaces(),
-        terminalPromptPath = terminalEngine.currentPromptPath(ws),
       )
     }
-    appendTerminalWelcome(ws)
     appendLog("INFO", "Restored '${ws.scriptName}' from project directory & auto-save")
     syncPeriodicAutoSaveLoop()
   }

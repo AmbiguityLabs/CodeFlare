@@ -4,6 +4,9 @@ import android.util.Base64
 import java.net.URLEncoder
 import java.util.UUID
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import org.json.JSONArray
+import org.json.JSONObject
+import org.json.JSONTokener
 
 enum class ApiAuthType(val label: String) {
   NONE("None"),
@@ -591,6 +594,19 @@ object ApiRequestUtils {
         code != null && code in 200..299
       }
     }
+  }
+
+  fun prettyPrintIfJson(raw: String): String {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return raw
+    return runCatching {
+      val parsed = JSONTokener(trimmed).nextValue()
+      when (parsed) {
+        is JSONObject -> parsed.toString(2)
+        is JSONArray -> parsed.toString(2)
+        else -> raw
+      }
+    }.getOrDefault(raw)
   }
 }
 

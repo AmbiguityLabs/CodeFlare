@@ -41,11 +41,13 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Difference
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
+import androidx.compose.material.icons.outlined.Dvr
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
@@ -62,7 +64,6 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Tag
-import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material.icons.outlined.Visibility
@@ -133,7 +134,6 @@ import com.example.ui.components.EdgeBottomDockItem
 import com.example.ui.components.GitHubAndDiffPanel
 import com.example.ui.components.IdeCoreSheetTab
 import com.example.ui.components.IdeSearchAndHistorySheet
-import com.example.ui.components.LinuxTerminalPane
 import com.example.ui.components.LiveTailView
 import com.example.ui.components.NewDirectoryDialog
 import com.example.ui.components.NewModuleFileDialog
@@ -651,9 +651,6 @@ fun IdeWorkspaceScreen(
           renameSymbolInitial = ""
           showRenameSymbolDialog = true
         },
-        PaletteCommand("Run Active File", "RUN") {
-          viewModel.runActiveFileInTerminal()
-        },
         PaletteCommand("Code Mode", "MODE") {
           viewModel.setProjectMode(ProjectMode.CODE)
         },
@@ -676,9 +673,6 @@ fun IdeWorkspaceScreen(
         },
         PaletteCommand("Project Config", "CONFIG") {
           viewModel.setProjectMode(ProjectMode.CONFIG)
-        },
-        PaletteCommand("Terminal", "SHELL") {
-          viewModel.toggleBottomPanel(BottomPanelTab.TERMINAL)
         },
         PaletteCommand("Problems (${uiState.diagnostics.size})", "LINT") {
           viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS)
@@ -1066,7 +1060,6 @@ fun IdeWorkspaceScreen(
                       },
                       onOpenLocalHistory = { activeIdeSheetTab = IdeCoreSheetTab.LOCAL_HISTORY },
                       onOpenProjectSearch = { activeIdeSheetTab = IdeCoreSheetTab.FIND_IN_FILES },
-                      onRunActiveFile = viewModel::runActiveFileInTerminal,
                       editorCommandRequest = editorCommandRequest,
                       modifier = Modifier.fillMaxSize(),
                     )
@@ -1166,7 +1159,7 @@ fun IdeWorkspaceScreen(
                   ),
                   EdgeBottomDockItem(
                     label = "Console",
-                    icon = Icons.Outlined.Terminal,
+                    icon = Icons.Outlined.Dvr,
                     selected = uiState.projectMode == ProjectMode.CONSOLE,
                     testTag = "project_nav_console",
                     badgeText =
@@ -1234,7 +1227,7 @@ fun IdeWorkspaceScreen(
                   add(
                     EdgeMenuQuickAction(
                       label = "Palette",
-                      icon = Icons.Outlined.Terminal,
+                      icon = Icons.Outlined.Bolt,
                       onClick = {
                         overflowMenuOpen = false
                         showCommandPalette = true
@@ -1309,7 +1302,7 @@ fun IdeWorkspaceScreen(
             if (!isExpanded) {
               EdgeMenuItem(
                 label = "Command Palette",
-                icon = Icons.Outlined.Terminal,
+                icon = Icons.Outlined.Bolt,
                 badgeText = "⌘K",
                 onClick = {
                   overflowMenuOpen = false
@@ -1782,9 +1775,9 @@ private fun ProjectConsoleModeWorkspace(
   val palette = LocalIdePalette.current
   val activeTab =
     when (uiState.activeBottomTab) {
-      BottomPanelTab.TERMINAL, BottomPanelTab.TAIL_LOGS, BottomPanelTab.PROBLEMS, BottomPanelTab.CONSOLE ->
+      BottomPanelTab.TAIL_LOGS, BottomPanelTab.PROBLEMS, BottomPanelTab.CONSOLE ->
         uiState.activeBottomTab
-      else -> BottomPanelTab.TERMINAL
+      else -> BottomPanelTab.TAIL_LOGS
     }
 
   Column(modifier = Modifier.fillMaxSize().background(palette.chromeBg)) {
@@ -1798,20 +1791,13 @@ private fun ProjectConsoleModeWorkspace(
       verticalAlignment = Alignment.CenterVertically,
     ) {
       ModeSegmentChip(
-        label = "Terminal",
-        selected = activeTab == BottomPanelTab.TERMINAL,
-        tag = "console_segment_terminal",
-        onClick = { viewModel.toggleBottomPanel(BottomPanelTab.TERMINAL) },
-        modifier = Modifier.weight(1f),
-      )
-      ModeSegmentChip(
         label = "Live Tail",
         selected = activeTab == BottomPanelTab.TAIL_LOGS,
         tag = "console_segment_tail",
         badgeText = if (uiState.isTailRunning) "LIVE" else null,
         badgeColor = EmeraldLive,
         onClick = { viewModel.toggleBottomPanel(BottomPanelTab.TAIL_LOGS) },
-        modifier = Modifier.weight(1.05f),
+        modifier = Modifier.weight(1f),
       )
       ModeSegmentChip(
         label = "Problems",
@@ -1820,14 +1806,14 @@ private fun ProjectConsoleModeWorkspace(
         badgeText = uiState.diagnostics.size.takeIf { it > 0 }?.toString(),
         badgeColor = AmberWarn,
         onClick = { viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS) },
-        modifier = Modifier.weight(1.05f),
+        modifier = Modifier.weight(1f),
       )
       ModeSegmentChip(
         label = "Log",
         selected = activeTab == BottomPanelTab.CONSOLE,
         tag = "console_segment_log",
         onClick = { viewModel.toggleBottomPanel(BottomPanelTab.CONSOLE) },
-        modifier = Modifier.weight(0.7f),
+        modifier = Modifier.weight(0.8f),
       )
     }
 
@@ -1835,28 +1821,6 @@ private fun ProjectConsoleModeWorkspace(
 
     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
       when (activeTab) {
-        BottomPanelTab.TERMINAL ->
-          LinuxTerminalPane(
-            uiState = uiState,
-            onInputChange = viewModel::setTerminalInput,
-            onRunCommand = viewModel::runTerminalCommand,
-            onPasteText = viewModel::pasteIntoTerminal,
-            onAutocomplete = viewModel::autocompleteTerminal,
-            onRecallHistory = viewModel::recallTerminalHistory,
-            onClearTerminal = viewModel::clearTerminal,
-            onSaveEntryToFile = viewModel::saveTerminalOutputToWorkspaceFile,
-            onNotifyCopied = viewModel::showStatus,
-            onInsertToken = viewModel::insertTerminalToken,
-            onCreateSession = viewModel::createTerminalSession,
-            onSwitchSession = viewModel::switchTerminalSession,
-            onCloseSession = viewModel::closeTerminalSession,
-            onInterruptCommand = viewModel::interruptTerminalCommand,
-            onSendStdin = viewModel::sendTerminalStdin,
-            onSaveQuickEdit = viewModel::saveTerminalQuickEditFile,
-            onDismissQuickEdit = viewModel::dismissTerminalQuickEdit,
-            modifier = Modifier.fillMaxSize(),
-          )
-
         BottomPanelTab.TAIL_LOGS ->
           LiveTailView(
             uiState = uiState,

@@ -33,13 +33,7 @@ data class GitHubOAuthTokenResponse(
   val interval: Int? = null,
 )
 
-/**
- * Implements GitHub OAuth 2.0 Device Authorization Grant (RFC 8628),
- * enabling native mobile authorization without requiring a client secret.
- */
 object GitHubOAuthManager {
-  // Public GitHub CLI / native client ID supporting RFC 8628 Device Flow;
-  // users can also specify their own GitHub OAuth App Client ID in UI.
   const val DEFAULT_CLIENT_ID = "178c6fc778ccc68e1d6a"
   const val DEVICE_CODE_URL = "https://github.com/login/device/code"
   const val ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token"

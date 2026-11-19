@@ -85,13 +85,6 @@ fun BottomPanel(
   onLoadApiRequest: (ApiTesterRequest) -> Unit,
   onDeleteApiCollectionItem: (String) -> Unit,
   onClearApiHistory: () -> Unit,
-  onTerminalInputChange: (String) -> Unit,
-  onRunTerminalCommand: (String) -> Unit,
-  onPasteIntoTerminal: (String) -> Unit,
-  onAutocompleteTerminal: () -> Unit,
-  onRecallTerminalHistory: (Boolean) -> Unit,
-  onClearTerminal: () -> Unit,
-  onSaveTerminalOutputToFile: (String, String) -> Unit,
   onNotifyStatus: (String) -> Unit,
   onJumpToProblem: (String, Int) -> Unit,
   onToggleLiveTail: () -> Unit,
@@ -101,14 +94,6 @@ fun BottomPanel(
   onImportApiCollection: (String, Boolean, Boolean) -> Result<ApiImportResult> = { _, _, _ ->
     Result.failure(UnsupportedOperationException("Collection import not wired"))
   },
-  onInsertTerminalToken: (String) -> Unit = { token -> onTerminalInputChange(uiState.terminalInput + token) },
-  onCreateTerminalSession: () -> Unit = {},
-  onSwitchTerminalSession: (String) -> Unit = {},
-  onCloseTerminalSession: (String) -> Unit = {},
-  onInterruptTerminalCommand: () -> Unit = {},
-  onSendTerminalStdin: (String) -> Unit = {},
-  onSaveTerminalQuickEdit: (String, String) -> Unit = { _, _ -> },
-  onDismissTerminalQuickEdit: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
@@ -155,11 +140,6 @@ fun BottomPanel(
             modifier = Modifier.testTag("tab_api_tester"),
           )
           BottomPanelTabChip(
-            label = "Terminal",
-            selected = uiState.activeBottomTab == BottomPanelTab.TERMINAL,
-            onClick = { onSelectTab(BottomPanelTab.TERMINAL) },
-          )
-          BottomPanelTabChip(
             label = "Problems",
             selected = uiState.activeBottomTab == BottomPanelTab.PROBLEMS,
             badgeText = uiState.diagnostics.size.takeIf { it > 0 }?.toString(),
@@ -188,7 +168,7 @@ fun BottomPanel(
             imageVector =
               if (uiState.isBottomPanelExpanded) Icons.Outlined.CloseFullscreen
               else Icons.Outlined.OpenInFull,
-            contentDescription = if (uiState.isBottomPanelExpanded) "Restore panel size" else "Maximize terminal panel",
+            contentDescription = if (uiState.isBottomPanelExpanded) "Restore panel size" else "Maximize panel",
             tint = palette.textSecondary,
             modifier = Modifier.size(16.dp),
           )
@@ -258,27 +238,6 @@ fun BottomPanel(
             onCreateEnvProfile = onCreateApiEnvProfile,
             onDeleteEnvProfile = onDeleteApiEnvProfile,
             onImportCollection = onImportApiCollection,
-            modifier = Modifier.weight(1f),
-          )
-        BottomPanelTab.TERMINAL ->
-          LinuxTerminalPane(
-            uiState = uiState,
-            onInputChange = onTerminalInputChange,
-            onRunCommand = onRunTerminalCommand,
-            onPasteText = onPasteIntoTerminal,
-            onAutocomplete = onAutocompleteTerminal,
-            onRecallHistory = onRecallTerminalHistory,
-            onClearTerminal = onClearTerminal,
-            onSaveEntryToFile = onSaveTerminalOutputToFile,
-            onNotifyCopied = onNotifyStatus,
-            onInsertToken = onInsertTerminalToken,
-            onCreateSession = onCreateTerminalSession,
-            onSwitchSession = onSwitchTerminalSession,
-            onCloseSession = onCloseTerminalSession,
-            onInterruptCommand = onInterruptTerminalCommand,
-            onSendStdin = onSendTerminalStdin,
-            onSaveQuickEdit = onSaveTerminalQuickEdit,
-            onDismissQuickEdit = onDismissTerminalQuickEdit,
             modifier = Modifier.weight(1f),
           )
         BottomPanelTab.PROBLEMS ->

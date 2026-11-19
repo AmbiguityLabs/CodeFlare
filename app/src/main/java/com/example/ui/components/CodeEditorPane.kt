@@ -54,7 +54,6 @@ import androidx.compose.material.icons.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.ListAlt
 import androidx.compose.material.icons.outlined.NoteAdd
-import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Search
@@ -187,7 +186,6 @@ fun CodeEditorPane(
   onRequestSmartRename: (initialSymbol: String?) -> Unit = {},
   onOpenLocalHistory: () -> Unit = {},
   onOpenProjectSearch: () -> Unit = {},
-  onRunActiveFile: () -> Unit = {},
   editorCommandRequest: Pair<Long, String>? = null,
   modifier: Modifier = Modifier,
 ) {
@@ -477,24 +475,6 @@ fun CodeEditorPane(
             Icon(Icons.Outlined.Sync, contentDescription = "Apply Wrangler Config", tint = palette.activePillFg, modifier = Modifier.size(13.dp))
             Text("Apply Config", style = MaterialTheme.typography.labelSmall, color = palette.activePillFg, fontWeight = FontWeight.SemiBold)
           }
-        }
-      }
-
-      val extLower = activeFile.path.substringAfterLast('.', "").lowercase()
-      val isRunnableFile =
-        !activeFile.isVirtualReadOnly &&
-          extLower in setOf("js", "mjs", "cjs", "ts", "tsx", "sh", "json")
-      if (isRunnableFile) {
-        IconButton(
-          onClick = { flushThen(onRunActiveFile) },
-          modifier = Modifier.size(32.dp).testTag("run_active_file_button"),
-        ) {
-          Icon(
-            Icons.Outlined.PlayArrow,
-            contentDescription = "Run in terminal",
-            tint = EmeraldLive,
-            modifier = Modifier.size(18.dp),
-          )
         }
       }
 

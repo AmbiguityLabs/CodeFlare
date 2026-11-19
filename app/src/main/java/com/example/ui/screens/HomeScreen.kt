@@ -62,7 +62,6 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Storage
-import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Web
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
@@ -109,7 +108,6 @@ import com.example.ui.components.CloudflarePagesPanel
 import com.example.ui.components.EdgeBottomDock
 import com.example.ui.components.EdgeBottomDockItem
 import com.example.ui.components.GitHubAndDiffPanel
-import com.example.ui.components.LinuxTerminalPane
 import com.example.ui.components.NewWorkerDialog
 import com.example.ui.components.RenameWorkerDialog
 import com.example.ui.components.ZipImportPreviewDialog
@@ -207,9 +205,8 @@ fun HomeScreen(
 
   val showingGitHubOverlay = uiState.showHomeGitHubHub || (uiState.isGitHubIdeOnlyMode && uiState.workspace == null)
 
-  BackHandler(enabled = uiState.showHomeTerminal || showingGitHubOverlay || uiState.showHomeSettings) {
+  BackHandler(enabled = showingGitHubOverlay || uiState.showHomeSettings) {
     when {
-      uiState.showHomeTerminal -> viewModel.setShowHomeTerminal(false)
       uiState.showHomeSettings -> viewModel.setShowHomeSettings(false)
       uiState.isGitHubIdeOnlyMode && uiState.credentials == null -> viewModel.exitScratchpadToAuth()
       showingGitHubOverlay -> viewModel.setShowHomeGitHubHub(false)
@@ -384,99 +381,6 @@ fun HomeScreen(
         hostState = snackbarHostState,
         modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().imePadding().padding(16.dp),
       )
-    }
-    return
-  }
-
-  if (uiState.showHomeTerminal) {
-    Scaffold(
-      containerColor = palette.chromeBg,
-      snackbarHost = { SnackbarHost(snackbarHostState) },
-      topBar = {
-        Column(modifier = Modifier.background(palette.chromeBg).statusBarsPadding()) {
-          Row(
-            modifier =
-              Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-          ) {
-            IconButton(
-              onClick = { viewModel.setShowHomeTerminal(false) },
-              modifier = Modifier.testTag("home_terminal_back_button"),
-            ) {
-              Icon(
-                imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
-                contentDescription = "Back to Home",
-                tint = palette.textPrimary,
-              )
-            }
-            Column(modifier = Modifier.weight(1f)) {
-              Text(
-                text = "Linux Terminal",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = palette.textPrimary,
-              )
-              Text(
-                text = "${uiState.activeTerminalSessionId} · ${uiState.terminalPromptPath}",
-                fontFamily = JetBrainsMono,
-                fontSize = 11.sp,
-                color = palette.textMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-              )
-            }
-            Surface(
-              onClick = { viewModel.runTerminalCommand("help") },
-              shape = RoundedCornerShape(8.dp),
-              color = palette.chromeSurface,
-              border = rememberGlassBorderStroke(0.75.dp),
-            ) {
-              Text(
-                text = "help",
-                fontFamily = JetBrainsMono,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = palette.activePillFg,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-              )
-            }
-          }
-          HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
-        }
-      },
-    ) { innerPadding ->
-      Box(
-        modifier =
-          Modifier
-            .fillMaxSize()
-            .padding(innerPadding)
-            .navigationBarsPadding()
-            .imePadding(),
-      ) {
-        LinuxTerminalPane(
-          uiState = uiState,
-          onInputChange = viewModel::setTerminalInput,
-          onRunCommand = viewModel::runTerminalCommand,
-          onPasteText = viewModel::pasteIntoTerminal,
-          onAutocomplete = viewModel::autocompleteTerminal,
-          onRecallHistory = viewModel::recallTerminalHistory,
-          onClearTerminal = viewModel::clearTerminal,
-          onSaveEntryToFile = viewModel::saveTerminalOutputToWorkspaceFile,
-          onNotifyCopied = viewModel::showStatus,
-          onInsertToken = viewModel::insertTerminalToken,
-          onCreateSession = viewModel::createTerminalSession,
-          onSwitchSession = viewModel::switchTerminalSession,
-          onCloseSession = viewModel::closeTerminalSession,
-          onInterruptCommand = viewModel::interruptTerminalCommand,
-          onSendStdin = viewModel::sendTerminalStdin,
-          onSaveQuickEdit = viewModel::saveTerminalQuickEditFile,
-          onDismissQuickEdit = viewModel::dismissTerminalQuickEdit,
-          modifier = Modifier.fillMaxSize(),
-        )
-      }
     }
     return
   }
@@ -759,23 +663,6 @@ fun HomeScreen(
           }
 
           Surface(
-            onClick = { viewModel.setShowHomeTerminal(true) },
-            shape = CircleShape,
-            color = palette.chromeSurface,
-            border = rememberGlassBorderStroke(0.75.dp),
-            modifier = Modifier.size(40.dp).testTag("home_terminal_button"),
-          ) {
-            Box(contentAlignment = Alignment.Center) {
-              Icon(
-                imageVector = Icons.Outlined.Terminal,
-                contentDescription = "Open Linux Terminal",
-                tint = palette.activePillFg,
-                modifier = Modifier.size(19.dp),
-              )
-            }
-          }
-
-          Surface(
             onClick = { viewModel.setShowHomeGitHubHub(true) },
             shape = CircleShape,
             color = palette.chromeSurface,
@@ -904,7 +791,6 @@ fun HomeScreen(
               },
               onOpenSettings = { viewModel.setShowHomeSettings(true) },
               onOpenGitHubHub = { viewModel.setShowHomeGitHubHub(true) },
-              onOpenTerminal = { viewModel.setShowHomeTerminal(true) },
               onOpenRamWorkspace = viewModel::openRamWorkspace,
               onRequestRenameRamWorkspace = { rec ->
                 val isRemote = !rec.key.startsWith("local_") && !rec.isNewUnexportedWorker && !uiState.isLocalScratchpad
@@ -1059,7 +945,6 @@ private fun HomeProjectsTabContent(
   onImportBundle: () -> Unit,
   onOpenSettings: () -> Unit,
   onOpenGitHubHub: () -> Unit,
-  onOpenTerminal: () -> Unit,
   onOpenRamWorkspace: (String) -> Unit,
   onRequestRenameRamWorkspace: (RamWorkspaceRecord) -> Unit,
   onRequestDeleteRamWorkspace: (RamWorkspaceRecord) -> Unit,
@@ -1180,14 +1065,6 @@ private fun HomeProjectsTabContent(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
       ) {
-        CompactQuickChip(
-          title = "Terminal",
-          status = "Linux",
-          accent = EmeraldLive,
-          icon = Icons.Outlined.Terminal,
-          onClick = onOpenTerminal,
-          modifier = Modifier.weight(1f).testTag("home_quick_terminal_chip"),
-        )
         CompactQuickChip(
           title = "API Vault",
           status = if (uiState.credentials != null) "Active" else "Setup",
