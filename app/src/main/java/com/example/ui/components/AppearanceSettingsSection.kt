@@ -24,16 +24,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Dvr
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.CloudQueue
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.Dvr
 import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -50,7 +51,11 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import com.example.ui.screens.settings.AppearanceSubPage
 import com.example.ui.screens.settings.SettingsFoldableSection
+import com.example.ui.screens.settings.SettingsGroup
+import com.example.ui.screens.settings.SettingsHairlineDivider
+import com.example.ui.screens.settings.SettingsMenuRow
 import com.example.ui.screens.settings.SettingsToggleRow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -87,104 +92,177 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
-fun HomeAppearanceStudioContent(
+fun AppearanceHubContent(
   settings: EditorSettings,
   onUpdateSettings: ((EditorSettings) -> EditorSettings) -> Unit,
+  onOpenSubPage: (AppearanceSubPage) -> Unit,
 ) {
   val palette = LocalIdePalette.current
   val activeStyle = UiStyleVersion.fromKey(settings.uiStyleVersion)
   val isV2 = activeStyle == UiStyleVersion.V2_MINIMAL_OLED
   val activePreset = EditorThemePreset.fromKey(settings.themePreset)
+  val dividerIndent = if (isV2) 18.dp else 56.dp
+  val blockPadding = if (isV2) 16.dp else 14.dp
 
-  Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-    Row(
-      modifier =
-        Modifier
-          .fillMaxWidth()
-          .clip(RoundedCornerShape(if (isV2) 20.dp else 10.dp))
-          .background(palette.chromeSurface)
-          .then(if (isV2) Modifier else Modifier.border(0.75.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(10.dp)))
-          .padding(4.dp),
-      horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-      UiStyleVersion.entries.forEach { styleChoice ->
-        val selectedChoice = activeStyle == styleChoice
-        val pillBg =
-          when {
-            selectedChoice -> palette.activePillBg
-            isV2 -> palette.chromeSurface
-            else -> palette.glassSurface
-          }
-        val pillFg = if (selectedChoice) palette.activePillFg else palette.textSecondary
-        Surface(
-          onClick = { onUpdateSettings { it.copy(uiStyleVersion = styleChoice.key) } },
-          shape = RoundedCornerShape(if (isV2) 999.dp else 9.dp),
-          color = pillBg,
-          border =
-            when {
-              isV2 -> null
-              selectedChoice -> BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.35f))
-              else -> BorderStroke(0.75.dp, palette.glassBorderSubtle)
-            },
+  Column(verticalArrangement = Arrangement.spacedBy(if (isV2) 16.dp else 12.dp)) {
+    SettingsGroup(label = "Theme & Style") {
+      Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = blockPadding, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Text(
+            text = "Interface Style",
+            style = MaterialTheme.typography.bodyMedium,
+            fontSize = if (isV2) 15.sp else 14.sp,
+            fontWeight = if (isV2) FontWeight.Normal else FontWeight.Medium,
+            color = palette.textPrimary,
+          )
+          Text(
+            text = activeStyle.label,
+            fontFamily = JetBrainsMono,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = palette.activePillFg,
+          )
+        }
+        Row(
           modifier =
             Modifier
-              .weight(1f)
-              .height(36.dp)
-              .testTag("settings_style_${styleChoice.key.lowercase()}"),
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(if (isV2) 20.dp else 10.dp))
+              .background(palette.editorBg)
+              .then(
+                if (isV2) Modifier
+                else Modifier.border(0.75.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(10.dp)),
+              )
+              .padding(4.dp),
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-          Row(
-            modifier = Modifier.padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-          ) {
-            EdgeLoadingIndicator(
-              size = 17.dp,
-              color = pillFg,
-              styleOverride = styleChoice,
-            )
-            Spacer(Modifier.width(7.dp))
-            Text(
-              text = styleChoice.label,
-              fontSize = 12.sp,
-              fontWeight = FontWeight.SemiBold,
-              color = pillFg,
-              maxLines = 1,
-            )
+          UiStyleVersion.entries.forEach { styleChoice ->
+            val selectedChoice = activeStyle == styleChoice
+            val pillBg =
+              when {
+                selectedChoice -> palette.activePillBg
+                isV2 -> palette.chromeSurface
+                else -> palette.glassSurface
+              }
+            val pillFg = if (selectedChoice) palette.activePillFg else palette.textSecondary
+            Surface(
+              onClick = { onUpdateSettings { it.copy(uiStyleVersion = styleChoice.key) } },
+              shape = RoundedCornerShape(if (isV2) 999.dp else 8.dp),
+              color = pillBg,
+              border =
+                when {
+                  isV2 -> null
+                  selectedChoice -> BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.35f))
+                  else -> BorderStroke(0.75.dp, palette.glassBorderSubtle)
+                },
+              modifier =
+                Modifier
+                  .weight(1f)
+                  .height(38.dp)
+                  .testTag("settings_style_${styleChoice.key.lowercase()}"),
+            ) {
+              Row(
+                modifier = Modifier.padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+              ) {
+                EdgeLoadingIndicator(
+                  size = 17.dp,
+                  color = pillFg,
+                  styleOverride = styleChoice,
+                )
+                Spacer(Modifier.width(7.dp))
+                Text(
+                  text = styleChoice.label,
+                  fontSize = 12.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = pillFg,
+                  maxLines = 1,
+                )
+              }
+            }
           }
         }
       }
-    }
 
-    Row(
-      modifier =
-        Modifier
-          .fillMaxWidth()
-          .clip(RoundedCornerShape(if (isV2) 20.dp else 10.dp))
-          .background(palette.chromeSurface)
-          .then(if (isV2) Modifier else Modifier.border(0.75.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(10.dp)))
-          .padding(4.dp),
-      horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-      IconSegmentTab(
-        icon = Icons.Outlined.DarkMode,
-        label = "Dark",
-        selected = settings.darkTheme,
-        onClick = { onUpdateSettings { it.copy(darkTheme = true) } },
-        tag = "settings_mode_dark",
-        modifier = Modifier.weight(1f),
-      )
-      IconSegmentTab(
-        icon = Icons.Outlined.LightMode,
-        label = "Light",
-        selected = !settings.darkTheme,
-        onClick = { onUpdateSettings { it.copy(darkTheme = false) } },
-        tag = "settings_mode_light",
-        modifier = Modifier.weight(1f),
+      SettingsHairlineDivider()
+
+      Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = blockPadding, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Text(
+            text = "Color Mode",
+            style = MaterialTheme.typography.bodyMedium,
+            fontSize = if (isV2) 15.sp else 14.sp,
+            fontWeight = if (isV2) FontWeight.Normal else FontWeight.Medium,
+            color = palette.textPrimary,
+          )
+          Text(
+            text = if (settings.darkTheme) "Dark" else "Light",
+            fontFamily = JetBrainsMono,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = palette.activePillFg,
+          )
+        }
+        Row(
+          modifier =
+            Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(if (isV2) 20.dp else 10.dp))
+              .background(palette.editorBg)
+              .then(
+                if (isV2) Modifier
+                else Modifier.border(0.75.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(10.dp)),
+              )
+              .padding(4.dp),
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          IconSegmentTab(
+            icon = Icons.Outlined.DarkMode,
+            label = "Dark",
+            selected = settings.darkTheme,
+            onClick = { onUpdateSettings { it.copy(darkTheme = true) } },
+            tag = "settings_mode_dark",
+            modifier = Modifier.weight(1f),
+          )
+          IconSegmentTab(
+            icon = Icons.Outlined.LightMode,
+            label = "Light",
+            selected = !settings.darkTheme,
+            onClick = { onUpdateSettings { it.copy(darkTheme = false) } },
+            tag = "settings_mode_light",
+            modifier = Modifier.weight(1f),
+          )
+        }
+      }
+
+      SettingsHairlineDivider()
+
+      SettingsToggleRow(
+        title = "Material You",
+        leadingIcon = Icons.Outlined.AutoAwesome,
+        checked = settings.dynamicColor,
+        onCheckedChange = { dyn -> onUpdateSettings { it.copy(dynamicColor = dyn) } },
+        modifier = Modifier.testTag("settings_material_you_toggle"),
       )
     }
 
     SettingsFoldableSection(
-      title = "Theme Palette",
+      title = "Color Palette",
       icon = Icons.Outlined.Palette,
       summary = activePreset.label,
       initiallyExpanded = false,
@@ -263,16 +341,37 @@ fun HomeAppearanceStudioContent(
             }
           }
         }
-
-        SettingsToggleRow(
-          title = "Material You",
-          checked = settings.dynamicColor,
-          onCheckedChange = { dyn -> onUpdateSettings { it.copy(dynamicColor = dyn) } },
-          horizontalPadding = 2.dp,
-        )
       }
     }
 
+    SettingsGroup(label = "Screen Customization") {
+      SettingsMenuRow(
+        title = AppearanceSubPage.HOME_PAGE.title,
+        icon = AppearanceSubPage.HOME_PAGE.icon,
+        value = "Bar · Menus",
+        showChevron = true,
+        tag = "settings_jump_${AppearanceSubPage.HOME_PAGE.tag}",
+        onClick = { onOpenSubPage(AppearanceSubPage.HOME_PAGE) },
+      )
+      SettingsHairlineDivider(startIndent = dividerIndent)
+      SettingsMenuRow(
+        title = AppearanceSubPage.EDITOR.title,
+        icon = AppearanceSubPage.EDITOR.icon,
+        value = "Bar · Menus · BG",
+        showChevron = true,
+        tag = "settings_jump_${AppearanceSubPage.EDITOR.tag}",
+        onClick = { onOpenSubPage(AppearanceSubPage.EDITOR) },
+      )
+    }
+  }
+}
+
+@Composable
+fun HomeAppearanceStudioContent(
+  settings: EditorSettings,
+  onUpdateSettings: ((EditorSettings) -> EditorSettings) -> Unit,
+) {
+  Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
     FloatingBarCustomizerSection(
       title = "Home Bottom Bar",
       tagPrefix = "home_bar",
@@ -349,7 +448,7 @@ fun EditorAppearanceStudioContent(
           Triple("Code", Icons.Outlined.Code, null),
           Triple("Test", Icons.Outlined.PlayArrow, null),
           Triple("Config", Icons.Outlined.Tune, null),
-          Triple("Console", Icons.Outlined.Dvr, "3"),
+          Triple("Console", Icons.AutoMirrored.Outlined.Dvr, "3"),
         ),
       onChange = { transform ->
         onUpdateSettings { cur -> cur.copy(editorBarStyle = transform(cur.editorBarStyle)) }

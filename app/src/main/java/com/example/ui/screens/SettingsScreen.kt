@@ -11,6 +11,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -36,9 +38,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudOff
-import androidx.compose.material.icons.outlined.DarkMode
-import androidx.compose.material.icons.outlined.LightMode
-import androidx.compose.material.icons.outlined.Style
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -67,9 +66,11 @@ import androidx.compose.ui.unit.sp
 import com.example.data.remote.CfAccount
 import com.example.data.security.AuthMethod
 import com.example.data.security.EditorSettings
+import com.example.ui.components.AppearanceHubContent
 import com.example.ui.components.EditorAppearanceStudioContent
 import com.example.ui.components.HomeAppearanceStudioContent
 import com.example.ui.components.IconRevealButton
+import com.example.ui.screens.settings.AppearanceSubPage
 import com.example.ui.screens.settings.SettingsCategory
 import com.example.ui.screens.settings.SettingsCloudflarePane
 import com.example.ui.screens.settings.SettingsDeployPane
@@ -79,9 +80,7 @@ import com.example.ui.screens.settings.SettingsHairlineDivider
 import com.example.ui.screens.settings.SettingsMenuRow
 import com.example.ui.screens.settings.SettingsStorageAndSessionPane
 import com.example.ui.theme.AmberWarn
-import com.example.ui.theme.EditorThemePreset
 import com.example.ui.theme.EmeraldLive
-import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.UiStyleVersion
 import com.example.ui.viewmodel.IdeUiState
@@ -110,10 +109,10 @@ fun SettingsScreen(
   val settings = uiState.editorSettings
   val creds = uiState.credentials
   val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
-  val activeStyle = UiStyleVersion.fromKey(settings.uiStyleVersion)
 
   var openCategory by rememberSaveable { mutableStateOf<SettingsCategory?>(null) }
-  var wideSelectedCategory by rememberSaveable { mutableStateOf(SettingsCategory.APPEARANCE_HOME) }
+  var wideSelectedCategory by rememberSaveable { mutableStateOf(SettingsCategory.APPEARANCE) }
+  var appearanceSubPage by rememberSaveable { mutableStateOf<AppearanceSubPage?>(null) }
   var confirmDisconnect by remember { mutableStateOf(false) }
 
   if (confirmDisconnect) {
@@ -148,16 +147,21 @@ fun SettingsScreen(
         .imePadding(),
   ) {
     val isWide = maxWidth >= 720.dp
+    val activeCategory = if (isWide) wideSelectedCategory else openCategory
     val handleBack: () -> Unit = {
-      if (!isWide && openCategory != null) {
-        openCategory = null
-      } else {
-        onBack()
+      when {
+        activeCategory == SettingsCategory.APPEARANCE && appearanceSubPage != null -> {
+          appearanceSubPage = null
+        }
+        !isWide && openCategory != null -> {
+          openCategory = null
+        }
+        else -> onBack()
       }
     }
     BackHandler(onBack = handleBack)
 
-    val detailPane: @Composable (SettingsCategory) -> Unit = { category ->
+    val detailPane: @Composable (SettingsCategory, AppearanceSubPage?) -> Unit = { category, subPage ->
       val paneScroll = rememberScrollState()
       Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(
@@ -170,23 +174,81 @@ fun SettingsScreen(
           verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
           when (category) {
-            SettingsCategory.APPEARANCE_HOME -> {
-              Box(modifier = Modifier.fillMaxWidth().testTag("settings_appearance_home_section")) {
-                HomeAppearanceStudioContent(
-                  settings = settings,
-                  onUpdateSettings = onUpdateSettings,
-                )
+            SettingsCategory.APPEARANCE -> {
+              if (isWide && subPage != null) {
+                Surface(
+                  color = palette.chromeSurface,
+                  shape = RoundedCornerShape(if (isV2) 18.dp else 10.dp),
+                  border = if (isV2) null else BorderStroke(0.75.dp, palette.border.copy(alpha = 0.6f)),
+                  modifier = Modifier.fillMaxWidth(),
+                ) {
+                  Row(
+                    modifier =
+                      Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .clickable { appearanceSubPage = null }
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                        .testTag("settings_appearance_subpage_back"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                  ) {
+                    Icon(
+                      imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                      contentDescription = "Back to Appearance",
+                      tint = palette.activePillFg,
+                      modifier = Modifier.size(18.dp),
+                    )
+                    Text(
+                      text = "Appearance",
+                      fontSize = 13.5.sp,
+                      color = palette.textSecondary,
+                    )
+                    Text(
+                      text = "/",
+                      fontSize = 13.5.sp,
+                      color = palette.textMuted,
+                    )
+                    Text(
+                      text = subPage.title,
+                      fontSize = 14.sp,
+                      fontWeight = FontWeight.SemiBold,
+                      color = palette.textPrimary,
+                    )
+                  }
+                }
               }
-            }
 
-            SettingsCategory.APPEARANCE_EDITOR -> {
-              Box(modifier = Modifier.fillMaxWidth().testTag("settings_appearance_editor_section")) {
-                EditorAppearanceStudioContent(
-                  settings = settings,
-                  onUpdateSettings = onUpdateSettings,
-                  onPickEditorBackgroundImage = onPickEditorBackgroundImage,
-                  onClearEditorBackgroundImage = onClearEditorBackgroundImage,
-                )
+              when (subPage) {
+                null -> {
+                  Box(modifier = Modifier.fillMaxWidth().testTag("settings_appearance_section")) {
+                    AppearanceHubContent(
+                      settings = settings,
+                      onUpdateSettings = onUpdateSettings,
+                      onOpenSubPage = { nextSub -> appearanceSubPage = nextSub },
+                    )
+                  }
+                }
+
+                AppearanceSubPage.HOME_PAGE -> {
+                  Box(modifier = Modifier.fillMaxWidth().testTag("settings_appearance_home_section")) {
+                    HomeAppearanceStudioContent(
+                      settings = settings,
+                      onUpdateSettings = onUpdateSettings,
+                    )
+                  }
+                }
+
+                AppearanceSubPage.EDITOR -> {
+                  Box(modifier = Modifier.fillMaxWidth().testTag("settings_appearance_editor_section")) {
+                    EditorAppearanceStudioContent(
+                      settings = settings,
+                      onUpdateSettings = onUpdateSettings,
+                      onPickEditorBackgroundImage = onPickEditorBackgroundImage,
+                      onClearEditorBackgroundImage = onClearEditorBackgroundImage,
+                    )
+                  }
+                }
               }
             }
 
@@ -239,6 +301,7 @@ fun SettingsScreen(
     val linearMenuContent: @Composable (Boolean) -> Unit = { railMode ->
       val activeSelection = if (railMode) wideSelectedCategory else null
       val select: (SettingsCategory) -> Unit = { cat ->
+        appearanceSubPage = null
         if (railMode) wideSelectedCategory = cat else openCategory = cat
       }
       val dividerIndent = if (isV2) 18.dp else 56.dp
@@ -250,50 +313,15 @@ fun SettingsScreen(
             .padding(horizontal = if (railMode) 12.dp else 14.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(if (isV2) 18.dp else 14.dp),
       ) {
-        SettingsGroup(label = "Appearance") {
-          SettingsMenuRow(
-            title = SettingsCategory.APPEARANCE_HOME.title,
-            icon = SettingsCategory.APPEARANCE_HOME.icon,
-            value = if (isV2) null else categoryCompactValue(SettingsCategory.APPEARANCE_HOME, uiState),
-            selected = activeSelection == SettingsCategory.APPEARANCE_HOME,
-            showChevron = !railMode,
-            tag = "settings_jump_${SettingsCategory.APPEARANCE_HOME.jumpTag}",
-            onClick = { select(SettingsCategory.APPEARANCE_HOME) },
-          )
-          SettingsHairlineDivider(startIndent = dividerIndent)
-          SettingsMenuRow(
-            title = SettingsCategory.APPEARANCE_EDITOR.title,
-            icon = SettingsCategory.APPEARANCE_EDITOR.icon,
-            value = if (isV2) null else categoryCompactValue(SettingsCategory.APPEARANCE_EDITOR, uiState),
-            selected = activeSelection == SettingsCategory.APPEARANCE_EDITOR,
-            showChevron = !railMode,
-            tag = "settings_jump_${SettingsCategory.APPEARANCE_EDITOR.jumpTag}",
-            onClick = { select(SettingsCategory.APPEARANCE_EDITOR) },
-          )
-        }
-
         SettingsGroup(label = "Preferences") {
           SettingsMenuRow(
-            title = "Style",
-            icon = Icons.Outlined.Style,
-            value = activeStyle.label,
-            useUnfoldIndicator = true,
-            tag = "settings_quick_style_toggle",
-            onClick = {
-              val next =
-                if (activeStyle == UiStyleVersion.V1_DEFAULT) UiStyleVersion.V2_MINIMAL_OLED
-                else UiStyleVersion.V1_DEFAULT
-              onUpdateSettings { it.copy(uiStyleVersion = next.key) }
-            },
-          )
-          SettingsHairlineDivider(startIndent = dividerIndent)
-          SettingsMenuRow(
-            title = "Theme",
-            icon = if (settings.darkTheme) Icons.Outlined.DarkMode else Icons.Outlined.LightMode,
-            value = if (settings.darkTheme) "Dark" else "Light",
-            useUnfoldIndicator = true,
-            tag = "settings_quick_theme_toggle",
-            onClick = { onUpdateSettings { it.copy(darkTheme = !it.darkTheme) } },
+            title = SettingsCategory.APPEARANCE.title,
+            icon = SettingsCategory.APPEARANCE.icon,
+            value = if (isV2) null else categoryCompactValue(SettingsCategory.APPEARANCE, uiState),
+            selected = activeSelection == SettingsCategory.APPEARANCE,
+            showChevron = !railMode,
+            tag = "settings_jump_${SettingsCategory.APPEARANCE.jumpTag}",
+            onClick = { select(SettingsCategory.APPEARANCE) },
           )
           SettingsHairlineDivider(startIndent = dividerIndent)
           SettingsMenuRow(
@@ -344,6 +372,14 @@ fun SettingsScreen(
       }
     }
 
+    val headerTitle =
+      when {
+        isWide -> "Settings"
+        openCategory == SettingsCategory.APPEARANCE && appearanceSubPage != null -> appearanceSubPage!!.headerTitle
+        openCategory != null -> openCategory!!.title
+        else -> "Settings"
+      }
+
     Column(modifier = Modifier.fillMaxSize()) {
       Row(
         modifier =
@@ -357,7 +393,7 @@ fun SettingsScreen(
         if (isV2) {
           IconButton(
             onClick = handleBack,
-            modifier = Modifier.size(42.dp).testTag("settings_back_button"),
+            modifier = Modifier.size(48.dp).testTag("settings_back_button"),
           ) {
             Icon(
               imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
@@ -386,7 +422,7 @@ fun SettingsScreen(
         }
 
         Text(
-          text = if (!isWide && openCategory != null) openCategory!!.title else "Settings",
+          text = headerTitle,
           fontSize = if (isV2) 19.sp else 18.sp,
           fontWeight = FontWeight.Medium,
           color = palette.textPrimary,
@@ -410,18 +446,6 @@ fun SettingsScreen(
           onClick = { onNotify(statusLabel) },
           tag = "settings_status_icon_button",
         )
-        IconRevealButton(
-          icon = Icons.Outlined.Style,
-          revealedLabel = activeStyle.label,
-          active = isV2,
-          onClick = {
-            val next =
-              if (activeStyle == UiStyleVersion.V1_DEFAULT) UiStyleVersion.V2_MINIMAL_OLED
-              else UiStyleVersion.V1_DEFAULT
-            onUpdateSettings { it.copy(uiStyleVersion = next.key) }
-          },
-          tag = "settings_header_style_toggle",
-        )
       }
 
       if (!isV2) {
@@ -441,19 +465,26 @@ fun SettingsScreen(
           }
           VerticalDivider(color = palette.border.copy(alpha = 0.45f), thickness = 0.75.dp)
           AnimatedContent(
-            targetState = wideSelectedCategory,
+            targetState = wideSelectedCategory to if (wideSelectedCategory == SettingsCategory.APPEARANCE) appearanceSubPage else null,
             transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(110)) },
             modifier = Modifier.weight(1f).fillMaxHeight(),
             label = "settings_wide_detail",
-          ) { category ->
-            detailPane(category)
+          ) { (category, subPage) ->
+            detailPane(category, subPage)
           }
         }
       } else {
+        val navDepth: (Pair<SettingsCategory?, AppearanceSubPage?>) -> Int = { (cat, sub) ->
+          when {
+            cat == null -> 0
+            cat == SettingsCategory.APPEARANCE && sub != null -> 2
+            else -> 1
+          }
+        }
         AnimatedContent(
-          targetState = openCategory,
+          targetState = openCategory to if (openCategory == SettingsCategory.APPEARANCE) appearanceSubPage else null,
           transitionSpec = {
-            if (targetState != null && initialState == null) {
+            if (navDepth(targetState) > navDepth(initialState)) {
               (slideInHorizontally(tween(190)) { it / 5 } + fadeIn(tween(160))) togetherWith
                 (slideOutHorizontally(tween(150)) { -it / 8 } + fadeOut(tween(120)))
             } else {
@@ -463,7 +494,7 @@ fun SettingsScreen(
           },
           modifier = Modifier.weight(1f).fillMaxWidth(),
           label = "settings_compact_nav",
-        ) { category ->
+        ) { (category, subPage) ->
           if (category == null) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
               Box(modifier = Modifier.widthIn(max = 620.dp).fillMaxWidth()) {
@@ -471,7 +502,7 @@ fun SettingsScreen(
               }
             }
           } else {
-            detailPane(category)
+            detailPane(category, subPage)
           }
         }
       }
@@ -485,8 +516,11 @@ private fun categoryCompactValue(
 ): String {
   val settings = uiState.editorSettings
   return when (category) {
-    SettingsCategory.APPEARANCE_HOME -> EditorThemePreset.fromKey(settings.themePreset).label
-    SettingsCategory.APPEARANCE_EDITOR -> "${settings.editorBarStyle.heightDp}dp · ${settings.editorBarStyle.widthPercent}%"
+    SettingsCategory.APPEARANCE -> {
+      val styleLabel = UiStyleVersion.fromKey(settings.uiStyleVersion).label
+      val modeLabel = if (settings.darkTheme) "Dark" else "Light"
+      "$styleLabel · $modeLabel"
+    }
     SettingsCategory.EDITOR -> "${settings.fontSizeSp}sp · ${settings.tabSize}sp"
     SettingsCategory.CLOUDFLARE ->
       when (uiState.credentials?.method) {

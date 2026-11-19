@@ -73,12 +73,21 @@ enum class SettingsCategory(
   val jumpTag: String,
   val icon: ImageVector,
 ) {
-  APPEARANCE_HOME("Appearance · Home Page", "appearance_home", Icons.Outlined.Home),
-  APPEARANCE_EDITOR("Appearance · Editor", "appearance_editor", Icons.Outlined.Palette),
+  APPEARANCE("Appearance", "appearance", Icons.Outlined.Palette),
   EDITOR("Editor", "editor", Icons.Outlined.Code),
   CLOUDFLARE("Cloudflare", "credentials", Icons.Outlined.Key),
   DEPLOY("Deployment", "deploy", Icons.Outlined.RocketLaunch),
   STORAGE("Storage & Sync", "storage", Icons.Outlined.Folder),
+}
+
+enum class AppearanceSubPage(
+  val title: String,
+  val headerTitle: String,
+  val tag: String,
+  val icon: ImageVector,
+) {
+  HOME_PAGE("Home Page", "Appearance · Home Page", "appearance_home", Icons.Outlined.Home),
+  EDITOR("Editor", "Appearance · Editor", "appearance_editor", Icons.Outlined.Code),
 }
 
 @Composable

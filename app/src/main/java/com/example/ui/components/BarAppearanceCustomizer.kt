@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.MenuOpen
+import androidx.compose.material.icons.automirrored.outlined.MenuOpen
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.HorizontalDivider
@@ -274,7 +274,7 @@ fun PopupMenuCustomizerSection(
 
   SettingsFoldableSection(
     title = title,
-    icon = Icons.Outlined.MenuOpen,
+    icon = Icons.AutoMirrored.Outlined.MenuOpen,
     summary = summaryText,
     initiallyExpanded = initiallyExpanded,
     contentPadding = 12.dp,
