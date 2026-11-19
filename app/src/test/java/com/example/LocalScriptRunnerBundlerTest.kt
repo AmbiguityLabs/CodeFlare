@@ -153,4 +153,34 @@ class LocalScriptRunnerBundlerTest {
     assertFalse(map.has(".edgecode/bindings.json"))
     assertTrue(map.getString("src/cfg.json").contains("exports.default = {\"ok\":true}"))
   }
+
+  @Test
+  fun transpileEsmToCjsHandlesNodeImportsAndReExports() {
+    val src =
+      """
+      import { Readable, Transform } from 'node:stream';
+      import { type ExecutionContext } from '@cloudflare/workers-types';
+      export { Readable as StreamReader } from 'node:stream';
+      export * from './shared';
+      export default {
+        fetch() { return new Response(typeof Readable); }
+      };
+      """.trimIndent()
+
+    val cjs = LocalModuleBundler.transpileEsmToCjs(src, "src/index.ts")
+    assertTrue(cjs.contains("""__require("node:stream")"""))
+    assertTrue(cjs.contains("exports.StreamReader = __reexp.Readable;"))
+    assertTrue(cjs.contains("""Object.assign(exports, __require("./shared"));"""))
+  }
+
+  @Test
+  fun buildHarnessJsIncludesNodeStreamAndCloudflareBuiltins() {
+    val harness = com.example.editor.LocalScriptRunner.buildHarnessJs("""{"entryPath":"index.js","modules":{},"bindings":[],"request":{"url":"https://local.edgecode.app/","method":"GET","headers":{},"body":""}}""")
+    assertTrue(harness.contains("register('stream', streamMod)"))
+    assertTrue(harness.contains("register('stream/web', streamWebMod)"))
+    assertTrue(harness.contains("register('stream/consumers', streamConsumersMod)"))
+    assertTrue(harness.contains("register('buffer'"))
+    assertTrue(harness.contains("register('crypto', cryptoMod)"))
+    assertTrue(harness.contains("__builtins['cloudflare:workers']"))
+  }
 }
