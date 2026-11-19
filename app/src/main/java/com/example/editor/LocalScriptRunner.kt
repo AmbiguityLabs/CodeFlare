@@ -7,7 +7,7 @@ import android.os.Looper
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import com.example.data.remote.WorkerBinding
+import com.example.data.remote.CfWorkerBinding
 import com.example.data.remote.WorkerFile
 import com.example.data.remote.WorkerWorkspace
 import java.text.SimpleDateFormat
@@ -221,7 +221,7 @@ object LocalScriptRunner {
 
     val moduleMap = LocalModuleBundler.buildModuleMapJson(workspace.files)
     val bindingsArr = JSONArray()
-    workspace.bindings.forEach { b: WorkerBinding ->
+    workspace.bindings.forEach { b: CfWorkerBinding ->
       bindingsArr.put(
         JSONObject()
           .put("name", b.name)

@@ -1,7 +1,6 @@
 package com.example
 
 import com.example.data.remote.WorkerFile
-import com.example.data.remote.WorkerLanguage
 import com.example.data.remote.WorkerWorkspace
 import com.example.editor.LocalModuleBundler
 import org.junit.Assert.assertEquals
@@ -21,31 +20,44 @@ class LocalScriptRunnerBundlerTest {
     val ws =
       WorkerWorkspace(
         scriptName = "demo-worker",
+        isEsModuleFormat = true,
         entryModulePath = "src/index.js",
+        compatibilityDate = "2024-11-01",
         files =
           listOf(
             WorkerFile(
               path = "src/index.js",
               content = "export default { fetch() { return new Response('ok'); } };",
-              language = WorkerLanguage.JAVASCRIPT,
+              originalContent = "export default { fetch() { return new Response('ok'); } };",
+              contentType = "application/javascript+module",
               isEntryPoint = true,
             ),
             WorkerFile(
               path = "src/helper.ts",
               content = "export const version = 2;",
-              language = WorkerLanguage.TYPESCRIPT,
+              originalContent = "export const version = 2;",
+              contentType = "application/javascript+module",
+              isEntryPoint = false,
             ),
             WorkerFile(
               path = "public/index.html",
               content = "<h1>Hi</h1>",
-              language = WorkerLanguage.TEXT,
+              originalContent = "<h1>Hi</h1>",
+              contentType = "text/html",
+              isEntryPoint = false,
             ),
             WorkerFile(
               path = "scripts/bench.js",
               content = "console.log('local script');",
-              language = WorkerLanguage.JAVASCRIPT,
+              originalContent = "console.log('local script');",
+              contentType = "application/javascript+module",
+              isEntryPoint = false,
             ),
           ),
+        bindings = emptyList(),
+        routes = emptyList(),
+        workersDevEnabled = true,
+        accountSubdomain = "demo",
       )
 
     // Non-executable helper falls back to workspace entry module
@@ -114,18 +126,23 @@ class LocalScriptRunnerBundlerTest {
         WorkerFile(
           path = "src/index.ts",
           content = "import cfg from './cfg.json'; export default { fetch() { return Response.json(cfg); } };",
-          language = WorkerLanguage.TYPESCRIPT,
+          originalContent = "import cfg from './cfg.json'; export default { fetch() { return Response.json(cfg); } };",
+          contentType = "application/javascript+module",
           isEntryPoint = true,
         ),
         WorkerFile(
           path = "src/cfg.json",
           content = """{"ok":true}""",
-          language = WorkerLanguage.JSON,
+          originalContent = """{"ok":true}""",
+          contentType = "application/json",
+          isEntryPoint = false,
         ),
         WorkerFile(
           path = ".edgecode/bindings.json",
           content = "{}",
-          language = WorkerLanguage.JSON,
+          originalContent = "{}",
+          contentType = "application/json",
+          isEntryPoint = false,
           isVirtualReadOnly = true,
         ),
       )
