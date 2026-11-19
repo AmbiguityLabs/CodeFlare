@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -19,8 +20,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CheckCircleOutline
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloseFullscreen
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.OpenInFull
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Stop
@@ -32,6 +35,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -291,8 +298,25 @@ fun ProblemsView(
   onJumpToProblem: (String, Int) -> Unit,
 ) {
   if (uiState.diagnostics.isEmpty()) {
+    var showInfo by remember { mutableStateOf(false) }
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-      Text("No syntax or Worker diagnostics detected.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        IconButton(onClick = { showInfo = !showInfo }) {
+          Icon(
+            imageVector = Icons.Outlined.CheckCircleOutline,
+            contentDescription = "No diagnostics",
+            tint = EmeraldLive,
+            modifier = Modifier.size(24.dp),
+          )
+        }
+        AnimatedVisibility(visible = showInfo) {
+          Text(
+            text = "0 problems",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+      }
     }
     return
   }
@@ -428,23 +452,31 @@ fun LiveTailView(
       }
     }
 
-    if (uiState.isLocalScratchpad) {
+    if (uiState.isLocalScratchpad || uiState.tailLogs.isEmpty()) {
+      var showTailInfo by remember { mutableStateOf(false) }
       Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text(
-          text = "Connect your Cloudflare account to stream real-time edge Worker WebSocket tail logs.",
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-      }
-    } else if (uiState.tailLogs.isEmpty()) {
-      Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text(
-          text =
-            if (uiState.isTailRunning) "Listening for incoming requests & console.log events…"
-            else "Tap Start Tail to stream real-time console.log() & exceptions from Cloudflare Edge.",
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          IconButton(onClick = { showTailInfo = !showTailInfo }) {
+            Icon(
+              imageVector = Icons.Outlined.Info,
+              contentDescription = "Live tail info",
+              tint = MaterialTheme.colorScheme.onSurfaceVariant,
+              modifier = Modifier.size(22.dp),
+            )
+          }
+          AnimatedVisibility(visible = showTailInfo) {
+            Text(
+              text =
+                when {
+                  uiState.isLocalScratchpad -> "Sign in to Cloudflare to stream live logs."
+                  uiState.isTailRunning -> "Listening for live events…"
+                  else -> "Tap Start Tail to stream logs."
+                },
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+          }
+        }
       }
     } else {
       LazyColumn(

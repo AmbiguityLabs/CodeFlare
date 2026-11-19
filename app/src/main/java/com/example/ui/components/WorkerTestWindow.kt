@@ -1,7 +1,9 @@
 package com.example.ui.components
 
+import android.view.ViewGroup
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -34,6 +36,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -47,6 +50,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -90,11 +94,6 @@ private data class HeaderEntry(
   val enabled: Boolean = true,
 )
 
-/**
- * Dedicated component for testing deployed Cloudflare Workers.
- * Allows entering a live Worker URL, selecting HTTP methods, managing Headers & Body,
- * firing live requests, and inspecting response status, timing, headers, and formatted body.
- */
 @Composable
 fun WorkerTestWindow(
   uiState: IdeUiState,
@@ -112,10 +111,13 @@ fun WorkerTestWindow(
   val clipboard = LocalClipboardManager.current
 
   var methodMenuOpen by remember { mutableStateOf(false) }
-  var requestSectionTab by remember { mutableIntStateOf(0) } // 0 = Headers, 1 = Body
+  var requestSectionTab by remember { mutableIntStateOf(0) }
   var rawHeadersMode by remember { mutableStateOf(false) }
-  var responseOutputTab by remember { mutableIntStateOf(0) } // 0 = Body, 1 = Headers, 2 = HTML
+  var responseOutputTab by remember { mutableIntStateOf(0) }
   var prettyJson by remember { mutableStateOf(true) }
+  var showEmptyHelp by remember { mutableStateOf(false) }
+  var showMethodNote by remember { mutableStateOf(false) }
+  var htmlWebViewRef by remember { mutableStateOf<WebView?>(null) }
 
   val methods = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
   val activeMethod = uiState.previewHttpMethod.uppercase()
@@ -127,7 +129,6 @@ fun WorkerTestWindow(
       else -> palette.activePillFg
     }
 
-  // Keep local editable list so blank/disabled rows stay visible and editable!
   var headerRows by remember { mutableStateOf(parseHeadersJsonToList(uiState.previewHttpHeadersJson)) }
   var lastSerializedJson by remember { mutableStateOf(serializeHeadersToJson(headerRows)) }
 
@@ -137,6 +138,28 @@ fun WorkerTestWindow(
       headerRows = parsed
       lastSerializedJson = uiState.previewHttpHeadersJson
     }
+  }
+
+  fun disposeHtmlWebView() {
+    val wv = htmlWebViewRef ?: return
+    htmlWebViewRef = null
+    runCatching {
+      wv.stopLoading()
+      (wv.parent as? ViewGroup)?.removeView(wv)
+      wv.destroy()
+    }
+  }
+
+  DisposableEffect(responseOutputTab == 2) {
+    onDispose {
+      if (responseOutputTab != 2) {
+        disposeHtmlWebView()
+      }
+    }
+  }
+
+  DisposableEffect(Unit) {
+    onDispose { disposeHtmlWebView() }
   }
 
   fun commitHeaderRows(rows: List<HeaderEntry>) {
@@ -153,7 +176,6 @@ fun WorkerTestWindow(
         .background(palette.chromeBg)
         .testTag("worker_test_window"),
   ) {
-    // 1. Deployed URL Input + HTTP Method + Send Bar
     Row(
       modifier =
         Modifier
@@ -268,7 +290,6 @@ fun WorkerTestWindow(
       }
     }
 
-    // 2. Deployed Worker URL Quick Chips (workers.dev + custom domains + common paths)
     val baseUrls =
       remember(uiState.workspace) {
         buildList {
@@ -337,7 +358,6 @@ fun WorkerTestWindow(
 
     HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
 
-    // 3. Scrollable Request Config + Response Inspector
     Column(
       modifier =
         Modifier
@@ -347,7 +367,6 @@ fun WorkerTestWindow(
           .padding(10.dp),
       verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-      // Request Headers / Body Switcher Card
       Surface(
         color = palette.chromeSurface,
         shape = RoundedCornerShape(10.dp),
@@ -537,17 +556,26 @@ fun WorkerTestWindow(
               modifier = Modifier.fillMaxWidth().testTag("worker_test_body_input"),
             )
             if (activeMethod in listOf("GET", "HEAD")) {
-              Text(
-                text = "Note: $activeMethod requests usually omit body; switch method to POST/PUT/PATCH to send JSON payloads.",
-                style = MaterialTheme.typography.labelSmall,
-                color = palette.textMuted,
-              )
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+              ) {
+                IconButton(onClick = { showMethodNote = !showMethodNote }, modifier = Modifier.size(22.dp)) {
+                  Icon(Icons.Outlined.Info, contentDescription = "Request body info", tint = palette.textMuted, modifier = Modifier.size(14.dp))
+                }
+                AnimatedVisibility(visible = showMethodNote) {
+                  Text(
+                    text = "$activeMethod usually omits body.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.textMuted,
+                  )
+                }
+              }
             }
           }
         }
       }
 
-      // 4. Response Panel (Status, Timing, Size, Body & Headers)
       val res = uiState.previewHttpResult
       if (res == null) {
         Surface(
@@ -556,22 +584,21 @@ fun WorkerTestWindow(
           modifier = Modifier.fillMaxWidth(),
         ) {
           Column(
-            modifier = Modifier.fillMaxWidth().padding(20.dp),
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(6.dp),
           ) {
-            Text(
-              text = "Deployed Worker Test Window",
-              style = MaterialTheme.typography.titleSmall,
-              fontWeight = FontWeight.SemiBold,
-              color = palette.textPrimary,
-            )
-            Text(
-              text = "Enter your deployed Worker URL above, pick an HTTP method, attach headers or JSON body, and tap Send to view live edge status, timing, headers, and response body.",
-              style = MaterialTheme.typography.bodySmall,
-              color = palette.textSecondary,
-              textAlign = TextAlign.Center,
-            )
+            IconButton(onClick = { showEmptyHelp = !showEmptyHelp }, modifier = Modifier.size(32.dp)) {
+              Icon(Icons.Outlined.Info, contentDescription = "Test help", tint = palette.activePillFg, modifier = Modifier.size(20.dp))
+            }
+            AnimatedVisibility(visible = showEmptyHelp) {
+              Text(
+                text = "Enter Worker URL above and tap Send.",
+                style = MaterialTheme.typography.bodySmall,
+                color = palette.textSecondary,
+                textAlign = TextAlign.Center,
+              )
+            }
           }
         }
       } else {
@@ -594,7 +621,6 @@ fun WorkerTestWindow(
             modifier = Modifier.padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
           ) {
-            // Status + Timing + Size + Copy Row
             Row(
               modifier = Modifier.fillMaxWidth(),
               verticalAlignment = Alignment.CenterVertically,
@@ -654,7 +680,6 @@ fun WorkerTestWindow(
               }
             }
 
-            // Response Tabs: Body / Headers / Render HTML + Pretty Toggle
             val bodyIsHtml =
               res.headers.entries.any { it.key.equals("content-type", true) && it.value.contains("html", true) } ||
                 res.body.trimStart().startsWith("<!doctype html", true) ||
@@ -744,9 +769,11 @@ fun WorkerTestWindow(
                         webViewClient = WebViewClient()
                         tag = htmlRenderKey
                         loadDataWithBaseURL(res.url.ifBlank { "https://localhost/" }, res.body, "text/html", "utf-8", null)
+                        htmlWebViewRef = this
                       }
                     },
                     update = { wv ->
+                      if (htmlWebViewRef !== wv) htmlWebViewRef = wv
                       if (wv.tag != htmlRenderKey) {
                         wv.tag = htmlRenderKey
                         wv.loadDataWithBaseURL(res.url.ifBlank { "https://localhost/" }, res.body, "text/html", "utf-8", null)
@@ -800,11 +827,10 @@ fun WorkerTestWindow(
         }
       }
 
-      // 5. Recent Worker Test Runs (Stored in RAM Database)
       if (uiState.workerTestHistory.isNotEmpty()) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
           Text(
-            text = "RECENT TEST RUNS IN RAM (${uiState.workerTestHistory.size})",
+            text = "HISTORY (${uiState.workerTestHistory.size})",
             style = MaterialTheme.typography.labelSmall,
             color = palette.textMuted,
           )

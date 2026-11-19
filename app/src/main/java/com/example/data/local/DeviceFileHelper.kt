@@ -29,7 +29,7 @@ data class RawPickedAsset(
 }
 
 object DeviceFileHelper {
-  private const val MAX_PAGES_FILE_BYTES = 25L * 1024L * 1024L // 25 MiB Cloudflare Pages limit
+  private const val MAX_PAGES_FILE_BYTES = 25L * 1024L * 1024L
   private const val MAX_PAGES_ASSET_COUNT = 2000
   private val IGNORED_SEGMENTS = setOf(".git", "node_modules", ".wrangler", "__MACOSX")
   private val IGNORED_FILES = setOf(".DS_Store", "Thumbs.db", "desktop.ini")
@@ -253,12 +253,14 @@ object DeviceFileHelper {
   }
 
   fun resolveDisplayName(context: Context, uri: Uri): String {
-    context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-      if (cursor.moveToFirst()) {
-        val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-        if (idx >= 0) {
-          val name = cursor.getString(idx)
-          if (!name.isNullOrBlank()) return name
+    runCatching {
+      context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst()) {
+          val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+          if (idx >= 0) {
+            val name = cursor.getString(idx)
+            if (!name.isNullOrBlank()) return name
+          }
         }
       }
     }

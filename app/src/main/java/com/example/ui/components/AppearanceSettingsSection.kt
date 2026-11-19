@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.LightMode
+import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Wallpaper
 import androidx.compose.material3.HorizontalDivider
@@ -39,6 +40,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import com.example.ui.screens.settings.SettingsFoldableSection
 import com.example.ui.screens.settings.SettingsToggleRow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -71,12 +73,6 @@ import java.io.File
 import java.util.Locale
 import kotlin.math.roundToInt
 
-/**
- * Full Appearance & Custom Editor Background Studio for Settings.
- * Supports theme preset swatches, Dark/Light mode, Material You toggle, zero-permission
- * Android Photo Picker for custom editor backgrounds, built-in ambient backdrops,
- * live Opacity + Zoom + Readability Tint controls, and interactive drag-to-pan framing.
- */
 @Composable
 fun AppearanceStudioContent(
   settings: EditorSettings,
@@ -93,7 +89,6 @@ fun AppearanceStudioContent(
     }
   val hasActiveBg = rememberHasActiveEditorBackground(settings)
 
-  // Zero-permission Android Photo Picker (Play Policy compliant)
   val photoPickerLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
       if (uri != null) {
@@ -101,8 +96,7 @@ fun AppearanceStudioContent(
       }
     }
 
-  Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-    // 1. Dark / Light Mode Ultra-Thin Segmented Control
+  Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
     Row(
       modifier =
         Modifier
@@ -151,145 +145,108 @@ fun AppearanceStudioContent(
       }
     }
 
-    // 2. Curated Theme Presets Grid (2x2 ultra-thin swatch cards)
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-      Text(
-        text = "THEME PALETTE",
-        fontFamily = JetBrainsMono,
-        fontSize = 9.5.sp,
-        letterSpacing = 0.6.sp,
-        fontWeight = FontWeight.Bold,
-        color = palette.textMuted,
-      )
-      val presets = EditorThemePreset.entries
-      presets.chunked(2).forEach { rowPresets ->
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-          rowPresets.forEach { preset ->
-            val selected = preset == activePreset
-            val previewPalette = remember(settings.darkTheme, preset) { paletteFor(settings.darkTheme, preset) }
-            Surface(
-              onClick = { onUpdateSettings { it.copy(themePreset = preset.name) } },
-              shape = RoundedCornerShape(10.dp),
-              color = if (selected) palette.activePillBg.copy(alpha = 0.55f) else palette.editorBg,
-              border =
-                BorderStroke(
-                  width = if (selected) 1.dp else 0.75.dp,
-                  color = if (selected) palette.activePillFg.copy(alpha = 0.65f) else palette.border.copy(alpha = 0.55f),
-                ),
-              modifier = Modifier.weight(1f).testTag("settings_theme_preset_${preset.name.lowercase()}"),
-            ) {
-              Row(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+    SettingsFoldableSection(
+      title = "Theme Palette",
+      icon = Icons.Outlined.Palette,
+      summary = activePreset.label,
+      initiallyExpanded = false,
+      contentPadding = 12.dp,
+    ) {
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        val presets = EditorThemePreset.entries
+        presets.chunked(2).forEach { rowPresets ->
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            rowPresets.forEach { preset ->
+              val selected = preset == activePreset
+              val previewPalette = remember(settings.darkTheme, preset) { paletteFor(settings.darkTheme, preset) }
+              Surface(
+                onClick = { onUpdateSettings { it.copy(themePreset = preset.name) } },
+                shape = RoundedCornerShape(10.dp),
+                color = if (selected) palette.activePillBg.copy(alpha = 0.55f) else palette.editorBg,
+                border =
+                  BorderStroke(
+                    width = if (selected) 1.dp else 0.75.dp,
+                    color = if (selected) palette.activePillFg.copy(alpha = 0.65f) else palette.border.copy(alpha = 0.55f),
+                  ),
+                modifier = Modifier.weight(1f).testTag("settings_theme_preset_${preset.name.lowercase()}"),
               ) {
-                // Mini 3-dot palette preview
-                Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
-                  Box(
-                    modifier =
-                      Modifier
-                        .size(11.dp)
-                        .clip(CircleShape)
-                        .background(previewPalette.editorBg)
-                        .border(0.75.dp, previewPalette.border, CircleShape),
+                Row(
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                  Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                      modifier =
+                        Modifier
+                          .size(11.dp)
+                          .clip(CircleShape)
+                          .background(previewPalette.editorBg)
+                          .border(0.75.dp, previewPalette.border, CircleShape),
+                    )
+                    Box(
+                      modifier =
+                        Modifier
+                          .size(11.dp)
+                          .clip(CircleShape)
+                          .background(previewPalette.chromeSurface)
+                          .border(0.75.dp, previewPalette.border, CircleShape),
+                    )
+                    Box(
+                      modifier =
+                        Modifier
+                          .size(11.dp)
+                          .clip(CircleShape)
+                          .background(previewPalette.activePillFg),
+                    )
+                  }
+                  Text(
+                    text = preset.label,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                    color = palette.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                   )
-                  Box(
-                    modifier =
-                      Modifier
-                        .size(11.dp)
-                        .clip(CircleShape)
-                        .background(previewPalette.chromeSurface)
-                        .border(0.75.dp, previewPalette.border, CircleShape),
-                  )
-                  Box(
-                    modifier =
-                      Modifier
-                        .size(11.dp)
-                        .clip(CircleShape)
-                        .background(previewPalette.activePillFg),
-                  )
-                }
-                Text(
-                  text = preset.label,
-                  style = MaterialTheme.typography.labelMedium,
-                  fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                  color = palette.textPrimary,
-                  maxLines = 1,
-                  overflow = TextOverflow.Ellipsis,
-                  modifier = Modifier.weight(1f),
-                )
-                if (selected) {
-                  Icon(
-                    imageVector = Icons.Outlined.Check,
-                    contentDescription = "Selected theme",
-                    tint = palette.activePillFg,
-                    modifier = Modifier.size(14.dp),
-                  )
+                  if (selected) {
+                    Icon(
+                      imageVector = Icons.Outlined.Check,
+                      contentDescription = "Selected theme",
+                      tint = palette.activePillFg,
+                      modifier = Modifier.size(14.dp),
+                    )
+                  }
                 }
               }
             }
           }
         }
+
+        SettingsToggleRow(
+          title = "Material You",
+          checked = settings.dynamicColor,
+          onCheckedChange = { dyn -> onUpdateSettings { it.copy(dynamicColor = dyn) } },
+          horizontalPadding = 2.dp,
+        )
       }
     }
 
-    SettingsToggleRow(
-      title = "Material You",
-      checked = settings.dynamicColor,
-      onCheckedChange = { dyn -> onUpdateSettings { it.copy(dynamicColor = dyn) } },
-      horizontalPadding = 2.dp,
-    )
-
-    HorizontalDivider(color = palette.border.copy(alpha = 0.4f), thickness = 0.75.dp)
-
-    // 3. Editor Background & Custom Photo Studio
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-      ) {
-        Row(
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-          Icon(
-            imageVector = Icons.Outlined.Wallpaper,
-            contentDescription = null,
-            tint = palette.activePillFg,
-            modifier = Modifier.size(15.dp),
-          )
-          Text(
-            text = "EDITOR BACKGROUND",
-            fontFamily = JetBrainsMono,
-            fontSize = 9.5.sp,
-            letterSpacing = 0.6.sp,
-            fontWeight = FontWeight.Bold,
-            color = palette.textMuted,
-          )
-        }
-        Surface(
-          color = palette.editorBg,
-          shape = RoundedCornerShape(6.dp),
-          border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.5f)),
-        ) {
-          Text(
-            text =
-              if (activeBgPreset == EditorBackgroundPreset.CUSTOM && hasCustomPhotoFile) "Custom Photo"
-              else activeBgPreset.label,
-            fontFamily = JetBrainsMono,
-            fontSize = 10.sp,
-            color = palette.activePillFg,
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-          )
-        }
-      }
-
-      // Live Interactive Code Editor Preview (supports drag-to-pan framing when zoomed > 1x)
-      InteractiveEditorBackgroundPreview(
+    val bgSummary =
+      if (activeBgPreset == EditorBackgroundPreset.CUSTOM && hasCustomPhotoFile) "Custom"
+      else activeBgPreset.label
+    SettingsFoldableSection(
+      title = "Background",
+      icon = Icons.Outlined.Wallpaper,
+      summary = bgSummary,
+      initiallyExpanded = false,
+      contentPadding = 12.dp,
+    ) {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        InteractiveEditorBackgroundPreview(
         settings = settings,
         hasActiveBg = hasActiveBg,
         onPanDelta = { dxNorm, dyNorm ->
@@ -303,7 +260,6 @@ fun AppearanceStudioContent(
         },
       )
 
-      // Custom Photo Picker CTA + Remove Button
       Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -358,7 +314,6 @@ fun AppearanceStudioContent(
         }
       }
 
-      // Built-in Backdrop Presets Strip
       Row(
         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -419,7 +374,6 @@ fun AppearanceStudioContent(
         }
       }
 
-      // Live Fine-Tuning Sliders: Opacity + Zoom + Readability Scrim (when any background is active)
       if (hasActiveBg) {
         Surface(
           color = palette.editorBg,
@@ -431,7 +385,6 @@ fun AppearanceStudioContent(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
           ) {
-            // Opacity Slider (5% - 100%)
             val opacityPct = (settings.editorBgOpacity.coerceIn(0.05f, 1f) * 100f).roundToInt()
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
               Row(
@@ -468,7 +421,6 @@ fun AppearanceStudioContent(
 
             HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.75.dp)
 
-            // Zoom Slider (1.00x - 3.00x)
             val zoomVal = settings.editorBgZoom.coerceIn(1f, 3f)
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
               Row(
@@ -543,7 +495,6 @@ fun AppearanceStudioContent(
 
             HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.75.dp)
 
-            // Readability Tint / Scrim Slider (0% - 85%)
             val scrimPct = (settings.editorBgScrim.coerceIn(0f, 0.85f) * 100f).roundToInt()
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
               Row(
@@ -571,6 +522,7 @@ fun AppearanceStudioContent(
         }
       }
     }
+    }
   }
 }
 
@@ -589,7 +541,7 @@ private fun InteractiveEditorBackgroundPreview(
   val sampleCode =
     remember(indent) {
       """export default {
-${indent}async fetch(req: Request, env: Env): Promise<Response> {
+${indent}async fetch(req, env) {
 ${indent}${indent}const colo = req.cf?.colo ?? "EDGE";
 ${indent}${indent}const data = await env.KV.get("status");
 ${indent}${indent}return Response.json({ ok: true, colo, data });
@@ -598,7 +550,7 @@ ${indent}},
     }
   val highlighted =
     remember(sampleCode, palette) {
-      SyntaxHighlighter.highlight(sampleCode, WorkerLanguage.TYPESCRIPT, palette)
+      SyntaxHighlighter.highlight(sampleCode, WorkerLanguage.JAVASCRIPT, palette)
     }
 
   Box(

@@ -250,29 +250,46 @@ class LinuxTerminalEngine(
 
   fun syncWorkspaceToDisk(workspace: WorkerWorkspace?) {
     val ws = workspace ?: return
-    val wsDir = File(rootWorkspacesDir, ws.scriptName).apply { mkdirs() }
-    if (lastSyncedScript != ws.scriptName) {
+    val safeScriptName = ws.scriptName.ifBlank { "scratch" }.replace(Regex("[/\\\\:*?\"<>|]"), "_")
+    val wsDir = File(rootWorkspacesDir, safeScriptName)
+    if (wsDir.exists() && wsDir.isFile) {
+      wsDir.delete()
+    }
+    wsDir.mkdirs()
+    if (lastSyncedScript != safeScriptName) {
       activeSession().currentDir = wsDir
-      lastSyncedScript = ws.scriptName
+      lastSyncedScript = safeScriptName
     }
     sessions.values.forEach { st ->
-      st.sessionEnv["WORKER"] = ws.scriptName
+      st.sessionEnv["WORKER"] = safeScriptName
       st.sessionEnv["COMPAT_DATE"] = ws.compatibilityDate
       ws.workersDevUrl?.let { st.sessionEnv["BASE_URL"] = it } ?: st.sessionEnv.remove("BASE_URL")
     }
 
     val activePaths = ws.files.filterNot { it.isVirtualReadOnly }.map { it.path }.toSet()
-    wsDir.walkTopDown().filter { it.isFile }.forEach { f ->
-      val rel = f.relativeTo(wsDir).path.replace('\\', '/')
-      if (!rel.startsWith(".git/") && !rel.startsWith(".edgecode/") && rel !in activePaths) {
-        f.delete()
+    runCatching {
+      wsDir.walkTopDown().filter { it.isFile }.forEach { f ->
+        val rel = f.relativeTo(wsDir).path.replace('\\', '/')
+        if (!rel.startsWith(".git/") && !rel.startsWith(".edgecode/") && rel !in activePaths) {
+          f.delete()
+        }
       }
     }
     for (wf in ws.files) {
+      if (wf.path.isBlank()) continue
       val dest = File(wsDir, wf.path)
-      dest.parentFile?.mkdirs()
-      if (!dest.exists() || dest.readText(Charsets.UTF_8) != wf.content) {
-        dest.writeText(wf.content, Charsets.UTF_8)
+      if (dest.isDirectory) {
+        dest.deleteRecursively()
+      }
+      dest.parentFile?.let { parent ->
+        if (parent.isFile) parent.delete()
+        parent.mkdirs()
+      }
+      runCatching {
+        val current = if (dest.exists() && dest.isFile) dest.readText(Charsets.UTF_8) else null
+        if (current != wf.content) {
+          dest.writeText(wf.content, Charsets.UTF_8)
+        }
       }
     }
   }
@@ -332,7 +349,9 @@ class LinuxTerminalEngine(
     sessionId: String? = null,
     onLiveOutput: (String) -> Unit = {},
   ): ShellExecutionResult {
-    syncWorkspaceToDisk(workspace)
+    withContext(Dispatchers.IO) {
+      syncWorkspaceToDisk(workspace)
+    }
     val session = sessionFor(sessionId)
     val normalized = ShellTokenizer.normalizeMultilineCommand(rawInput)
     if (normalized.isBlank()) {
@@ -382,7 +401,7 @@ class LinuxTerminalEngine(
       }
     }
 
-    val syncedBack = readUpdatedFilesFromDisk(workspace)
+    val syncedBack = withContext(Dispatchers.IO) { readUpdatedFilesFromDisk(workspace) }
     val finalOutput = combinedOutputs.joinToString("\n")
     return lastResult.copy(
       output = finalOutput.ifBlank { lastResult.output },
@@ -511,7 +530,7 @@ class LinuxTerminalEngine(
         pathArg.startsWith("/") -> File(pathArg)
         else -> File(baseDir, pathArg)
       }
-    return raw.canonicalFile
+    return runCatching { raw.canonicalFile }.getOrElse { raw.absoluteFile }
   }
 
   private fun parseInputRedirection(stageCmd: String): Pair<String, String?> {
@@ -693,7 +712,7 @@ class LinuxTerminalEngine(
     }
 
     if (cmd == "alias") {
-      val arg = stageCmd.removePrefix("alias").trim()
+      val arg = stageCmd.trimStart().removePrefix("alias").trim()
       if (arg.isEmpty()) {
         val list = session.aliases.entries.sortedBy { it.key }.joinToString("\n") { "alias ${it.key}='${it.value}'" }
         return ShellExecutionResult(output = list.ifBlank { "(no aliases)" })
@@ -955,6 +974,33 @@ class LinuxTerminalEngine(
         )
     }
 
+    if (CodeRunnerEngine.isCodeRunnerCommand(cmd, tokens, session.currentDir)) {
+      return CodeRunnerEngine.execute(
+        context = context,
+        tokens = tokens,
+        stdin = stdin,
+        currentDir = session.currentDir,
+        workspace = workspace,
+        env = session.sessionEnv,
+        onLiveOutput = onLiveOutput,
+        onRunShellCommand = { subCmd ->
+          executePipelineCommand(
+            rawCommand = subCmd,
+            session = session,
+            workspace = workspace,
+            account = account,
+            history = history,
+            onWranglerDeploy = onWranglerDeploy,
+            onWranglerTailStart = onWranglerTailStart,
+            onWranglerTailStop = onWranglerTailStop,
+            onWranglerRollback = onWranglerRollback,
+            onGitCommand = onGitCommand,
+            onLiveOutput = onLiveOutput,
+          )
+        },
+      )
+    }
+
     return executeRealLinuxShell(stageCmd, stdin, session, onLiveOutput)
   }
 
@@ -968,6 +1014,7 @@ class LinuxTerminalEngine(
         "tree", "zip", "unzip", "base64", "sha256sum", "sha1sum", "md5sum", "sha512sum",
         "uuid", "uuidgen", "calc", "jq", "curl", "http", "fetch", "wget", "nslookup", "dig", "dns",
         "ping", "tcping", "wrangler", "git",
+        "run", "node", "nodejs", "js", "ts", "tsx", "ts-node", "npm", "npx",
       )
     session.aliases[query]?.let { return "$query: aliased to '$it'" }
     if (query in builtins) return "/usr/local/bin/$query (EdgeCode builtin)"
@@ -2043,7 +2090,9 @@ class LinuxTerminalEngine(
           session.activeStdinWriter = null
         }
 
+        val maxOutputChars = 512 * 1024
         val collected = StringBuilder()
+        var truncated = false
         val readerThread =
           Thread {
             runCatching {
@@ -2053,7 +2102,13 @@ class LinuxTerminalEngine(
               while (true) {
                 val n = reader.read(buf)
                 if (n <= 0) break
-                collected.appendRange(buf, 0, n)
+                val remaining = maxOutputChars - collected.length
+                if (remaining > 0) {
+                  collected.appendRange(buf, 0, minOf(n, remaining))
+                } else if (!truncated) {
+                  truncated = true
+                  collected.append("\n[output truncated]")
+                }
                 val now = System.currentTimeMillis()
                 if (now - lastEmit >= 75L) {
                   lastEmit = now
@@ -2100,7 +2155,7 @@ class LinuxTerminalEngine(
 
         readerThread.join(1500)
         val text = collected.toString().trimEnd()
-        val code = process.exitValue()
+        val code = runCatching { process.exitValue() }.getOrDefault(if (session.interruptedByUser) 130 else 1)
         if (session.interruptedByUser) {
           return@withContext ShellExecutionResult(
             output = (if (text.isNotBlank()) "$text\n" else "") + "^C",
@@ -2208,6 +2263,7 @@ class LinuxTerminalEngine(
       appendLine("  Archives : zip, unzip, tar, gzip, gunzip, base64, sha256sum, sha1sum, md5sum, sha512sum, uuidgen")
       appendLine("  Network  : curl (-o/-O/-i/-v), wget, nslookup, dig, ping, tcping, nc")
       appendLine("  JSON/Math: jq (-r/-c), calc")
+      appendLine("  Code Run : run [file], node/js [-e code|file], ts/tsx [file], npm <run|test|start>, sh <file.sh>")
       appendLine("  Cloud/Git: wrangler, git")
       appendLine("  IDE      : nano/vi/edit/open <file>, projects, ide <project>, zipimport <file.zip>, sysinfo")
       if (systemBins.isNotEmpty()) {
@@ -2221,31 +2277,20 @@ class LinuxTerminalEngine(
 
   private fun buildHelpText(): String =
     """
-    EdgeCode Lightweight Linux Terminal
-    -----------------------------------
-    Shell & Chaining:
-      cmd1 && cmd2 ; cmd3 | jq -r .key > out.txt
-      cd <dir|~|->, pwd, export K=V, alias ll='ls -la', which <cmd>, clear, history
+    EdgeCode Terminal
+    -----------------
+    Code Runner:
+      run [file] [--fetch]                Run entry/active file or script
+      node -e "console.log(1+1)" | file.js
+      ts file.ts | npm run <script> | npm test | sh script.sh
 
-    Files, Editor & Archives:
-      ls -la, tree -L 3, cat, grep -rn, find, touch, mkdir, rm, cp, mv
-      nano <file> / edit <file>           Open inline file editor anywhere
-      zip -r out.zip src/                 Create .zip archive
-      unzip [-l] file.zip [-d dir]        Inspect or extract .zip archive
-      zipimport app.zip                   Import .zip as EdgeCode project
-      projects | ide <name>               List or open EdgeCode projects
+    Shell & Files:
+      cd, pwd, ls -la, cat, grep -rn, find, nano <file>, zip, unzip
+      curl -i <url> | wget <url> | jq -r . | calc 2^10
 
-    Network & Crypto:
-      curl -i /health | curl -o a.zip URL | wget <url> [-O file]
-      nslookup <host> | ping <host> | tcping <host> [port]
-      sha256sum | md5sum | base64 [-d] | uuidgen | jq [-r] | calc 2^10
-
-    System & Packages:
-      sysinfo | neofetch | pkg | toolbox | uname -a
-
-    Cloudflare & GitHub CLI:
-      wrangler whoami | list | deploy | tail | d1 | r2 | kv:key | pages | queues
-      git status | diff | log | branch | add | commit | push | pull | clone
+    Cloudflare & GitHub:
+      wrangler whoami | list | deploy | tail | d1 | r2 | kv:key | pages
+      git status | diff | log | add | commit | push | pull | clone
     """.trimIndent()
 
   fun autocomplete(input: String, workspace: WorkerWorkspace?, sessionId: String? = null): String {
@@ -2256,6 +2301,13 @@ class LinuxTerminalEngine(
     val candidates = buildList {
       addAll(
         listOf(
+          "run ",
+          "node ",
+          "node -e \"",
+          "ts ",
+          "npm run ",
+          "npm test",
+          "sh ",
           "sysinfo",
           "pkg",
           "tree -L 2",

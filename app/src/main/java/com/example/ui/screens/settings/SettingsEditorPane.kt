@@ -29,6 +29,8 @@ import androidx.compose.material.icons.outlined.FormatListNumbered
 import androidx.compose.material.icons.outlined.Keyboard
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.TextFields
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.UnfoldLess
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
@@ -62,13 +64,27 @@ fun SettingsEditorPane(
 ) {
   val palette = LocalIdePalette.current
 
+  val enabledEditorFlags =
+    listOf(
+      settings.wordWrap,
+      settings.showLineNumbers,
+      settings.codeFolding,
+      settings.stickyHeaders,
+      settings.indentGuides,
+      settings.gutterDiffMarkers,
+      settings.autoCloseBrackets,
+      settings.softKeyboardSuggestions,
+    ).count { it }
+
   Column(
     modifier = modifier.fillMaxWidth().testTag("settings_editor_section"),
-    verticalArrangement = Arrangement.spacedBy(16.dp),
+    verticalArrangement = Arrangement.spacedBy(12.dp),
   ) {
-    SettingsGroup(
-      label = "Typography",
-      trailingValue = "${settings.fontSizeSp}sp · ${settings.tabSize}sp",
+    SettingsFoldableSection(
+      title = "Typography",
+      icon = Icons.Outlined.TextFields,
+      summary = "${settings.fontSizeSp}sp · ${settings.tabSize}sp",
+      initiallyExpanded = false,
       contentPadding = 14.dp,
     ) {
       val sampleLines =
@@ -76,7 +92,7 @@ fun SettingsEditorPane(
           val indent = " ".repeat(settings.tabSize)
           listOf(
             "export default {",
-            "${indent}async fetch(req: Request): Promise<Response> {",
+            "${indent}async fetch(req) {",
             "${indent}${indent}return Response.json({ ok: true, edge: \"cf\" });",
             "${indent}}",
             "};",
@@ -87,7 +103,7 @@ fun SettingsEditorPane(
           sampleLines.map { line ->
             SyntaxHighlighter.highlight(
               code = line,
-              language = WorkerLanguage.TYPESCRIPT,
+              language = WorkerLanguage.JAVASCRIPT,
               palette = palette,
             )
           }
@@ -111,7 +127,7 @@ fun SettingsEditorPane(
               horizontalArrangement = Arrangement.SpaceBetween,
             ) {
               Text(
-                text = "worker.ts",
+                text = "worker.js",
                 fontFamily = JetBrainsMono,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Medium,
@@ -281,7 +297,12 @@ fun SettingsEditorPane(
       }
     }
 
-    SettingsGroup(label = "Editor") {
+    SettingsFoldableSection(
+      title = "Editor",
+      icon = Icons.Outlined.Tune,
+      summary = "$enabledEditorFlags/8",
+      initiallyExpanded = false,
+    ) {
       SettingsToggleRow(
         title = "Word Wrap",
         leadingIcon = Icons.AutoMirrored.Outlined.WrapText,
@@ -339,9 +360,11 @@ fun SettingsEditorPane(
       )
     }
 
-    SettingsGroup(
-      label = "Auto-Save",
-      trailingValue = if (settings.autoSaveEnabled) "${settings.autoSaveIntervalSeconds}s" else "Off",
+    SettingsFoldableSection(
+      title = "Auto-Save",
+      icon = Icons.Outlined.Save,
+      summary = if (settings.autoSaveEnabled) "${settings.autoSaveIntervalSeconds}s" else "Off",
+      initiallyExpanded = false,
     ) {
       SettingsToggleRow(
         title = "Auto-Save",

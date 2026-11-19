@@ -53,6 +53,7 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
@@ -480,7 +481,6 @@ fun HomeScreen(
     return
   }
 
-  // Optional Full-Screen GitHub Hub Overlay (kept completely separate from primary Projects & Editor)
   if (showingGitHubOverlay) {
     Scaffold(
       containerColor = palette.chromeBg,
@@ -518,13 +518,13 @@ fun HomeScreen(
                 fontWeight = FontWeight.SemiBold,
                 color = palette.textPrimary,
               )
-              Text(
-                text =
-                  uiState.gitHubCreds?.login?.let { "@$it · Optional Git integration" }
-                    ?: "Optional source control, clone & pull requests",
-                style = MaterialTheme.typography.labelSmall,
-                color = palette.textMuted,
-              )
+              uiState.gitHubCreds?.login?.let { login ->
+                Text(
+                  text = "@$login",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = palette.textMuted,
+                )
+              }
             }
             if (uiState.isGitHubBusy) {
               CircularProgressIndicator(modifier = Modifier.size(18.dp).padding(end = 4.dp), strokeWidth = 2.dp)
@@ -775,7 +775,6 @@ fun HomeScreen(
             }
           }
 
-          // Slim flat header action buttons with hairline border
           Surface(
             onClick = { viewModel.setShowHomeGitHubHub(true) },
             shape = CircleShape,
@@ -1092,7 +1091,6 @@ private fun HomeProjectsTabContent(
     contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp),
     verticalArrangement = Arrangement.spacedBy(14.dp),
   ) {
-    // Clean Thin Primary Action Row (+ New project + Import .json square tile)
     item(key = "home_actions") {
       Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1177,7 +1175,6 @@ private fun HomeProjectsTabContent(
       }
     }
 
-    // Compact Quick-Access Chips (API Vault & GitHub) without bloated descriptions
     item(key = "home_quick_cards") {
       Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1210,7 +1207,6 @@ private fun HomeProjectsTabContent(
       }
     }
 
-    // Search Filter
     item(key = "home_search") {
       OutlinedTextField(
         value = searchQuery,
@@ -1230,61 +1226,65 @@ private fun HomeProjectsTabContent(
       )
     }
 
-    // Native Phone Folder Permission Prompt (when device external storage access is not yet granted)
     if (!uiState.projectStorageSummary.hasNativeStorageAccess) {
       item(key = "home_storage_permission") {
+        var showStorageInfo by remember { mutableStateOf(false) }
         Surface(
           color = palette.glassElevated,
           shape = RoundedCornerShape(14.dp),
           border = rememberGlassBorderStroke(0.75.dp),
           modifier = Modifier.fillMaxWidth().testTag("home_storage_permission_card"),
         ) {
-          Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-          ) {
-            Surface(
-              color = palette.activePillBg,
-              shape = RoundedCornerShape(12.dp),
-              modifier = Modifier.size(38.dp),
+          Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-              Box(contentAlignment = Alignment.Center) {
-                Icon(
-                  imageVector = Icons.Outlined.Folder,
-                  contentDescription = null,
-                  tint = palette.activePillFg,
-                  modifier = Modifier.size(19.dp),
-                )
+              Surface(
+                color = palette.activePillBg,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.size(36.dp),
+              ) {
+                Box(contentAlignment = Alignment.Center) {
+                  Icon(
+                    imageVector = Icons.Outlined.Folder,
+                    contentDescription = null,
+                    tint = palette.activePillFg,
+                    modifier = Modifier.size(18.dp),
+                  )
+                }
               }
-            }
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
               Text(
-                text = "Dedicated Phone Folder",
+                text = "Folder Access",
                 fontSize = 13.5.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = palette.textPrimary,
+                modifier = Modifier.weight(1f),
               )
+              IconButton(onClick = { showStorageInfo = !showStorageInfo }, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Outlined.Info, contentDescription = "Storage info", tint = palette.textMuted, modifier = Modifier.size(16.dp))
+              }
+              Surface(
+                onClick = onRequestStorageAccess,
+                shape = RoundedCornerShape(12.dp),
+                color = palette.ctaBg,
+                modifier = Modifier.testTag("home_grant_storage_button"),
+              ) {
+                Text(
+                  text = "Allow",
+                  fontSize = 12.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = palette.ctaFg,
+                  modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                )
+              }
+            }
+            AnimatedVisibility(visible = showStorageInfo) {
               Text(
-                text = "Allow file access to store all projects in Phone Storage/EdgeCode/",
+                text = "Phone Storage/EdgeCode/",
                 fontSize = 11.5.sp,
                 color = palette.textSecondary,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-              )
-            }
-            Surface(
-              onClick = onRequestStorageAccess,
-              shape = RoundedCornerShape(12.dp),
-              color = palette.ctaBg,
-              modifier = Modifier.testTag("home_grant_storage_button"),
-            ) {
-              Text(
-                text = "Allow",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = palette.ctaFg,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
               )
             }
           }
@@ -1292,7 +1292,6 @@ private fun HomeProjectsTabContent(
       }
     }
 
-    // Auto-managed Dedicated Project Directory Pill Header
     item(key = "ram_header") {
       Row(
         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -1307,14 +1306,11 @@ private fun HomeProjectsTabContent(
           val kb =
             uiState.projectStorageSummary.totalDiskKb.takeIf { it > 0 }
               ?: uiState.ramDbStats.estimatedRamKb
-          val folderLabel = uiState.projectStorageSummary.rootDisplayPath.ifBlank { "EdgeCodeProjects" }
           Text(
-            text = "$folderLabel · $kb KB",
+            text = "$kb KB",
             fontFamily = JetBrainsMono,
             fontSize = 11.sp,
             color = palette.textMuted,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
           )
         }
       }
@@ -1322,23 +1318,27 @@ private fun HomeProjectsTabContent(
 
     if (ramWorkspaces.isEmpty()) {
       item(key = "ram_empty") {
+        var showEmptyInfo by remember { mutableStateOf(false) }
         Surface(
+          onClick = { showEmptyInfo = !showEmptyInfo },
           color = palette.glassSurface,
           shape = RoundedCornerShape(14.dp),
           border = rememberGlassBorderStroke(0.75.dp),
           modifier = Modifier.fillMaxWidth(),
         ) {
-          Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-          ) {
-            Text(
-              text = "No saved projects yet — tap + New project to create one.",
-              style = MaterialTheme.typography.bodySmall,
-              color = palette.textSecondary,
-              modifier = Modifier.weight(1f),
-            )
+          Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              Icon(Icons.Outlined.Folder, contentDescription = null, tint = palette.textMuted, modifier = Modifier.size(16.dp))
+              Spacer(Modifier.weight(1f))
+              Icon(Icons.Outlined.Info, contentDescription = "Empty workspace info", tint = palette.textMuted, modifier = Modifier.size(16.dp))
+            }
+            AnimatedVisibility(visible = showEmptyInfo) {
+              Text(
+                text = "No projects yet. Tap + to create.",
+                style = MaterialTheme.typography.bodySmall,
+                color = palette.textSecondary,
+              )
+            }
           }
         }
       }
@@ -1354,7 +1354,6 @@ private fun HomeProjectsTabContent(
       }
     }
 
-    // Featured "Pick up where you left off" Resume Card
     if (latestProject != null && q.isEmpty()) {
       item(key = "resume_featured_card") {
         val ws = latestProject.workingWorkspace
@@ -1411,7 +1410,6 @@ private fun HomeProjectsTabContent(
       }
     }
 
-    // Remote Cloudflare Workers section (when signed into Cloudflare)
     if (!uiState.isLocalScratchpad && uiState.credentials != null) {
       item(key = "cf_header") {
         Row(
@@ -1444,29 +1442,30 @@ private fun HomeProjectsTabContent(
 
       if (cloudWorkers.isEmpty() && !uiState.isLoadingWorkers) {
         item(key = "cf_empty") {
+          var showCfEmptyInfo by remember { mutableStateOf(false) }
           Surface(
+            onClick = { showCfEmptyInfo = !showCfEmptyInfo },
             color = palette.glassSurface,
             shape = RoundedCornerShape(14.dp),
             border = rememberGlassBorderStroke(0.75.dp),
             modifier = Modifier.fillMaxWidth(),
           ) {
             Column(
-              modifier = Modifier.padding(18.dp),
-              verticalArrangement = Arrangement.spacedBy(6.dp),
+              modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+              verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-              Text(
-                text = if (q.isEmpty()) "No Cloudflare Workers found" else "No matching Workers",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = palette.textPrimary,
-              )
-              Text(
-                text =
-                  if (q.isEmpty()) "Tap New project above to create and deploy your first Worker."
-                  else "Try clearing the search filter or refreshing your account Workers.",
-                style = MaterialTheme.typography.bodySmall,
-                color = palette.textSecondary,
-              )
+              Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Icons.Outlined.CloudQueue, contentDescription = null, tint = palette.textMuted, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.weight(1f))
+                Icon(Icons.Outlined.Info, contentDescription = "Workers empty info", tint = palette.textMuted, modifier = Modifier.size(16.dp))
+              }
+              AnimatedVisibility(visible = showCfEmptyInfo) {
+                Text(
+                  text = if (q.isEmpty()) "No Workers found." else "No matching Workers.",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = palette.textSecondary,
+                )
+              }
             }
           }
         }

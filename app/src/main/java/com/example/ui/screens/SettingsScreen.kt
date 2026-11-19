@@ -159,10 +159,7 @@ fun SettingsScreen(
         ) {
           when (category) {
             SettingsCategory.APPEARANCE -> {
-              SettingsGroup(
-                contentPadding = 14.dp,
-                modifier = Modifier.testTag("settings_appearance_section"),
-              ) {
+              Box(modifier = Modifier.fillMaxWidth().testTag("settings_appearance_section")) {
                 AppearanceStudioContent(
                   settings = settings,
                   onUpdateSettings = onUpdateSettings,
@@ -291,7 +288,6 @@ fun SettingsScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-      // Clean single-line Top Header
       Row(
         modifier =
           Modifier

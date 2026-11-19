@@ -32,6 +32,7 @@ import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.ContentPaste
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.VerifiedUser
@@ -109,11 +110,13 @@ fun AuthScreen(
   var globalKeyInput by rememberSaveable { mutableStateOf("") }
   var showGlobalKey by rememberSaveable { mutableStateOf(false) }
 
-  var ghAuthMode by rememberSaveable { mutableIntStateOf(0) } // 0 = OAuth Device Flow, 1 = PAT
+  var ghAuthMode by rememberSaveable { mutableIntStateOf(0) }
   var ghPatInput by rememberSaveable { mutableStateOf("") }
   var showGhPat by rememberSaveable { mutableStateOf(false) }
   var ghCustomClientId by rememberSaveable { mutableStateOf("") }
   var showGhClientIdField by rememberSaveable { mutableStateOf(false) }
+  var showAuthInfo by rememberSaveable { mutableStateOf(false) }
+  var showGhInfo by rememberSaveable { mutableStateOf(false) }
 
   val clipboard = LocalClipboardManager.current
   val globalKeyFocusRequester = remember { FocusRequester() }
@@ -143,7 +146,6 @@ fun AuthScreen(
           .padding(horizontal = 20.dp, vertical = 16.dp),
       verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-      // Compact Material You Hero Card so fields remain visible above soft keyboard
       Box(
         modifier =
           Modifier
@@ -201,7 +203,6 @@ fun AuthScreen(
         }
       }
 
-      // Cloudflare Authorization Card
       ElevatedCard(
         shape = RoundedCornerShape(24.dp),
         colors =
@@ -213,50 +214,70 @@ fun AuthScreen(
       ) {
         Column(
           modifier = Modifier.padding(18.dp),
-          verticalArrangement = Arrangement.spacedBy(14.dp),
+          verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-          Text(
-            text = stringResource(R.string.auth_subtitle),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
-
-          SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-            tabs.forEachIndexed { index, title ->
-              SegmentedButton(
-                selected = selectedTab == index,
-                onClick = { selectedTab = index },
-                shape = SegmentedButtonDefaults.itemShape(index = index, count = tabs.size),
-                modifier = Modifier.testTag("auth_tab_$index"),
-              ) {
-                Text(title, maxLines = 1)
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.weight(1f)) {
+              tabs.forEachIndexed { index, title ->
+                SegmentedButton(
+                  selected = selectedTab == index,
+                  onClick = { selectedTab = index },
+                  shape = SegmentedButtonDefaults.itemShape(index = index, count = tabs.size),
+                  modifier = Modifier.testTag("auth_tab_$index"),
+                ) {
+                  Text(title, maxLines = 1)
+                }
               }
             }
+            IconButton(
+              onClick = { showAuthInfo = !showAuthInfo },
+              modifier = Modifier.size(34.dp).testTag("auth_info_toggle"),
+            ) {
+              Icon(
+                imageVector = Icons.Outlined.Info,
+                contentDescription = "Auth help",
+                tint = if (showAuthInfo) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+              )
+            }
+          }
+
+          AnimatedVisibility(visible = showAuthInfo) {
+            Text(
+              text = stringResource(R.string.auth_subtitle),
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
           }
 
           when (selectedTab) {
             0 -> {
               Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Surface(
-                  color = MaterialTheme.colorScheme.surfaceContainerLow,
-                  shape = RoundedCornerShape(14.dp),
-                ) {
-                  Row(
-                    modifier = Modifier.padding(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                AnimatedVisibility(visible = showAuthInfo) {
+                  Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    shape = RoundedCornerShape(14.dp),
                   ) {
-                    Icon(
-                      imageVector = Icons.Outlined.Lock,
-                      contentDescription = null,
-                      tint = MaterialTheme.colorScheme.primary,
-                    )
-                    Text(
-                      text =
-                        "Native OAuth 2.0 PKCE sign-in with automatic token refresh via localhost:8976.",
-                      style = MaterialTheme.typography.bodySmall,
-                      color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Row(
+                      modifier = Modifier.padding(12.dp),
+                      horizontalArrangement = Arrangement.spacedBy(10.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                      Icon(
+                        imageVector = Icons.Outlined.Lock,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                      )
+                      Text(
+                        text =
+                          "OAuth 2.0 PKCE via localhost:8976.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                      )
+                    }
                   }
                 }
 
@@ -525,7 +546,6 @@ fun AuthScreen(
         }
       }
 
-      // Primary Offline / Local Projects Home Entry
       OutlinedButton(
         onClick = onOpenLocalScratchpad,
         shape = RoundedCornerShape(16.dp),
@@ -537,10 +557,9 @@ fun AuthScreen(
       ) {
         Icon(Icons.Outlined.Code, contentDescription = null, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
-        Text("Open Local Projects (No Sign-In)", fontWeight = FontWeight.Medium)
+        Text("Local Projects", fontWeight = FontWeight.Medium)
       }
 
-      // Optional, tucked-away GitHub section
       var showOptionalGitHub by rememberSaveable { mutableStateOf(false) }
       TextButton(
         onClick = { showOptionalGitHub = !showOptionalGitHub },
@@ -550,9 +569,8 @@ fun AuthScreen(
         Spacer(Modifier.width(6.dp))
         Text(
           text =
-            if (uiState.gitHubCreds != null) "GitHub Connected (@${uiState.gitHubCreds.login})"
-            else if (showOptionalGitHub) "Hide GitHub Sign-In"
-            else "GitHub Integration (Optional)",
+            if (uiState.gitHubCreds != null) "@${uiState.gitHubCreds.login}"
+            else "GitHub",
           style = MaterialTheme.typography.labelMedium,
         )
       }
@@ -581,18 +599,30 @@ fun AuthScreen(
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(20.dp),
               )
-              Column(modifier = Modifier.weight(1f)) {
-                Text(
-                  text = "GitHub (Optional)",
-                  style = MaterialTheme.typography.titleMedium,
-                  fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                  text = "Repos, branches, commits, PRs & Actions",
-                  style = MaterialTheme.typography.bodySmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+              Text(
+                text = "GitHub",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+              )
+              IconButton(
+                onClick = { showGhInfo = !showGhInfo },
+                modifier = Modifier.size(30.dp),
+              ) {
+                Icon(
+                  imageVector = Icons.Outlined.Info,
+                  contentDescription = "GitHub info",
+                  tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                  modifier = Modifier.size(16.dp),
                 )
               }
+            }
+            AnimatedVisibility(visible = showGhInfo) {
+              Text(
+                text = "Repos, branches, commits & PRs",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
             }
 
             if (uiState.gitHubCreds != null) {

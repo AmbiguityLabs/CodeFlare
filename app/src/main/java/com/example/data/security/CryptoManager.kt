@@ -9,10 +9,6 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/**
- * Encrypts and decrypts Cloudflare OAuth tokens and API keys using a hardware-backed
- * AES-256-GCM key stored in Android Keystore.
- */
 object CryptoManager {
   private const val ANDROID_KEYSTORE = "AndroidKeyStore"
   private const val KEY_ALIAS = "edgecode_cf_auth_aes_key"
@@ -42,22 +38,26 @@ object CryptoManager {
 
   fun encrypt(plaintext: String): String {
     if (plaintext.isEmpty()) return ""
-    val cipher = Cipher.getInstance(TRANSFORMATION)
-    cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
-    val iv = cipher.iv
-    val ciphertext = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
-    val combined = ByteArray(1 + iv.size + ciphertext.size)
-    combined[0] = iv.size.toByte()
-    System.arraycopy(iv, 0, combined, 1, iv.size)
-    System.arraycopy(ciphertext, 0, combined, 1 + iv.size, ciphertext.size)
-    return Base64.encodeToString(combined, Base64.NO_WRAP)
+    return runCatching {
+      val cipher = Cipher.getInstance(TRANSFORMATION)
+      cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
+      val iv = cipher.iv
+      val ciphertext = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
+      val combined = ByteArray(1 + iv.size + ciphertext.size)
+      combined[0] = iv.size.toByte()
+      System.arraycopy(iv, 0, combined, 1, iv.size)
+      System.arraycopy(ciphertext, 0, combined, 1 + iv.size, ciphertext.size)
+      Base64.encodeToString(combined, Base64.NO_WRAP)
+    }.getOrDefault("")
   }
 
   fun decrypt(encoded: String): String {
     if (encoded.isEmpty()) return ""
     return runCatching {
         val combined = Base64.decode(encoded, Base64.NO_WRAP)
+        if (combined.isEmpty()) return ""
         val ivLen = combined[0].toInt() and 0xFF
+        if (ivLen !in 1..32 || 1 + ivLen > combined.size) return ""
         val iv = combined.copyOfRange(1, 1 + ivLen)
         val ciphertext = combined.copyOfRange(1 + ivLen, combined.size)
         val cipher = Cipher.getInstance(TRANSFORMATION)

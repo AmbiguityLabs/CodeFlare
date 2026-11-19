@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
@@ -122,15 +124,23 @@ fun CloudflarePagesPanel(
   }
 
   if (uiState.isLocalScratchpad) {
+    var showPagesInfo by remember { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-      Text("CLOUDFLARE PAGES", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
-      Surface(color = palette.chromePill, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-        Text(
-          text = "Connect your Cloudflare API Token or Global Key to manage Pages sites, Direct Upload deployments (folder/ZIP), build config, bindings, logs, and custom domains.",
-          style = MaterialTheme.typography.bodySmall,
-          color = palette.textSecondary,
-          modifier = Modifier.padding(14.dp),
-        )
+      Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text("PAGES", style = MaterialTheme.typography.labelSmall, color = palette.textMuted, modifier = Modifier.weight(1f))
+        IconButton(onClick = { showPagesInfo = !showPagesInfo }, modifier = Modifier.size(28.dp)) {
+          Icon(Icons.Outlined.Info, contentDescription = "Pages info", tint = palette.textMuted, modifier = Modifier.size(16.dp))
+        }
+      }
+      AnimatedVisibility(visible = showPagesInfo) {
+        Surface(color = palette.chromePill, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+          Text(
+            text = "Connect Cloudflare to deploy Pages sites, builds & domains.",
+            style = MaterialTheme.typography.bodySmall,
+            color = palette.textSecondary,
+            modifier = Modifier.padding(12.dp),
+          )
+        }
       }
       PagesSpecialFilesCard(onCreatePagesSpecialFile = onCreatePagesSpecialFile)
     }

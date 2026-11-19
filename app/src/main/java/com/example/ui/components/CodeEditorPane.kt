@@ -54,6 +54,7 @@ import androidx.compose.material.icons.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.ListAlt
 import androidx.compose.material.icons.outlined.NoteAdd
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Search
@@ -131,11 +132,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
-/**
- * Isolated mutable state holder read ONLY by tiny leaf HUD composables
- * (status line cursor counter, floating autocomplete bar, zoom pill, floating diagnostic pill).
- * Updating these fields during typing NEVER recomposes CodeEditorPane or the native editor view.
- */
 @Stable
 private class EditorLiveHudHolder(initialZoomPercent: Int) {
   var telemetry by mutableStateOf(EditorCursorTelemetry())
@@ -191,6 +187,7 @@ fun CodeEditorPane(
   onRequestSmartRename: (initialSymbol: String?) -> Unit = {},
   onOpenLocalHistory: () -> Unit = {},
   onOpenProjectSearch: () -> Unit = {},
+  onRunActiveFile: () -> Unit = {},
   editorCommandRequest: Pair<Long, String>? = null,
   modifier: Modifier = Modifier,
 ) {
@@ -323,7 +320,6 @@ fun CodeEditorPane(
       return
     }
 
-    // Flush any pending typed text when switching tabs, pausing app, deploying, or leaving the editor
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(activeFile.path, lifecycleOwner) {
       onRegisterFlushHook { editorController.flushNow() }
@@ -365,7 +361,6 @@ fun CodeEditorPane(
         }
     }
 
-    // Tab-history navigation chevrons (< >) + Breadcrumb Strip (Layer 2: Tabs & Path)
     AnimatedVisibility(
       visible = !uiState.isEditorTopChromeHidden,
       enter = slideInVertically(tween(170)) { -it } + fadeIn(tween(150)),
@@ -485,6 +480,24 @@ fun CodeEditorPane(
         }
       }
 
+      val extLower = activeFile.path.substringAfterLast('.', "").lowercase()
+      val isRunnableFile =
+        !activeFile.isVirtualReadOnly &&
+          extLower in setOf("js", "mjs", "cjs", "ts", "tsx", "sh", "json")
+      if (isRunnableFile) {
+        IconButton(
+          onClick = { flushThen(onRunActiveFile) },
+          modifier = Modifier.size(32.dp).testTag("run_active_file_button"),
+        ) {
+          Icon(
+            Icons.Outlined.PlayArrow,
+            contentDescription = "Run in terminal",
+            tint = EmeraldLive,
+            modifier = Modifier.size(18.dp),
+          )
+        }
+      }
+
       if (symbols.isNotEmpty()) {
         Box {
           IconButton(
@@ -599,7 +612,6 @@ fun CodeEditorPane(
     }
     }
 
-    // Compute active tab find match ranges ONLY when Find bar is open
     val activeFindMatches =
       remember(uiState.showFindBar, uiState.findQuery, uiState.findMatchCase, syncedTfv.text) {
         if (!uiState.showFindBar || uiState.findQuery.isEmpty()) {
@@ -668,7 +680,6 @@ fun CodeEditorPane(
         }
       }
 
-    // Collapsible Multi-File Tab Find & Replace Bar (Ultra-thin hairline style)
     AnimatedVisibility(visible = uiState.showFindBar) {
       Surface(
         color = palette.chromeSurface,
@@ -679,7 +690,6 @@ fun CodeEditorPane(
           modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
           verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-          // Row 1: Find input + Match Count + Case Toggle + Prev/Next + Close
           Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -741,7 +751,6 @@ fun CodeEditorPane(
               }
             }
 
-            // Case-sensitive (Aa) toggle
             Surface(
               onClick = onToggleFindMatchCase,
               shape = RoundedCornerShape(7.dp),
@@ -810,7 +819,6 @@ fun CodeEditorPane(
             }
           }
 
-          // Row 2: Replace Input + Single Replace + Replace All (when writable)
           if (!activeFile.isVirtualReadOnly) {
             Row(
               modifier = Modifier.fillMaxWidth(),
@@ -882,7 +890,6 @@ fun CodeEditorPane(
             }
           }
 
-          // Row 3: Multi-File Scope Selector (This Tab / Open Tabs / All Files)
           Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -962,7 +969,6 @@ fun CodeEditorPane(
 
     val hasCustomBg = rememberHasActiveEditorBackground(uiState.editorSettings)
 
-    // Native Hardware-Accelerated Code Canvas (0 layout shifts, 0 recompositions per keystroke)
     Box(
       modifier =
         Modifier
@@ -1013,7 +1019,6 @@ fun CodeEditorPane(
         modifier = Modifier.fillMaxSize(),
       )
 
-      // Non-shifting floating inline diagnostic pill (overlays top-end, NEVER pushes editor vertically)
       FloatingSyntaxDiagnosticPill(
         visible = actionableDiagnostics.isNotEmpty() && !uiState.isEditorTopChromeHidden,
         filePath = activeFile.path,
@@ -1025,14 +1030,12 @@ fun CodeEditorPane(
         modifier = Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp),
       )
 
-      // Floating Pinch-Zoom Indicator HUD
       EditorZoomHud(
         visible = hudHolder.isPinching || showZoomHud,
         zoomPercentProvider = { hudHolder.liveZoomPercent },
         modifier = Modifier.align(Alignment.TopCenter).padding(top = 10.dp),
       )
 
-      // Non-shifting floating autocomplete strip (overlays bottom edge, NEVER bounces layout height)
       if (!activeFile.isVirtualReadOnly &&
         !uiState.isEditorBottomBarsHidden &&
         activeFile.language in setOf(WorkerLanguage.JAVASCRIPT, WorkerLanguage.TYPESCRIPT, WorkerLanguage.JSON)
@@ -1054,7 +1057,6 @@ fun CodeEditorPane(
       }
     }
 
-    // Hideable Bottom Coding Dock: Fixed-height Status Line + Zoom Controls + Ergonomic Key Rail
     AnimatedVisibility(
       visible = !uiState.isEditorBottomBarsHidden,
       enter = slideInVertically(tween(180)) { it } + fadeIn(tween(160)),
@@ -1077,7 +1079,6 @@ fun CodeEditorPane(
           )
           Spacer(Modifier.weight(1f))
 
-          // Compact Editor Zoom Controls (- | 100% | +) scaling native vector text
           EditorZoomControlCluster(
             zoomPercentProvider = { hudHolder.liveZoomPercent },
             zoomPresetMenuOpen = zoomPresetMenuOpen,
@@ -1172,7 +1173,6 @@ fun CodeEditorPane(
                 .padding(horizontal = 6.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
           ) {
-            // Sticky Undo / Redo group on the left
             Row(
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.spacedBy(2.dp),
@@ -1196,7 +1196,6 @@ fun CodeEditorPane(
               modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp),
             )
 
-            // Instant 0ms in-place coding key rail
             Row(
               modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
               horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -1823,7 +1822,6 @@ private fun EditorFileTabBar(
         }
       }
 
-      // Quick Prev/Next tab cycling
       if (uiState.openTabPaths.size > 1) {
         IconButton(
           onClick = { onSelectAdjacentTab(false) },
@@ -1839,7 +1837,6 @@ private fun EditorFileTabBar(
         }
       }
 
-      // Quick New File button
       IconButton(
         onClick = onCreateNewFile,
         modifier = Modifier.size(28.dp).testTag("tab_bar_new_file"),
@@ -1847,7 +1844,6 @@ private fun EditorFileTabBar(
         Icon(Icons.Outlined.Add, contentDescription = "New file tab", tint = palette.textSecondary, modifier = Modifier.size(16.dp))
       }
 
-      // Searchable Open Tabs & Workspace Files Switcher
       Box {
         Surface(
           onClick = {

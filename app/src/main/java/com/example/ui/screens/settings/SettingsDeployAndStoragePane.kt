@@ -19,6 +19,9 @@ import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.OpenInBrowser
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -61,13 +64,22 @@ fun SettingsDeployPane(
     mutableStateOf(settings.defaultCompatibilityDate)
   }
 
+  val enabledDefaults =
+    listOf(
+      settings.defaultNodejsCompat,
+      settings.defaultWorkersDevEnabled,
+      settings.autoOpenPreviewOnDeploy,
+    ).count { it }
+
   Column(
     modifier = modifier.fillMaxWidth().testTag("settings_deploy_defaults_section"),
-    verticalArrangement = Arrangement.spacedBy(16.dp),
+    verticalArrangement = Arrangement.spacedBy(12.dp),
   ) {
-    SettingsGroup(
-      label = "Compatibility Date",
-      trailingValue = settings.defaultCompatibilityDate,
+    SettingsFoldableSection(
+      title = "Compatibility Date",
+      icon = Icons.Outlined.Schedule,
+      summary = settings.defaultCompatibilityDate,
+      initiallyExpanded = false,
       contentPadding = 14.dp,
     ) {
       Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -118,7 +130,12 @@ fun SettingsDeployPane(
       }
     }
 
-    SettingsGroup(label = "Defaults") {
+    SettingsFoldableSection(
+      title = "Defaults",
+      icon = Icons.Outlined.Tune,
+      summary = "$enabledDefaults/3",
+      initiallyExpanded = false,
+    ) {
       SettingsToggleRow(
         title = "nodejs_compat",
         leadingIcon = Icons.Outlined.Memory,
@@ -222,11 +239,19 @@ fun SettingsStorageAndSessionPane(
           }
         }
 
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          SettingsMetricTile(label = "Projects", value = storage.projectCount.toString(), modifier = Modifier.weight(1f))
-          SettingsMetricTile(label = "Imports", value = storage.importedFilesCount.toString(), modifier = Modifier.weight(1f))
-          SettingsMetricTile(label = "Exports", value = storage.exportedFilesCount.toString(), modifier = Modifier.weight(1f))
-          SettingsMetricTile(label = "Disk", value = "${storage.totalDiskKb} KB", modifier = Modifier.weight(1f))
+        SettingsFoldableSection(
+          title = "Storage Stats",
+          icon = Icons.Outlined.Storage,
+          summary = "${storage.totalDiskKb} KB",
+          initiallyExpanded = false,
+          contentPadding = 10.dp,
+        ) {
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SettingsMetricTile(label = "Projects", value = storage.projectCount.toString(), modifier = Modifier.weight(1f))
+            SettingsMetricTile(label = "Imports", value = storage.importedFilesCount.toString(), modifier = Modifier.weight(1f))
+            SettingsMetricTile(label = "Exports", value = storage.exportedFilesCount.toString(), modifier = Modifier.weight(1f))
+            SettingsMetricTile(label = "Disk", value = "${storage.totalDiskKb} KB", modifier = Modifier.weight(1f))
+          }
         }
       }
     }

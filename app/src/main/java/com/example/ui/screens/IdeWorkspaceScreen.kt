@@ -192,7 +192,6 @@ fun IdeWorkspaceScreen(
     editorCommandRequest = System.nanoTime() to cmd
   }
 
-  // Zero-permission Storage Access Framework (SAF) launchers
   val singleFileUploadLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
       if (uri != null) pendingUploadUris = listOf(uri)
@@ -652,6 +651,9 @@ fun IdeWorkspaceScreen(
           renameSymbolInitial = ""
           showRenameSymbolDialog = true
         },
+        PaletteCommand("Run Active File", "RUN") {
+          viewModel.runActiveFileInTerminal()
+        },
         PaletteCommand("Code Mode", "MODE") {
           viewModel.setProjectMode(ProjectMode.CODE)
         },
@@ -828,7 +830,6 @@ fun IdeWorkspaceScreen(
             .imePadding(),
       ) {
         Column(modifier = Modifier.fillMaxSize()) {
-          // Layer 1: Single-Project Top Header Bar (hideable via Hide UI or UI Layers L1)
           AnimatedVisibility(
             visible = !isFullScreenPreview && !uiState.isTopBarHidden,
             enter = slideInVertically(tween(180)) { -it } + fadeIn(tween(160)),
@@ -994,7 +995,6 @@ fun IdeWorkspaceScreen(
           }
           }
 
-          // Main Content Area: Strictly 1 Clean Mode at a Time
           Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
             if (isExpanded && uiState.projectMode == ProjectMode.CODE) {
               Box(modifier = Modifier.width(300.dp).fillMaxHeight()) {
@@ -1066,6 +1066,7 @@ fun IdeWorkspaceScreen(
                       },
                       onOpenLocalHistory = { activeIdeSheetTab = IdeCoreSheetTab.LOCAL_HISTORY },
                       onOpenProjectSearch = { activeIdeSheetTab = IdeCoreSheetTab.FIND_IN_FILES },
+                      onRunActiveFile = viewModel::runActiveFileInTerminal,
                       editorCommandRequest = editorCommandRequest,
                       modifier = Modifier.fillMaxSize(),
                     )
@@ -1132,7 +1133,6 @@ fun IdeWorkspaceScreen(
             }
           }
 
-          // Sleek Hideable 4-Destination Bottom Dock (hidden in Fullscreen Preview or when collapsed)
           AnimatedVisibility(
             visible = !isFullScreenPreview && !uiState.isBottomDockHidden,
             enter = slideInVertically(tween(200)) { it } + fadeIn(tween(180)),
@@ -1183,8 +1183,6 @@ fun IdeWorkspaceScreen(
           }
         }
 
-        // Persistent Top-End Anchor for the Overflow & 4-Layer UI Customization Menu
-        // Kept outside AnimatedVisibility so toggling Layer 1 (Top Bar) live never closes the menu.
         Box(
           modifier =
             Modifier

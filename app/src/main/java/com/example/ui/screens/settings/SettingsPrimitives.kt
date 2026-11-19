@@ -1,9 +1,11 @@
 package com.example.ui.screens.settings
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -32,6 +34,7 @@ import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.RocketLaunch
 import androidx.compose.material3.HorizontalDivider
@@ -41,9 +44,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -122,6 +129,104 @@ fun SettingsGroup(
         modifier = Modifier.fillMaxWidth().padding(contentPadding),
         content = content,
       )
+    }
+  }
+}
+
+@Composable
+fun SettingsFoldableSection(
+  title: String,
+  icon: ImageVector,
+  modifier: Modifier = Modifier,
+  summary: String? = null,
+  initiallyExpanded: Boolean = false,
+  contentPadding: Dp = 0.dp,
+  content: @Composable ColumnScope.() -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  var expanded by rememberSaveable(title) { mutableStateOf(initiallyExpanded) }
+  val chevronRotation by animateFloatAsState(
+    targetValue = if (expanded) 180f else 0f,
+    animationSpec = tween(160),
+    label = "fold_chevron_$title",
+  )
+
+  Surface(
+    color = palette.chromeSurface,
+    shape = RoundedCornerShape(13.dp),
+    border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.6f)),
+    modifier = modifier.fillMaxWidth().animateContentSize(animationSpec = tween(160)),
+  ) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+      Row(
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded }
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        Box(
+          modifier =
+            Modifier
+              .size(28.dp)
+              .clip(RoundedCornerShape(8.dp))
+              .background(if (expanded) palette.activePillBg else palette.editorBg)
+              .border(0.75.dp, palette.border.copy(alpha = 0.5f), RoundedCornerShape(8.dp)),
+          contentAlignment = Alignment.Center,
+        ) {
+          Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (expanded) palette.activePillFg else palette.textSecondary,
+            modifier = Modifier.size(15.dp),
+          )
+        }
+        Text(
+          text = title,
+          style = MaterialTheme.typography.bodyMedium,
+          fontSize = 14.sp,
+          fontWeight = FontWeight.SemiBold,
+          color = palette.textPrimary,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+          modifier = Modifier.weight(1f),
+        )
+        if (!summary.isNullOrBlank()) {
+          Surface(
+            color = palette.editorBg,
+            shape = RoundedCornerShape(6.dp),
+            border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.45f)),
+          ) {
+            Text(
+              text = summary,
+              fontFamily = JetBrainsMono,
+              fontSize = 10.sp,
+              fontWeight = FontWeight.Medium,
+              color = palette.activePillFg,
+              maxLines = 1,
+              modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+            )
+          }
+        }
+        Icon(
+          imageVector = Icons.Outlined.KeyboardArrowDown,
+          contentDescription = if (expanded) "Collapse" else "Expand",
+          tint = palette.textMuted,
+          modifier = Modifier.size(18.dp).rotate(chevronRotation),
+        )
+      }
+
+      AnimatedVisibility(visible = expanded) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+          SettingsHairlineDivider()
+          Column(
+            modifier = Modifier.fillMaxWidth().padding(contentPadding),
+            content = content,
+          )
+        }
+      }
     }
   }
 }

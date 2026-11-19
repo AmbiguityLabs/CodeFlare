@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import android.content.Intent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -36,6 +37,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -127,6 +129,7 @@ fun LinuxTerminalPane(
   var showMoreCommandsMenu by remember { mutableStateOf(false) }
   var stdinDraft by remember { mutableStateOf("") }
   var classicStreamMode by remember { mutableStateOf(false) }
+  var showTerminalInfo by remember { mutableStateOf(false) }
   var inputFieldValue by remember {
     mutableStateOf(TextFieldValue(uiState.terminalInput, TextRange(uiState.terminalInput.length)))
   }
@@ -282,8 +285,8 @@ fun LinuxTerminalPane(
         onClick = { classicStreamMode = !classicStreamMode },
         modifier = Modifier.testTag("terminal_view_mode_toggle"),
       )
-      TerminalQuickChip(label = "sysinfo", onClick = { onRunCommand("sysinfo") })
-      TerminalQuickChip(label = "pkg", onClick = { onRunCommand("pkg") })
+      TerminalQuickChip(label = "run", onClick = { onRunCommand("run") })
+      TerminalQuickChip(label = "npm test", onClick = { onRunCommand("npm test") })
     }
     HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
 
@@ -346,22 +349,39 @@ fun LinuxTerminalPane(
         if (uiState.terminalEntries.isEmpty() && !uiState.isTerminalBusy) {
           item {
             Surface(
+              onClick = { showTerminalInfo = !showTerminalInfo },
               color = palette.chromeSurface,
               shape = RoundedCornerShape(10.dp),
               border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
-              modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+              modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).testTag("terminal_info_toggle"),
             ) {
-              Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                  text = "EdgeCode Linux Terminal Ready",
-                  style = MaterialTheme.typography.titleSmall,
-                  color = palette.activePillFg,
-                )
-                Text(
-                  text = "Run any Linux command (ls, tree, grep, zip, unzip, wget, curl, jq, sha256sum, nano, pkg, sysinfo, wrangler, git).",
-                  style = MaterialTheme.typography.bodySmall,
-                  color = palette.textSecondary,
-                )
+              Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                  Icon(
+                    imageVector = Icons.Outlined.Terminal,
+                    contentDescription = "Terminal",
+                    tint = palette.activePillFg,
+                    modifier = Modifier.size(16.dp),
+                  )
+                  Spacer(Modifier.weight(1f))
+                  Icon(
+                    imageVector = Icons.Outlined.Info,
+                    contentDescription = "Shell commands",
+                    tint = palette.textMuted,
+                    modifier = Modifier.size(16.dp),
+                  )
+                }
+                AnimatedVisibility(visible = showTerminalInfo) {
+                  Text(
+                    text = "run · node · ts · npm · sh · ls · grep · curl · wrangler · git",
+                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
+                    color = palette.textSecondary,
+                  )
+                }
               }
             }
           }
@@ -645,11 +665,12 @@ fun LinuxTerminalPane(
         horizontalArrangement = Arrangement.spacedBy(5.dp),
         verticalAlignment = Alignment.CenterVertically,
       ) {
+        TerminalQuickChip(label = "run", onClick = { onRunCommand("run") })
+        TerminalQuickChip(label = "node", onClick = { onInputChange("node ") })
+        TerminalQuickChip(label = "npm run", onClick = { onRunCommand("npm run") })
         TerminalQuickChip(label = "ls -la", onClick = { onRunCommand("ls -la") })
         TerminalQuickChip(label = "tree", onClick = { onRunCommand("tree -L 2") })
         TerminalQuickChip(label = "curl /", onClick = { onInputChange("curl -i /") })
-        TerminalQuickChip(label = "wget", onClick = { onInputChange("wget ") })
-        TerminalQuickChip(label = "unzip", onClick = { onInputChange("unzip ") })
         TerminalQuickChip(label = "deploy", onClick = { onRunCommand("wrangler deploy") })
       }
 
@@ -690,21 +711,20 @@ fun LinuxTerminalPane(
           maxWidth = 296.dp,
         ) {
           EdgeMenuHeader(
-            title = "Linux & Edge CLI",
+            title = "Linux & Code CLI",
             badgeText = "SHELL",
             leadingIcon = Icons.Outlined.Terminal,
           )
           listOf(
+            "run" to "RUN",
+            "npm test" to "TEST",
+            "npm run" to "NPM",
             "sysinfo" to "INFO",
             "pkg" to "TOOLS",
             "tree -L 3" to "FILES",
             "projects" to "IDE",
-            "uname -a && id" to "SYS",
             "wrangler dev" to "DEV",
             "wrangler deploy" to "DEPLOY",
-            "wrangler tail" to "LOGS",
-            "wrangler d1 list" to "D1",
-            "wrangler r2 bucket list" to "R2",
             "git status" to "GIT",
             "help" to "HELP",
           ).forEach { (cmd, tag) ->
@@ -760,7 +780,7 @@ fun LinuxTerminalPane(
         ) {
           if (uiState.terminalInput.isEmpty()) {
             Text(
-              text = "ls -la | zip | curl | wrangler | nano | help…",
+              text = "~ $",
               style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
               color = palette.textMuted,
               maxLines = 1,
@@ -779,8 +799,16 @@ fun LinuxTerminalPane(
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
             keyboardActions =
               KeyboardActions(
-                onSend = { onRunCommand(uiState.terminalInput) },
-                onDone = { onRunCommand(uiState.terminalInput) },
+                onSend = {
+                  if (!uiState.isTerminalBusy && uiState.terminalInput.isNotBlank()) {
+                    onRunCommand(uiState.terminalInput)
+                  }
+                },
+                onDone = {
+                  if (!uiState.isTerminalBusy && uiState.terminalInput.isNotBlank()) {
+                    onRunCommand(uiState.terminalInput)
+                  }
+                },
               ),
             modifier =
               Modifier
@@ -791,7 +819,7 @@ fun LinuxTerminalPane(
                   } else {
                     when (keyEvent.key) {
                       Key.Enter, Key.NumPadEnter -> {
-                        if (!keyEvent.isShiftPressed) {
+                        if (!keyEvent.isShiftPressed && !uiState.isTerminalBusy && uiState.terminalInput.isNotBlank()) {
                           onRunCommand(uiState.terminalInput)
                           true
                         } else {

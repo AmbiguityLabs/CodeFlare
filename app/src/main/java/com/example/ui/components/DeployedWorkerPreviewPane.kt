@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -12,6 +13,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -44,6 +46,7 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.Http
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Refresh
@@ -156,7 +159,17 @@ fun DeployedWorkerPreviewPane(
     onReloadPreview()
   }
 
-  // Single unified WebView loader: fires only when WebView is attached and target or reload nonce changes
+  fun disposeWebView() {
+    val wv = webViewRef ?: return
+    webViewRef = null
+    lastAppliedLoadKey = null
+    runCatching {
+      wv.stopLoading()
+      (wv.parent as? ViewGroup)?.removeView(wv)
+      wv.destroy()
+    }
+  }
+
   LaunchedEffect(webViewRef, uiState.previewModeTab, uiState.previewReloadNonce) {
     val wv = webViewRef
     if (uiState.previewModeTab == 0 && wv != null) {
@@ -173,25 +186,20 @@ fun DeployedWorkerPreviewPane(
   DisposableEffect(uiState.previewModeTab == 0) {
     onDispose {
       if (uiState.previewModeTab != 0) {
-        webViewRef?.destroy()
-        webViewRef = null
-        lastAppliedLoadKey = null
+        disposeWebView()
       }
     }
   }
 
   DisposableEffect(Unit) {
     onDispose {
-      webViewRef?.destroy()
-      webViewRef = null
-      lastAppliedLoadKey = null
+      disposeWebView()
     }
   }
 
   Column(
     modifier = modifier.fillMaxSize().background(palette.chromeBg),
   ) {
-    // 1. Cloudflare-style Top Bar: Preview | HTTP + Visit + Deploy
     Row(
       modifier =
         Modifier
@@ -328,7 +336,6 @@ fun DeployedWorkerPreviewPane(
 
     HorizontalDivider(color = palette.border.copy(alpha = 0.45f))
 
-    // 2. WebView URL Bar (shown in Preview tab; WorkerTestWindow provides its own Method + URL bar in HTTP mode)
     if (uiState.previewModeTab == 0) {
       Row(
         modifier =
@@ -424,7 +431,6 @@ fun DeployedWorkerPreviewPane(
       )
     }
 
-    // 3. Main Testing Viewport (WebView Preview OR HTTP Request/Response Inspector)
     Box(
       modifier =
         Modifier
@@ -450,7 +456,6 @@ fun DeployedWorkerPreviewPane(
             AndroidView(
               factory = { ctx ->
                 WebView(ctx).apply {
-                  // Standard white web canvas ensures plain-text/unstyled Worker responses are readable (never black-on-black)
                   setBackgroundColor(android.graphics.Color.WHITE)
                   settings.apply {
                     javaScriptEnabled = true
@@ -557,7 +562,6 @@ fun DeployedWorkerPreviewPane(
               modifier = Modifier.fillMaxSize().testTag("deployed_worker_webview"),
             )
 
-            // Actionable thin overlay if main-frame load failed (e.g. Worker not yet deployed or DNS error)
             val errMsg = loadErrorMessage
             if (errMsg != null) {
               Box(
@@ -652,7 +656,6 @@ fun DeployedWorkerPreviewPane(
       }
     }
 
-    // 4. Rebuilt Bottom CONSOLE Drawer (crisp header bar + zero-jank log stream)
     HorizontalDivider(color = palette.border.copy(alpha = 0.55f))
     Column(
       modifier = Modifier.fillMaxWidth().background(palette.chromeSurface),
@@ -751,24 +754,30 @@ fun DeployedWorkerPreviewPane(
         ) {
           if (uiState.previewConsoleEntries.isEmpty()) {
             Box(
-              modifier = Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 12.dp),
+              modifier = Modifier.fillMaxWidth().height(36.dp).padding(horizontal = 12.dp),
               contentAlignment = Alignment.CenterStart,
             ) {
               Text(
-                text = "Load a Worker URL or run an HTTP test to inspect live requests & console logs.",
+                text = "—",
                 fontFamily = JetBrainsMono,
-                fontSize = 10.5.sp,
+                fontSize = 11.sp,
                 color = palette.textMuted,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
               )
             }
           } else {
+            val keyedConsole =
+              remember(uiState.previewConsoleEntries.toList()) {
+                val seen = HashSet<String>(uiState.previewConsoleEntries.size)
+                uiState.previewConsoleEntries.mapIndexed { idx, entry ->
+                  val key = if (seen.add(entry.id)) "c_${entry.id}" else "c_${entry.id}_$idx"
+                  key to entry
+                }
+              }
             LazyColumn(
               modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp, max = 148.dp).padding(horizontal = 6.dp, vertical = 4.dp),
               verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-              items(uiState.previewConsoleEntries, key = { it.id }) { entry ->
+              items(keyedConsole, key = { it.first }) { (_, entry) ->
                 PreviewConsoleRow(
                   entry = entry,
                   onCopy = {
@@ -870,6 +879,7 @@ private fun EmptyPreviewUrlNotice(
   onDeployWorker: () -> Unit,
 ) {
   val palette = LocalIdePalette.current
+  var showInfo by remember { mutableStateOf(false) }
   Box(
     modifier = Modifier.fillMaxSize().padding(20.dp),
     contentAlignment = Alignment.Center,
@@ -878,26 +888,24 @@ private fun EmptyPreviewUrlNotice(
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-      Icon(
-        Icons.Outlined.Visibility,
-        contentDescription = null,
-        tint = palette.activePillFg,
-        modifier = Modifier.size(34.dp),
-      )
-      Text(
-        text = "Deployed Worker Preview Window",
-        style = MaterialTheme.typography.titleSmall,
-        fontWeight = FontWeight.SemiBold,
-        color = palette.textPrimary,
-      )
-      Text(
-        text =
-          if (hasWorkspace) "Deploy your Worker or enter its live https://...workers.dev URL above to test UI interactions, HTTP requests, and console logs."
-          else "Connect Cloudflare & open/deploy a Worker — or type any live https://...workers.dev URL above to inspect and test it here.",
-        style = MaterialTheme.typography.bodySmall,
-        color = palette.textSecondary,
-        textAlign = TextAlign.Center,
-      )
+      IconButton(onClick = { showInfo = !showInfo }) {
+        Icon(
+          Icons.Outlined.Visibility,
+          contentDescription = "Preview info",
+          tint = palette.activePillFg,
+          modifier = Modifier.size(32.dp),
+        )
+      }
+      AnimatedVisibility(visible = showInfo) {
+        Text(
+          text =
+            if (hasWorkspace) "Deploy Worker or enter its workers.dev URL above."
+            else "Enter any live Worker URL above to inspect.",
+          style = MaterialTheme.typography.bodySmall,
+          color = palette.textSecondary,
+          textAlign = TextAlign.Center,
+        )
+      }
       if (hasWorkspace) {
         FilledTonalButton(
           onClick = onDeployWorker,
@@ -906,7 +914,7 @@ private fun EmptyPreviewUrlNotice(
         ) {
           Icon(Icons.Outlined.CloudUpload, contentDescription = null, modifier = Modifier.size(16.dp))
           Spacer(Modifier.width(6.dp))
-          Text("Deploy Worker Now")
+          Text("Deploy")
         }
       }
     }

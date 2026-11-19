@@ -134,6 +134,7 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -7328,10 +7329,36 @@ jobs:
     }
   }
 
+  fun runActiveFileInTerminal() {
+    flushAutoSaveNow()
+    val state = _uiState.value
+    val ws = state.workspace ?: return
+    val targetPath =
+      state.activeFile?.takeUnless { it.isVirtualReadOnly }?.path
+        ?: ws.entryModulePath
+    val cmd =
+      if (targetPath.isNotBlank()) {
+        val quoted = if (targetPath.contains(' ')) "\"$targetPath\"" else targetPath
+        "run $quoted"
+      } else {
+        "run"
+      }
+    _uiState.update {
+      it.copy(
+        showHomeTerminal = false,
+        projectMode = ProjectMode.CONSOLE,
+        showBottomPanel = true,
+        activeBottomTab = BottomPanelTab.TERMINAL,
+      )
+    }
+    runTerminalCommand(cmd)
+  }
+
   fun runTerminalCommand(rawCommand: String = _uiState.value.terminalInput) {
     val cmd = rawCommand.trim()
     if (cmd.isEmpty()) return
     val currentState = _uiState.value
+    if (currentState.isTerminalBusy) return
     val sessionId = currentState.activeTerminalSessionId
     val promptSnapshot = "dev@edgecode:${terminalEngine.currentPromptPath(currentState.workspace, sessionId)}$"
     val nextHistory =
@@ -7359,214 +7386,255 @@ jobs:
     }
 
     viewModelScope.launch {
-      val result =
-        terminalEngine.execute(
-          rawInput = cmd,
-          workspace = _uiState.value.workspace,
-          account = _uiState.value.selectedAccount,
-          history = nextHistory,
-          onWranglerDeploy = {
-            if (_uiState.value.isLocalScratchpad) {
-              "Local Scratchpad mode — connect Cloudflare to deploy live."
-            } else {
+      try {
+        val result =
+          terminalEngine.execute(
+            rawInput = cmd,
+            workspace = _uiState.value.workspace,
+            account = _uiState.value.selectedAccount,
+            history = nextHistory,
+            onWranglerDeploy = {
+              if (_uiState.value.isLocalScratchpad) {
+                "Local Scratchpad mode — connect Cloudflare to deploy live."
+              } else {
+                val acc = _uiState.value.selectedAccount?.id
+                val ws = _uiState.value.workspace
+                if (acc == null || ws == null) "No active Cloudflare account or Worker."
+                else {
+                  repository.deployWorkerWorkspace(acc, ws).fold(
+                    onSuccess = {
+                      val cleanFiles = ws.files.map { f -> f.copy(originalContent = f.content) }
+                      _uiState.update { s ->
+                        s.copy(workspace = ws.copy(files = cleanFiles, hasModuleSetChanged = false))
+                      }
+                      "Deployed '${ws.scriptName}' live to ${ws.workersDevUrl ?: "Cloudflare Edge"}"
+                    },
+                    onFailure = { err -> "Deploy failed: ${err.localizedMessage}" },
+                  )
+                }
+              }
+            },
+            onWranglerTailStart = {
+              if (_uiState.value.isLocalScratchpad) {
+                "Connect Cloudflare account first to stream edge tail logs."
+              } else if (_uiState.value.isTailRunning) {
+                "Live Tail already streaming below."
+              } else {
+                val acc = _uiState.value.selectedAccount?.id
+                val ws = _uiState.value.workspace
+                if (acc == null || ws == null) "Open a Worker first."
+                else {
+                  repository.startLiveTail(
+                    accountId = acc,
+                    scriptName = ws.scriptName,
+                    onTailEvent = { raw ->
+                      val evTs = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+                      _uiState.update { s ->
+                        val nextTail = (s.tailLogs + ConsoleLogEntry(evTs, "TAIL", raw)).takeLast(120)
+                        val nextTerm =
+                          (s.terminalEntries +
+                            TerminalEntry(
+                              id = terminalIdGen.getAndIncrement(),
+                              timestamp = evTs,
+                              promptPrefix = "tail",
+                              command = "edge event",
+                              output = raw,
+                              kind = TerminalEntryKind.WRANGLER,
+                            )).takeLast(120)
+                        terminalBuffersBySession[s.activeTerminalSessionId] = nextTerm
+                        s.copy(tailLogs = nextTail, terminalEntries = nextTerm)
+                      }
+                    },
+                    onClosed = {
+                      activeTailSession = null
+                      _uiState.update { s -> s.copy(isTailRunning = false) }
+                    },
+                  ).fold(
+                    onSuccess = { session ->
+                      activeTailSession = session
+                      _uiState.update { s -> s.copy(isTailRunning = true) }
+                      "Connected WebSocket Live Tail for '${ws.scriptName}' (run 'wrangler tail stop' to close)"
+                    },
+                    onFailure = { err -> "Live Tail failed: ${err.localizedMessage}" },
+                  )
+                }
+              }
+            },
+            onWranglerTailStop = {
+              stopTailIfRunning()
+              "Stopped Live Tail session."
+            },
+            onWranglerRollback = { versionId ->
               val acc = _uiState.value.selectedAccount?.id
               val ws = _uiState.value.workspace
-              if (acc == null || ws == null) "No active Cloudflare account or Worker."
+              if (acc == null || ws == null) "Connect Cloudflare and open a Worker first."
               else {
-                repository.deployWorkerWorkspace(acc, ws).fold(
-                  onSuccess = {
-                    val cleanFiles = ws.files.map { f -> f.copy(originalContent = f.content) }
-                    _uiState.update { s ->
-                      s.copy(workspace = ws.copy(files = cleanFiles, hasModuleSetChanged = false))
-                    }
-                    "Deployed '${ws.scriptName}' live to ${ws.workersDevUrl ?: "Cloudflare Edge"}"
-                  },
-                  onFailure = { err -> "Deploy failed: ${err.localizedMessage}" },
+                repository.rollbackToVersion(acc, ws.scriptName, versionId).fold(
+                  onSuccess = { "Rolled back '${ws.scriptName}' to version $versionId" },
+                  onFailure = { err -> "Rollback failed: ${err.localizedMessage}" },
                 )
               }
-            }
-          },
-          onWranglerTailStart = {
-            if (_uiState.value.isLocalScratchpad) {
-              "Connect Cloudflare account first to stream edge tail logs."
-            } else if (_uiState.value.isTailRunning) {
-              "Live Tail already streaming below."
-            } else {
-              val acc = _uiState.value.selectedAccount?.id
-              val ws = _uiState.value.workspace
-              if (acc == null || ws == null) "Open a Worker first."
-              else {
-                repository.startLiveTail(
-                  accountId = acc,
-                  scriptName = ws.scriptName,
-                  onTailEvent = { raw ->
-                    val evTs = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
-                    _uiState.update { s ->
-                      val nextTail = (s.tailLogs + ConsoleLogEntry(evTs, "TAIL", raw)).takeLast(120)
-                      val nextTerm =
-                        (s.terminalEntries +
-                          TerminalEntry(
-                            id = terminalIdGen.getAndIncrement(),
-                            timestamp = evTs,
-                            promptPrefix = "tail",
-                            command = "edge event",
-                            output = raw,
-                            kind = TerminalEntryKind.WRANGLER,
-                          )).takeLast(120)
-                      terminalBuffersBySession[s.activeTerminalSessionId] = nextTerm
-                      s.copy(tailLogs = nextTail, terminalEntries = nextTerm)
-                    }
-                  },
-                  onClosed = {
-                    activeTailSession = null
-                    _uiState.update { s -> s.copy(isTailRunning = false) }
-                  },
-                ).fold(
-                  onSuccess = { session ->
-                    activeTailSession = session
-                    _uiState.update { s -> s.copy(isTailRunning = true) }
-                    "Connected WebSocket Live Tail for '${ws.scriptName}' (run 'wrangler tail stop' to close)"
-                  },
-                  onFailure = { err -> "Live Tail failed: ${err.localizedMessage}" },
-                )
+            },
+            onGitCommand = { args -> executeTerminalGitCommand(args) },
+            sessionId = sessionId,
+            onLiveOutput = { chunk ->
+              _uiState.update { s ->
+                if (s.activeTerminalSessionId == sessionId) {
+                  s.copy(terminalLiveOutput = chunk)
+                } else s
               }
-            }
-          },
-          onWranglerTailStop = {
-            stopTailIfRunning()
-            "Stopped Live Tail session."
-          },
-          onWranglerRollback = { versionId ->
-            val acc = _uiState.value.selectedAccount?.id
-            val ws = _uiState.value.workspace
-            if (acc == null || ws == null) "Connect Cloudflare and open a Worker first."
-            else {
-              repository.rollbackToVersion(acc, ws.scriptName, versionId).fold(
-                onSuccess = { "Rolled back '${ws.scriptName}' to version $versionId" },
-                onFailure = { err -> "Rollback failed: ${err.localizedMessage}" },
+            },
+          )
+
+        val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+        val existingEntries = terminalBuffersBySession[sessionId] ?: _uiState.value.terminalEntries
+        val updatedEntries =
+          if (result.clearedScreen) emptyList()
+          else {
+            val newEntry =
+              TerminalEntry(
+                id = terminalIdGen.getAndIncrement(),
+                timestamp = ts,
+                promptPrefix = promptSnapshot,
+                command = cmd,
+                output = result.output,
+                isError = result.isError,
+                exitCode = result.exitCode,
+                kind = result.kind,
+                httpMeta = result.httpMeta,
               )
-            }
-          },
-          onGitCommand = { args -> executeTerminalGitCommand(args) },
-          sessionId = sessionId,
-          onLiveOutput = { chunk ->
-            _uiState.update { s ->
-              if (s.activeTerminalSessionId == sessionId) {
-                s.copy(terminalLiveOutput = chunk)
-              } else s
-            }
-          },
-        )
-
-      val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
-      val existingEntries = terminalBuffersBySession[sessionId] ?: _uiState.value.terminalEntries
-      val updatedEntries =
-        if (result.clearedScreen) emptyList()
-        else {
-          val newEntry =
-            TerminalEntry(
-              id = terminalIdGen.getAndIncrement(),
-              timestamp = ts,
-              promptPrefix = promptSnapshot,
-              command = cmd,
-              output = result.output,
-              isError = result.isError,
-              exitCode = result.exitCode,
-              kind = result.kind,
-              httpMeta = result.httpMeta,
-            )
-          (existingEntries + newEntry).takeLast(150)
-        }
-      terminalBuffersBySession[sessionId] = updatedEntries
-
-      _uiState.update { state ->
-        var nextWs = state.workspace
-        var nextFields = state.editorFieldValues
-        if (result.updatedWorkspaceFiles != null && nextWs != null) {
-          nextWs =
-            nextWs.copy(
-              files = result.updatedWorkspaceFiles,
-              hasModuleSetChanged = true,
-            )
-          nextFields =
-            result.updatedWorkspaceFiles.associate { f ->
-              f.path to (nextFields[f.path]?.takeIf { it.text == f.content } ?: TextFieldValue(f.content))
-            }
-        }
-        val isActiveSession = state.activeTerminalSessionId == sessionId
-        state.copy(
-          workspace = nextWs,
-          editorFieldValues = nextFields,
-          editorRevision = state.editorRevision + 1L,
-          diagnostics = nextWs?.files?.flatMap { CodeAnalyzer.analyzeFile(it) } ?: state.diagnostics,
-          terminalEntries = if (isActiveSession) updatedEntries else state.terminalEntries,
-          terminalPromptPath =
-            if (isActiveSession) terminalEngine.currentPromptPath(nextWs, sessionId)
-            else state.terminalPromptPath,
-          terminalSessions = terminalEngine.listSessionTabs(nextWs),
-          isTerminalBusy = if (isActiveSession) false else state.isTerminalBusy,
-          terminalLiveOutput = if (isActiveSession) "" else state.terminalLiveOutput,
-          terminalRunningCommand = if (isActiveSession) null else state.terminalRunningCommand,
-        )
-      }
-
-      if (!result.openTabRequest.isNullOrBlank()) {
-        val target = result.openTabRequest
-        val match = _uiState.value.workspace?.files?.firstOrNull { it.path == target || it.fileName == target }
-        if (match != null) openFileTab(match.path)
-      }
-
-      result.editFileRequest?.let { file ->
-        val content =
-          withContext(Dispatchers.IO) {
-            if (file.exists() && file.isFile) runCatching { file.readText(Charsets.UTF_8) }.getOrDefault("")
-            else ""
+            (existingEntries + newEntry).takeLast(150)
           }
-        _uiState.update {
-          it.copy(
-            terminalQuickEdit =
-              TerminalQuickEditTarget(
-                filePath = file.absolutePath,
-                displayName = file.name,
-                content = content,
-              ),
+        terminalBuffersBySession[sessionId] = updatedEntries
+
+        _uiState.update { state ->
+          var nextWs = state.workspace
+          var nextFields = state.editorFieldValues
+          if (result.updatedWorkspaceFiles != null && nextWs != null) {
+            nextWs =
+              nextWs.copy(
+                files = result.updatedWorkspaceFiles,
+                hasModuleSetChanged = true,
+              )
+            nextFields =
+              result.updatedWorkspaceFiles.associate { f ->
+                f.path to (nextFields[f.path]?.takeIf { it.text == f.content } ?: TextFieldValue(f.content))
+              }
+          }
+          val isActiveSession = state.activeTerminalSessionId == sessionId
+          state.copy(
+            workspace = nextWs,
+            editorFieldValues = nextFields,
+            editorRevision = state.editorRevision + 1L,
+            diagnostics = nextWs?.files?.flatMap { CodeAnalyzer.analyzeFile(it) } ?: state.diagnostics,
+            terminalEntries = if (isActiveSession) updatedEntries else state.terminalEntries,
+            terminalPromptPath =
+              if (isActiveSession) terminalEngine.currentPromptPath(nextWs, sessionId)
+              else state.terminalPromptPath,
+            terminalSessions = terminalEngine.listSessionTabs(nextWs),
+            isTerminalBusy = if (isActiveSession) false else state.isTerminalBusy,
+            terminalLiveOutput = if (isActiveSession) "" else state.terminalLiveOutput,
+            terminalRunningCommand = if (isActiveSession) null else state.terminalRunningCommand,
           )
         }
-      }
 
-      if (!result.openProjectRequest.isNullOrBlank()) {
-        val reqName = result.openProjectRequest
-        val ramMatch =
-          _uiState.value.ramWorkspaces.firstOrNull {
-            it.workingWorkspace.scriptName.equals(reqName, ignoreCase = true)
+        if (!result.openTabRequest.isNullOrBlank()) {
+          val target = result.openTabRequest
+          val match = _uiState.value.workspace?.files?.firstOrNull { it.path == target || it.fileName == target }
+          if (match != null) openFileTab(match.path)
+        }
+
+        result.editFileRequest?.let { file ->
+          val content =
+            withContext(Dispatchers.IO) {
+              if (file.exists() && file.isFile) runCatching { file.readText(Charsets.UTF_8) }.getOrDefault("")
+              else ""
+            }
+          _uiState.update {
+            it.copy(
+              terminalQuickEdit =
+                TerminalQuickEditTarget(
+                  filePath = file.absolutePath,
+                  displayName = file.name,
+                  content = content,
+                ),
+            )
           }
-        if (ramMatch != null) {
-          _uiState.update { it.copy(showHomeTerminal = false) }
-          openRamWorkspace(ramMatch.key)
-        } else {
-          val dir = File(projectDirManager.projectsDir, reqName)
-          if (dir.exists() && dir.isDirectory) {
+        }
+
+        if (!result.openProjectRequest.isNullOrBlank()) {
+          val reqName = result.openProjectRequest
+          val ramMatch =
+            _uiState.value.ramWorkspaces.firstOrNull {
+              it.workingWorkspace.scriptName.equals(reqName, ignoreCase = true)
+            }
+          if (ramMatch != null) {
             _uiState.update { it.copy(showHomeTerminal = false) }
-            createNewWorker(reqName, WorkerTemplate.HELLO_FETCH)
+            openRamWorkspace(ramMatch.key)
           } else {
-            _uiState.update { it.copy(statusMessage = "Project '$reqName' not found") }
+            val dir = File(projectDirManager.projectsDir, reqName)
+            if (dir.exists() && dir.isDirectory) {
+              _uiState.update { it.copy(showHomeTerminal = false) }
+              createNewWorker(reqName, WorkerTemplate.HELLO_FETCH)
+            } else {
+              _uiState.update { it.copy(statusMessage = "Project '$reqName' not found") }
+            }
           }
         }
-      }
 
-      if (!result.importZipPathRequest.isNullOrBlank()) {
-        val zipFile = File(result.importZipPathRequest)
-        if (zipFile.exists()) {
-          _uiState.update { it.copy(showHomeTerminal = false) }
-          inspectZipForImport(Uri.fromFile(zipFile), ZipImportTargetMode.NEW_PROJECT)
+        if (!result.importZipPathRequest.isNullOrBlank()) {
+          val zipFile = File(result.importZipPathRequest)
+          if (zipFile.exists()) {
+            _uiState.update { it.copy(showHomeTerminal = false) }
+            inspectZipForImport(Uri.fromFile(zipFile), ZipImportTargetMode.NEW_PROJECT)
+          }
         }
-      }
 
-      if (result.httpMeta != null) {
-        appendLog(
-          if (result.httpMeta.statusCode in 200..399) "HTTP" else "WARN",
-          "${result.httpMeta.method} ${result.httpMeta.url} -> ${result.httpMeta.statusCode} (${result.httpMeta.durationMs}ms)",
-        )
+        if (result.httpMeta != null) {
+          appendLog(
+            if (result.httpMeta.statusCode in 200..399) "HTTP" else "WARN",
+            "${result.httpMeta.method} ${result.httpMeta.url} -> ${result.httpMeta.statusCode} (${result.httpMeta.durationMs}ms)",
+          )
+        }
+      } catch (ce: CancellationException) {
+        throw ce
+      } catch (t: Throwable) {
+        val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+        val existingEntries = terminalBuffersBySession[sessionId] ?: _uiState.value.terminalEntries
+        val errEntry =
+          TerminalEntry(
+            id = terminalIdGen.getAndIncrement(),
+            timestamp = ts,
+            promptPrefix = promptSnapshot,
+            command = cmd,
+            output = t.localizedMessage ?: "Command execution failed",
+            isError = true,
+            exitCode = 1,
+            kind = TerminalEntryKind.ERROR,
+          )
+        val updatedEntries = (existingEntries + errEntry).takeLast(150)
+        terminalBuffersBySession[sessionId] = updatedEntries
+        _uiState.update { state ->
+          if (state.activeTerminalSessionId == sessionId) {
+            state.copy(
+              terminalEntries = updatedEntries,
+              isTerminalBusy = false,
+              terminalLiveOutput = "",
+              terminalRunningCommand = null,
+            )
+          } else state
+        }
+      } finally {
+        _uiState.update { state ->
+          if (state.activeTerminalSessionId == sessionId && state.isTerminalBusy) {
+            state.copy(
+              isTerminalBusy = false,
+              terminalLiveOutput = "",
+              terminalRunningCommand = null,
+              terminalSessions = terminalEngine.listSessionTabs(state.workspace),
+            )
+          } else state
+        }
       }
     }
   }

@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Link
@@ -157,6 +159,7 @@ fun CloudflareInfraPanel(
   }
 
   if (uiState.isLocalScratchpad) {
+    var showInfraInfo by remember { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
       if (activeWs != null) {
         WorkerIdentityAndSubdomainCard(
@@ -167,14 +170,21 @@ fun CloudflareInfraPanel(
           onRequestChangeSubdomain = { showChangeSubdomainDialog = true },
         )
       }
-      Text("CLOUDFLARE WORKERS INFRA", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
-      Surface(color = palette.chromePill, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-        Text(
-          text = "Connect a Cloudflare API Token or Global API Key to manage Bindings (Vars, Secrets, KV, D1, R2, Services), KV Namespace keys, D1 SQL queries, Custom Domains, Cron Triggers, and Version Rollbacks.",
-          style = MaterialTheme.typography.bodySmall,
-          color = palette.textSecondary,
-          modifier = Modifier.padding(14.dp),
-        )
+      Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text("INFRA", style = MaterialTheme.typography.labelSmall, color = palette.textMuted, modifier = Modifier.weight(1f))
+        IconButton(onClick = { showInfraInfo = !showInfraInfo }, modifier = Modifier.size(28.dp)) {
+          Icon(Icons.Outlined.Info, contentDescription = "Infra info", tint = palette.textMuted, modifier = Modifier.size(16.dp))
+        }
+      }
+      AnimatedVisibility(visible = showInfraInfo) {
+        Surface(color = palette.chromePill, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+          Text(
+            text = "Connect Cloudflare to manage Bindings, KV, D1, R2, Routes & Cron.",
+            style = MaterialTheme.typography.bodySmall,
+            color = palette.textSecondary,
+            modifier = Modifier.padding(12.dp),
+          )
+        }
       }
     }
     return
@@ -200,7 +210,6 @@ fun CloudflareInfraPanel(
       }
     }
 
-    // Compact quick-edit strip for Worker Name & *.workers.dev Subdomain right at the top
     Row(
       modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
       horizontalArrangement = Arrangement.spacedBy(6.dp),

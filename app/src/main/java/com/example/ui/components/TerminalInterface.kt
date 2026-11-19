@@ -283,6 +283,14 @@ fun TerminalInterface(
           .fillMaxWidth()
           .background(TerminalDarkBackground),
     ) {
+      val keyedLines =
+        remember(outputLines.toList()) {
+          val seen = HashSet<Long>(outputLines.size)
+          outputLines.mapIndexed { idx, line ->
+            val uniqueKey = if (seen.add(line.id)) "id_${line.id}" else "id_${line.id}_$idx"
+            uniqueKey to line
+          }
+        }
       LazyColumn(
         state = listState,
         modifier =
@@ -295,7 +303,7 @@ fun TerminalInterface(
         if (outputLines.isEmpty()) {
           item(key = "empty_prompt") {
             Text(
-              text = "Session initialized. Type a command below and press Enter.",
+              text = "~ $",
               fontFamily = JetBrainsMono,
               fontSize = 12.sp,
               lineHeight = 17.sp,
@@ -303,7 +311,7 @@ fun TerminalInterface(
             )
           }
         } else {
-          items(outputLines, key = { it.id }) { line ->
+          items(keyedLines, key = { it.first }) { (_, line) ->
             val lineColor =
               when {
                 line.isError -> TerminalDarkError

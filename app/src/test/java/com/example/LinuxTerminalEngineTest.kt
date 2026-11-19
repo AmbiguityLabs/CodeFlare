@@ -141,4 +141,49 @@ class LinuxTerminalEngineTest {
     assertFalse(readRes.isError)
     assertEquals("hello_world", readRes.output.trim())
   }
+
+  @Test
+  fun supportsCodeRunnerAndSafeWorkspaceSync() = runBlocking {
+    val (engine, _) = createEngine()
+    val pkgRes = runCmd(engine, "pkg")
+    assertFalse(pkgRes.isError)
+    assertTrue(pkgRes.output.contains("node"))
+    assertTrue(pkgRes.output.contains("run"))
+
+    val indexContent = "console.log('synced-run');"
+    val ws =
+      com.example.data.remote.WorkerWorkspace(
+        scriptName = "   ",
+        isEsModuleFormat = true,
+        entryModulePath = "index.js",
+        compatibilityDate = "2025-01-01",
+        files =
+          listOf(
+            com.example.data.remote.WorkerFile(
+              path = "index.js",
+              content = indexContent,
+              originalContent = indexContent,
+              contentType = "application/javascript",
+              isEntryPoint = true,
+            ),
+          ),
+        bindings = emptyList(),
+        routes = emptyList(),
+        workersDevEnabled = false,
+        accountSubdomain = "",
+      )
+    val runRes =
+      engine.execute(
+        rawInput = "run index.js",
+        workspace = ws,
+        account = null,
+        history = emptyList(),
+        onWranglerDeploy = { "ok" },
+        onWranglerTailStart = { "ok" },
+        onWranglerTailStop = { "ok" },
+        onWranglerRollback = { "ok" },
+      )
+    assertFalse(runRes.isError)
+    assertEquals("synced-run", runRes.output.trim())
+  }
 }

@@ -105,7 +105,7 @@ fun SettingsCloudflarePane(
 
   Column(
     modifier = modifier.fillMaxWidth().testTag("settings_cloudflare_section"),
-    verticalArrangement = Arrangement.spacedBy(16.dp),
+    verticalArrangement = Arrangement.spacedBy(12.dp),
   ) {
     SettingsGroup(
       label = "Session",
@@ -325,9 +325,11 @@ fun SettingsCloudflarePane(
     }
 
     if (uiState.accounts.size > 1) {
-      SettingsGroup(
-        label = "Accounts",
-        trailingValue = "${uiState.accounts.size}",
+      SettingsFoldableSection(
+        title = "Accounts",
+        icon = Icons.Outlined.CloudDone,
+        summary = "${uiState.accounts.size}",
+        initiallyExpanded = false,
       ) {
         uiState.accounts.forEachIndexed { index, acc ->
           if (index > 0) SettingsHairlineDivider()
@@ -379,7 +381,18 @@ fun SettingsCloudflarePane(
       enter = fadeIn(),
       exit = fadeOut(),
     ) {
-      SettingsGroup(label = "Credentials", contentPadding = 14.dp) {
+      SettingsFoldableSection(
+        title = "Credentials",
+        icon = Icons.Outlined.Key,
+        summary =
+          when (credentialTab) {
+            1 -> "Global Key"
+            2 -> "OAuth"
+            else -> "API Token"
+          },
+        initiallyExpanded = creds == null || showCredentialEditor,
+        contentPadding = 14.dp,
+      ) {
         Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
           SettingsSegmentedControl(
             options = listOf("API Token", "Global Key", "OAuth"),
