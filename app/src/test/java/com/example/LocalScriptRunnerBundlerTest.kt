@@ -147,4 +147,139 @@ class LocalScriptRunnerBundlerTest {
     assertEquals("SESSION_KV", second.getString("name"))
     assertEquals("kv_namespace", second.getString("type"))
   }
+
+  @Test
+  fun standalonePlainJsExecutesDirectlyWhileExportOnlyModuleDefersToEntry() {
+    val ws =
+      WorkerWorkspace(
+        scriptName = "mixed-workspace",
+        isEsModuleFormat = true,
+        entryModulePath = "src/index.js",
+        compatibilityDate = "2024-11-01",
+        files =
+          listOf(
+            WorkerFile(
+              path = "src/index.js",
+              content = "export default { fetch() { return new Response('ok'); } };",
+              originalContent = "",
+              contentType = "application/javascript+module",
+              isEntryPoint = true,
+            ),
+            WorkerFile(
+              path = "src/consts.ts",
+              content = "export const VERSION = '1.0.0';",
+              originalContent = "",
+              contentType = "application/javascript+module",
+              isEntryPoint = false,
+            ),
+            WorkerFile(
+              path = "scratch.js",
+              content = "const a = 6 * 7; a;",
+              originalContent = "",
+              contentType = "application/javascript+module",
+              isEntryPoint = false,
+            ),
+          ),
+        bindings = emptyList(),
+        routes = emptyList(),
+        workersDevEnabled = true,
+        accountSubdomain = "demo",
+      )
+
+    assertTrue(LocalScriptRunner.isPureDeclarationLibraryModule("export const VERSION = '1.0.0';"))
+    assertFalse(LocalScriptRunner.isPureDeclarationLibraryModule("const a = 6 * 7; a;"))
+    assertEquals("src/index.js", LocalScriptRunner.resolveTargetEntryPath(ws, "src/consts.ts"))
+    assertEquals("scratch.js", LocalScriptRunner.resolveTargetEntryPath(ws, "scratch.js"))
+  }
+
+  @Test
+  fun sandboxWrapperAndJsonResultParserHandleLogsResultsAndErrors() {
+    val exprScript = LocalScriptRunner.buildSandboxScriptWrapper("21 * 2", isExpression = true)
+    assertTrue(exprScript.contains("return (21 * 2);"))
+
+    val okJson = "\"{\\\"logs\\\":[{\\\"l\\\":\\\"LOG\\\",\\\"m\\\":\\\"hello\\\"}],\\\"result\\\":\\\"42\\\",\\\"error\\\":null}\""
+    val okParsed = LocalScriptRunner.parseSandboxResultJson(okJson, "scratch.js", System.currentTimeMillis() - 5L, "12:00:00")
+    assertEquals("JS SANDBOX", okParsed.mode)
+    assertEquals(200, okParsed.statusCode)
+    assertTrue(okParsed.body.contains("hello"))
+    assertTrue(okParsed.body.contains("42"))
+    assertTrue(okParsed.logs.any { it.level == "LOG" && it.message == "hello" })
+
+    val errJson = "{\"logs\":[],\"result\":\"\",\"error\":\"ReferenceError: x is not defined\"}"
+    val errParsed = LocalScriptRunner.parseSandboxResultJson(errJson, "scratch.js", System.currentTimeMillis(), "12:00:01")
+    assertEquals(500, errParsed.statusCode)
+    assertTrue(errParsed.errorMessage!!.contains("ReferenceError"))
+  }
+
+  @Test
+  fun previewRendererResolvesRelativeSubpagesCssBinaryAssetsAndMarkdown() {
+    val ws =
+      WorkerWorkspace(
+        scriptName = "web-site",
+        isEsModuleFormat = false,
+        entryModulePath = "index.html",
+        compatibilityDate = "2024-11-01",
+        files =
+          listOf(
+            WorkerFile("index.html", "<link href='css/app.css'>", "", "text/html", isEntryPoint = true),
+            WorkerFile("css/app.css", "body { color: #fff; }", "", "text/css", isEntryPoint = false),
+            WorkerFile("pages/about.html", "<h1>About</h1>", "", "text/html", isEntryPoint = false),
+            WorkerFile("README.md", "# Hello EdgeCode", "", "text/markdown", isEntryPoint = false),
+          ),
+        bindings = emptyList(),
+        routes = emptyList(),
+        workersDevEnabled = false,
+        accountSubdomain = "",
+      )
+    val pngBytes = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47)
+    val binaryAssets = mapOf("assets/logo.png" to pngBytes)
+
+    assertEquals(
+      "pages/about.html",
+      com.example.editor.LocalWorkspacePreviewRenderer.normalizeRequestPath("https://local.edgecode.app/css/../pages/about.html?v=1"),
+    )
+
+    val cssResp =
+      com.example.editor.LocalWorkspacePreviewRenderer.resolveWebResource(
+        workspace = ws,
+        requestUrl = "https://local.edgecode.app/css/app.css",
+        isDarkTheme = true,
+        externalBinaryAssets = binaryAssets,
+      )
+    assertNotNull(cssResp)
+    assertEquals("text/css", cssResp!!.mimeType)
+    assertTrue(cssResp.data.readBytes().decodeToString().contains("#fff"))
+
+    val relPageResp =
+      com.example.editor.LocalWorkspacePreviewRenderer.resolveWebResource(
+        workspace = ws,
+        requestUrl = "https://local.edgecode.app/css/../pages/about.html",
+        isDarkTheme = true,
+        externalBinaryAssets = binaryAssets,
+      )
+    assertNotNull(relPageResp)
+    assertEquals("text/html", relPageResp!!.mimeType)
+    assertTrue(relPageResp.data.readBytes().decodeToString().contains("<h1>About</h1>"))
+
+    val imgResp =
+      com.example.editor.LocalWorkspacePreviewRenderer.resolveWebResource(
+        workspace = ws,
+        requestUrl = "https://local.edgecode.app/assets/logo.png",
+        isDarkTheme = true,
+        externalBinaryAssets = binaryAssets,
+      )
+    assertNotNull(imgResp)
+    assertEquals("image/png", imgResp!!.mimeType)
+    assertEquals(pngBytes.size, imgResp.data.readBytes().size)
+
+    val mdResp =
+      com.example.editor.LocalWorkspacePreviewRenderer.resolveWebResource(
+        workspace = ws,
+        requestUrl = "https://local.edgecode.app/README.md",
+        isDarkTheme = true,
+      )
+    assertNotNull(mdResp)
+    assertEquals("text/html", mdResp!!.mimeType)
+    assertTrue(mdResp.data.readBytes().decodeToString().contains("<h1>Hello EdgeCode</h1>"))
+  }
 }

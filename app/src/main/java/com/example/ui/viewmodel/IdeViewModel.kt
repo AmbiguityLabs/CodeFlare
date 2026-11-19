@@ -1,6 +1,7 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -18,6 +19,8 @@ import com.example.data.local.AutoSaveSessionPointer
 import com.example.data.local.AutoSavedWorkspaceDraft
 import com.example.data.local.DeviceFileHelper
 import com.example.data.local.DraftPersistenceManager
+import com.example.data.local.ExternalIntentExtractor
+import com.example.data.local.ExternalOpenTargetMode
 import com.example.data.local.PersistedApiTesterState
 import com.example.data.local.PickedDeviceFile
 import com.example.data.local.ProjectDirectoryManager
@@ -102,8 +105,10 @@ import com.example.editor.CodeFormatter
 import com.example.editor.ConflictChoice
 import com.example.editor.DiffFileOrigin
 import com.example.editor.FileDiffEntry
+import com.example.editor.LocalRunLogEntry
 import com.example.editor.LocalScriptRunResult
 import com.example.editor.LocalScriptRunner
+import com.example.editor.LocalWorkspacePreviewRenderer
 import com.example.editor.MergeConflictFile
 import com.example.editor.MergeConflictResolver
 import com.example.editor.WranglerSyncParser
@@ -247,6 +252,12 @@ data class IdeUiState(
   val localRunMethod: String = "GET",
   val localRunHeadersJson: String = "{}",
   val localRunBody: String = "",
+  val cliHistory: List<String> = emptyList(),
+  // External Open With / Share Sheet & Multi-File Web Project Context
+  val externalFileUris: Map<String, String> = emptyMap(),
+  val externalBinaryAssets: Map<String, ByteArray> = emptyMap(),
+  val externalProjectRootPath: String? = null,
+  val isPreviewDesktopViewport: Boolean = false,
   // Deployed Worker Live Preview & Testing Window
   val previewUrl: String = "",
   val previewModeTab: Int = 0, // 0 = Preview, 1 = HTTP
@@ -664,7 +675,7 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
         bootstrapAccountAndWorkers(creds)
       } else {
         _uiState.update { it.copy(isBootstrapping = false) }
-        if (lastPointer != null && lastPointer.isLocalScratchpad && !hasAttemptedAutoReopen) {
+        if (lastPointer != null && lastPointer.isLocalScratchpad && !hasAttemptedAutoReopen && _uiState.value.workspace == null) {
           hasAttemptedAutoReopen = true
           val localDraft = restoredDrafts.firstOrNull { it.workspaceKey == lastPointer.workspaceKey }
           if (localDraft != null && ramDb.hasWorkspace(localDraft.workspaceKey)) {
@@ -1261,6 +1272,9 @@ export default {
         isBottomPanelExpanded = false,
         isPreviewFullScreen = false,
         isGitHubIdeOnlyMode = false,
+        externalFileUris = emptyMap(),
+        externalBinaryAssets = emptyMap(),
+        externalProjectRootPath = null,
         projectMode = ProjectMode.CODE,
         sidebarSection = SidebarSection.EXPLORER,
         ramWorkspaces = ramDb.listWorkspaces(),
@@ -2970,21 +2984,30 @@ export default {
     openFileTab(clean, recordHistory = true)
   }
 
-  private fun resolveDefaultPreviewUrl(ws: WorkerWorkspace?): String {
+  private fun resolveDefaultPreviewUrl(ws: WorkerWorkspace?, activeFilePath: String? = null): String {
     if (ws == null) return ""
-    return ws.workersDevUrl
-      ?: ws.domains.firstOrNull()?.hostname?.takeIf { it.isNotBlank() }?.let { "https://$it" }
-      ?: ""
+    val remote =
+      ws.workersDevUrl
+        ?: ws.domains.firstOrNull()?.hostname?.takeIf { it.isNotBlank() }?.let { "https://$it" }
+    if (!remote.isNullOrBlank()) return remote
+    val localPath = LocalWorkspacePreviewRenderer.findDefaultPreviewPath(ws, activeFilePath)
+    return if (localPath != null) LocalWorkspacePreviewRenderer.localUrlForPath(localPath) else ""
   }
 
   fun openDeployedWorkerPreview(
     targetUrl: String? = null,
     maximizeWindow: Boolean = true,
   ) {
+    flushActiveEditorBuffer()
     _uiState.update { state ->
+      val activeLocalPreview =
+        state.activeFilePath
+          ?.takeIf { LocalWorkspacePreviewRenderer.isPreviewableFile(it) }
+          ?.let { LocalWorkspacePreviewRenderer.localUrlForPath(it) }
       val resolved =
         targetUrl?.trim()?.takeIf { it.isNotEmpty() }
-          ?: state.previewUrl.ifBlank { resolveDefaultPreviewUrl(state.workspace) }
+          ?: activeLocalPreview
+          ?: state.previewUrl.ifBlank { resolveDefaultPreviewUrl(state.workspace, state.activeFilePath) }
       state.copy(
         previewUrl = resolved,
         previewModeTab = 0,
@@ -2993,6 +3016,15 @@ export default {
         isBottomPanelExpanded = maximizeWindow,
         activeBottomTab = BottomPanelTab.WORKER_PREVIEW,
         previewReloadNonce = state.previewReloadNonce + 1L,
+      )
+    }
+  }
+
+  fun togglePreviewViewport() {
+    _uiState.update {
+      it.copy(
+        isPreviewDesktopViewport = !it.isPreviewDesktopViewport,
+        previewReloadNonce = it.previewReloadNonce + 1L,
       )
     }
   }
@@ -3319,6 +3351,431 @@ export default {
         durationMs = result.durationMs,
       )
     }
+  }
+
+  fun executeCliInput(rawInput: String) {
+    val cmd = rawInput.trim()
+    if (cmd.isEmpty()) return
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+    _uiState.update { cur ->
+      cur.copy(cliHistory = (cur.cliHistory + cmd).takeLast(30))
+    }
+
+    when (cmd.lowercase()) {
+      "clear", "cls" -> {
+        _uiState.update { it.copy(localScriptResult = null) }
+        return
+      }
+      "help", "?" -> {
+        val helpText =
+          buildString {
+            appendLine("EdgeCode CLI Commands:")
+            appendLine("  run            Execute active JS/TS file or Worker")
+            appendLine("  files / ls     List workspace files")
+            appendLine("  env            Show Worker bindings & runtime mode")
+            appendLine("  clear          Clear terminal output")
+            appendLine("  <js expr>      Evaluate JS/TS directly (e.g. 2 + 2, JSON.stringify({ok:true}))")
+          }.trimEnd()
+        _uiState.update {
+          it.copy(
+            localScriptResult =
+              LocalScriptRunResult(
+                mode = "CLI",
+                entryPath = "cli",
+                statusCode = 200,
+                statusText = "HELP",
+                durationMs = 1L,
+                body = helpText,
+                logs = listOf(LocalRunLogEntry("INFO", "> $cmd", ts)),
+                ranAt = ts,
+              ),
+          )
+        }
+        return
+      }
+      "files", "ls" -> {
+        val listText =
+          state.workspace?.files?.filterNot { it.isVirtualReadOnly }
+            ?.joinToString("\n") { wf ->
+              val marker = if (wf.path == state.activeFilePath) "*" else " "
+              "$marker ${wf.path} (${wf.content.length} chars)"
+            }
+            ?: "(no workspace open)"
+        _uiState.update {
+          it.copy(
+            localScriptResult =
+              LocalScriptRunResult(
+                mode = "CLI",
+                entryPath = "ls",
+                statusCode = 200,
+                statusText = "OK",
+                durationMs = 1L,
+                body = listText,
+                logs = listOf(LocalRunLogEntry("INFO", "> $cmd", ts)),
+                ranAt = ts,
+              ),
+          )
+        }
+        return
+      }
+      "env" -> {
+        val denoPresent = LocalScriptRunner.resolveDenoBinary(getApplication()).exists()
+        val envText =
+          buildString {
+            appendLine("Runtime: ${if (denoPresent) "Deno arm64 (libdeno.so active)" else "WebView JS Sandbox (libdeno.so not bundled locally)"}")
+            appendLine("Project: ${state.workspace?.scriptName ?: "(none)"}")
+            appendLine("Root: ${state.externalProjectRootPath ?: projectDirManager.displayRootPath()}")
+            val bindings = state.workspace?.bindings.orEmpty()
+            appendLine("Bindings: ${if (bindings.isEmpty()) "none" else bindings.joinToString { "${it.name}:${it.type}" }}")
+          }.trimEnd()
+        _uiState.update {
+          it.copy(
+            localScriptResult =
+              LocalScriptRunResult(
+                mode = "CLI",
+                entryPath = "env",
+                statusCode = 200,
+                statusText = "OK",
+                durationMs = 1L,
+                body = envText,
+                logs = listOf(LocalRunLogEntry("INFO", "> $cmd", ts)),
+                ranAt = ts,
+              ),
+          )
+        }
+        return
+      }
+      "run" -> {
+        runWorkspaceLocally(openTestWorkspace = true)
+        return
+      }
+    }
+
+    _uiState.update { it.copy(isRunningLocalScript = true) }
+    viewModelScope.launch {
+      val evalResult =
+        runCatching {
+          LocalScriptRunner.evalSnippet(
+            context = getApplication(),
+            workspace = _uiState.value.workspace,
+            snippet = cmd,
+          )
+        }.getOrElse { err ->
+          LocalScriptRunResult(
+            mode = "SCRIPT",
+            entryPath = "repl",
+            statusCode = 500,
+            statusText = "ERROR",
+            durationMs = 1L,
+            errorMessage = err.localizedMessage ?: "Failed to evaluate expression",
+            ranAt = ts,
+          )
+        }
+      _uiState.update {
+        it.copy(
+          isRunningLocalScript = false,
+          localScriptResult = evalResult,
+        )
+      }
+    }
+  }
+
+  fun linkExternalProjectFolder(treeUri: Uri) {
+    val context = getApplication<Application>()
+    runCatching {
+      context.contentResolver.takePersistableUriPermission(
+        treeUri,
+        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+      )
+    }
+    viewModelScope.launch {
+      val scan =
+        DeviceFileHelper.scanTreeUriForExternalProject(context, treeUri).getOrElse { err ->
+          _uiState.update {
+            it.copy(statusMessage = err.localizedMessage ?: "Could not read selected folder")
+          }
+          return@launch
+        }
+      val state = _uiState.value
+      val ws = state.workspace ?: return@launch
+      val currentByPath = ws.files.filterNot { it.isVirtualReadOnly }.associateBy { it.path }
+      val mergedEditable = linkedMapOf<String, WorkerFile>()
+      scan.textFiles.forEach { picked ->
+        val cleanPath = ProjectDirectoryManager.normalizeRelativePath(picked.fileName).ifBlank { picked.fileName }
+        val existing = currentByPath[cleanPath]
+        mergedEditable[cleanPath] =
+          existing ?: WorkerFile(
+            path = cleanPath,
+            content = picked.content,
+            originalContent = picked.content,
+            contentType = MultipartWorkerParser.inferModuleMimeType(cleanPath),
+            isEntryPoint = false,
+          )
+      }
+      currentByPath.forEach { (p, wf) ->
+        if (!mergedEditable.containsKey(p)) mergedEditable[p] = wf
+      }
+      val nextFiles = ProjectDirectoryManager.organizeWorkspaceFiles(mergedEditable.values.toList())
+      val nextWs = ws.copy(files = nextFiles)
+      val nextFields =
+        state.editorFieldValues.toMutableMap().apply {
+          nextFiles.forEach { wf ->
+            if (!containsKey(wf.path)) put(wf.path, TextFieldValue(wf.content))
+          }
+        }
+      activeWorkspaceKey(state)?.let { ramKey ->
+        ramDb.updateWorkspace(ramKey) { rec ->
+          rec.copy(workingWorkspace = nextWs, fieldValues = nextFields)
+        }
+      }
+      val resolvedPreviewUrl =
+        state.previewUrl.ifBlank {
+          LocalWorkspacePreviewRenderer.findDefaultPreviewPath(nextWs, state.activeFilePath)
+            ?.let { LocalWorkspacePreviewRenderer.localUrlForPath(it) }
+            .orEmpty()
+        }
+      _uiState.update { cur ->
+        cur.copy(
+          workspace = nextWs,
+          editorFieldValues = nextFields,
+          editorRevision = cur.editorRevision + 1L,
+          externalBinaryAssets = scan.binaryAssets,
+          externalProjectRootPath = scan.rootDirPath,
+          previewUrl = resolvedPreviewUrl,
+          previewReloadNonce = cur.previewReloadNonce + 1L,
+          diagnostics = rebuildDiagnosticsFull(nextFiles),
+          statusMessage = "Linked project folder (${scan.textFiles.size} code files, ${scan.binaryAssets.size} assets)",
+        )
+      }
+    }
+  }
+
+  fun saveActiveExternalFileNow() {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val active = state.activeFile ?: return
+    val uriStr = state.externalFileUris[active.path] ?: return
+    val uri = runCatching { Uri.parse(uriStr) }.getOrNull() ?: return
+    val content = state.editorFieldValues[active.path]?.text ?: active.content
+    viewModelScope.launch {
+      DeviceFileHelper.writeTextToUri(getApplication(), uri, content)
+        .onSuccess {
+          _uiState.update { cur ->
+            val ws = cur.workspace ?: return@update cur
+            val updated = ws.files.map { f -> if (f.path == active.path) f.copy(originalContent = content, content = content) else f }
+            cur.copy(
+              workspace = ws.copy(files = updated),
+              statusMessage = "Saved '${active.fileName}' back to original file",
+            )
+          }
+        }
+        .onFailure { err ->
+          _uiState.update {
+            it.copy(statusMessage = "Could not overwrite original file: ${err.localizedMessage ?: "read-only provider"}")
+          }
+        }
+    }
+  }
+
+  fun handleExternalIntent(intent: Intent?) {
+    val extracted = ExternalIntentExtractor.extractFromIntent(intent) ?: return
+    hasAttemptedAutoReopen = true
+    val context = getApplication<Application>()
+
+    extracted.uris.forEach { uri ->
+      runCatching {
+        context.contentResolver.takePersistableUriPermission(
+          uri,
+          Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+        )
+      }
+    }
+
+    // Bypass AuthScreen immediately so external Open With / Share opens straight into IDE
+    _uiState.update {
+      it.copy(
+        isLocalScratchpad = true,
+        isBootstrapping = false,
+        authError = null,
+      )
+    }
+
+    viewModelScope.launch {
+      if (extracted.uris.isEmpty() && extracted.sharedText != null) {
+        val fileName =
+          ExternalIntentExtractor.sanitizeSharedSnippetFilename(
+            extracted.sharedSubject,
+            extracted.sharedText,
+          )
+        openExternalFilesInWorkspace(
+          pickedFiles = listOf(PickedDeviceFile(fileName, extracted.sharedText)),
+          uriMap = emptyMap(),
+          binaryAssets = emptyMap(),
+          rootDirPath = null,
+          primaryPath = fileName,
+          sourceBanner = "Opened shared snippet '$fileName'",
+        )
+        return@launch
+      }
+
+      if (extracted.uris.size == 1 && DeviceFileHelper.isZipUri(context, extracted.uris.first())) {
+        val zipUri = extracted.uris.first()
+        inspectZipForImport(zipUri, ZipImportTargetMode.NEW_PROJECT)
+        _uiState.update { it.copy(statusMessage = "Ready to import external ZIP archive") }
+        return@launch
+      }
+
+      val batch = DeviceFileHelper.readExternalTextFiles(context, extracted.uris)
+      if (batch.files.isEmpty()) {
+        val reason = batch.rejectedReasons.firstOrNull() ?: "Unsupported or unreadable external file"
+        _uiState.update { it.copy(statusMessage = reason) }
+        return@launch
+      }
+
+      val primary = batch.files.first()
+      val uriMap = linkedMapOf<String, String>()
+      batch.files.forEach { item ->
+        val norm = ProjectDirectoryManager.normalizeRelativePath(item.fileName).ifBlank { item.fileName }
+        uriMap[norm] = item.uri.toString()
+      }
+
+      var pickedForWs = batch.files.map { PickedDeviceFile(it.fileName, it.content) }
+      var binaryAssets = emptyMap<String, ByteArray>()
+      var resolvedRootPath: String? = null
+      var primaryRelPath = ProjectDirectoryManager.normalizeRelativePath(primary.fileName).ifBlank { primary.fileName }
+
+      if (batch.files.size == 1) {
+        val parentDir = DeviceFileHelper.tryResolveParentDirectory(context, primary.uri)
+        if (parentDir != null) {
+          val scan = DeviceFileHelper.scanDirectoryForExternalProject(parentDir)
+          if (scan.textFiles.isNotEmpty()) {
+            resolvedRootPath = scan.rootDirPath
+            binaryAssets = scan.binaryAssets
+            val mergedMap = linkedMapOf<String, PickedDeviceFile>()
+            scan.textFiles.forEach { sf ->
+              val rel = ProjectDirectoryManager.normalizeRelativePath(sf.fileName).ifBlank { sf.fileName }
+              mergedMap[rel] = PickedDeviceFile(rel, sf.content)
+              if (sf.fileName.substringAfterLast('/') == primary.fileName.substringAfterLast('/')) {
+                primaryRelPath = rel
+              }
+            }
+            mergedMap[primaryRelPath] = PickedDeviceFile(primaryRelPath, primary.content)
+            uriMap.clear()
+            uriMap[primaryRelPath] = primary.uri.toString()
+            pickedForWs = mergedMap.values.toList()
+          }
+        }
+      }
+
+      val rejectedNote =
+        if (batch.rejectedReasons.isNotEmpty()) " (${batch.rejectedReasons.size} skipped)"
+        else ""
+      openExternalFilesInWorkspace(
+        pickedFiles = pickedForWs,
+        uriMap = uriMap,
+        binaryAssets = binaryAssets,
+        rootDirPath = resolvedRootPath,
+        primaryPath = primaryRelPath,
+        sourceBanner = "Opened '${primary.fileName}'$rejectedNote",
+      )
+    }
+  }
+
+  private fun openExternalFilesInWorkspace(
+    pickedFiles: List<PickedDeviceFile>,
+    uriMap: Map<String, String>,
+    binaryAssets: Map<String, ByteArray>,
+    rootDirPath: String?,
+    primaryPath: String,
+    sourceBanner: String,
+  ) {
+    val slug =
+      CloudflareNamingUtils.sanitizeWorkerName(
+        primaryPath.substringBeforeLast('.').ifBlank { "external-file" },
+        allowUnderscore = true,
+      ).ifBlank { "external-file" }
+    val ramKey = ramDb.workspaceKey(null, "ext-$slug")
+    val workerFiles =
+      pickedFiles.map { item ->
+        val rel = ProjectDirectoryManager.normalizeRelativePath(item.fileName).ifBlank { item.fileName }
+        WorkerFile(
+          path = rel,
+          content = item.content,
+          originalContent = item.content,
+          contentType = MultipartWorkerParser.inferModuleMimeType(rel),
+          isEntryPoint = rel == primaryPath,
+        )
+      }.let { ProjectDirectoryManager.organizeWorkspaceFiles(it) }
+
+    val ws =
+      WorkerWorkspace(
+        scriptName = "ext-$slug",
+        isEsModuleFormat = true,
+        entryModulePath = primaryPath,
+        compatibilityDate = _uiState.value.editorSettings.defaultCompatibilityDate.ifBlank { "2024-11-01" },
+        files = workerFiles,
+        bindings = emptyList(),
+        routes = emptyList(),
+        workersDevEnabled = false,
+        accountSubdomain = "",
+      )
+    val defaultTabs =
+      (listOf(primaryPath) + workerFiles.filterNot { it.isVirtualReadOnly }.take(5).map { it.path }).distinct()
+    val record =
+      ramDb.importWorkspace(
+        key = ramKey,
+        workspace = ws,
+        defaultTabs = defaultTabs,
+        defaultActivePath = primaryPath,
+        isNewUnexported = false,
+      )
+    val openMode = ExternalIntentExtractor.determineOpenMode(primaryPath)
+    val openInPreview =
+      openMode == ExternalOpenTargetMode.PREVIEW_HTML ||
+        openMode == ExternalOpenTargetMode.PREVIEW_MARKDOWN ||
+        openMode == ExternalOpenTargetMode.PREVIEW_SVG
+    val previewTarget =
+      if (openInPreview || LocalWorkspacePreviewRenderer.findDefaultPreviewPath(ws, primaryPath) != null) {
+        LocalWorkspacePreviewRenderer.localUrlForPath(
+          LocalWorkspacePreviewRenderer.findDefaultPreviewPath(ws, primaryPath) ?: primaryPath,
+        )
+      } else {
+        ""
+      }
+
+    _uiState.update { state ->
+      state.copy(
+        isLocalScratchpad = true,
+        isBootstrapping = false,
+        authError = null,
+        workspace = ws,
+        openTabPaths = record.openTabPaths,
+        activeFilePath = primaryPath,
+        tabNavHistory = record.tabNavHistory,
+        tabNavIndex = record.tabNavIndex,
+        editorFieldValues = record.fieldValues,
+        editorRevision = state.editorRevision + 1L,
+        diagnostics = rebuildDiagnosticsFull(ws.files),
+        externalFileUris = uriMap,
+        externalBinaryAssets = binaryAssets,
+        externalProjectRootPath = rootDirPath,
+        projectMode = if (openInPreview) ProjectMode.TEST else ProjectMode.CODE,
+        activeBottomTab = if (openInPreview) BottomPanelTab.WORKER_PREVIEW else state.activeBottomTab,
+        showBottomPanel = openInPreview,
+        isBottomPanelExpanded = openInPreview,
+        previewModeTab = 0,
+        previewUrl = previewTarget,
+        previewReloadNonce = state.previewReloadNonce + 1L,
+        ramDbStats = ramDb.computeStats(ramKey),
+        ramWorkspaces = ramDb.listWorkspaces(),
+        statusMessage = sourceBanner,
+      )
+    }
+    persistWorkspaceToProjectDirAsync(ramKey)
+    recordActiveSessionPointer()
+    syncPeriodicAutoSaveLoop()
   }
 
   fun deleteModuleFile(filePath: String) {
@@ -7601,6 +8058,16 @@ jobs:
           val summary = projectDirManager.computeStorageSummary()
           _uiState.update {
             if (it.projectStorageSummary != summary) it.copy(projectStorageSummary = summary) else it
+          }
+        }
+        // Best-effort save-back to opened external file URIs when auto-saving/backgrounding
+        state.externalFileUris.forEach { (path, uriStr) ->
+          val wsFile = state.workspace?.files?.firstOrNull { it.path == path }
+          val liveContent = state.editorFieldValues[path]?.text ?: wsFile?.content
+          if (wsFile != null && liveContent != null && liveContent != wsFile.originalContent) {
+            runCatching { Uri.parse(uriStr) }.getOrNull()?.let { uri ->
+              DeviceFileHelper.writeTextToUri(getApplication(), uri, liveContent)
+            }
           }
         }
         if (clearSessionPointer) {

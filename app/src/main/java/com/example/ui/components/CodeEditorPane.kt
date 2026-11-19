@@ -558,6 +558,31 @@ fun CodeEditorPane(
               )
             }
 
+            if (activeFile.language in setOf(WorkerLanguage.JAVASCRIPT, WorkerLanguage.TYPESCRIPT)) {
+              IconRevealButton(
+                icon = Icons.Outlined.PlayArrow,
+                revealedLabel = "Run",
+                minimal = true,
+                isBusy = uiState.isRunningLocalScript,
+                onClick = { flushThen(onRunLocalScript) },
+                height = 24.dp,
+                iconSize = 15.dp,
+                tag = "editor_quick_run_button",
+              )
+            } else if (com.example.editor.LocalWorkspacePreviewRenderer.isPreviewableFile(activeFile.path) ||
+              activeFile.language == WorkerLanguage.CSS
+            ) {
+              IconRevealButton(
+                icon = Icons.Outlined.Visibility,
+                revealedLabel = "Preview",
+                minimal = true,
+                onClick = { flushThen(onOpenWorkerPreview) },
+                height = 24.dp,
+                iconSize = 15.dp,
+                tag = "editor_quick_preview_button",
+              )
+            }
+
             IconRevealButton(
               icon = Icons.Outlined.Search,
               revealedLabel = "Find",
@@ -1030,7 +1055,13 @@ fun CodeEditorPane(
 
       if (!activeFile.isVirtualReadOnly &&
         !uiState.isEditorBottomBarsHidden &&
-        activeFile.language in setOf(WorkerLanguage.JAVASCRIPT, WorkerLanguage.TYPESCRIPT, WorkerLanguage.JSON)
+        activeFile.language in setOf(
+          WorkerLanguage.JAVASCRIPT,
+          WorkerLanguage.TYPESCRIPT,
+          WorkerLanguage.JSON,
+          WorkerLanguage.HTML,
+          WorkerLanguage.CSS,
+        )
       ) {
         FloatingAutocompleteOverlay(
           filePath = activeFile.path,
@@ -1227,6 +1258,10 @@ private fun EditorLiveStatusTelemetry(
           WorkerLanguage.JAVASCRIPT -> "JS"
           WorkerLanguage.TYPESCRIPT -> "TS"
           WorkerLanguage.JSON -> "JSON"
+          WorkerLanguage.HTML -> "HTML"
+          WorkerLanguage.CSS -> "CSS"
+          WorkerLanguage.MARKDOWN -> "MD"
+          WorkerLanguage.CONFIG -> "CFG"
           WorkerLanguage.TEXT -> "TXT"
         },
       fontFamily = JetBrainsMono,

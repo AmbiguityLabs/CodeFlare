@@ -9,7 +9,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -27,13 +29,24 @@ import com.example.ui.theme.EdgeCodeTheme
 import com.example.ui.viewmodel.IdeViewModel
 
 class MainActivity : ComponentActivity() {
+  private val incomingIntentState = mutableStateOf<Intent?>(null)
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
+    incomingIntentState.value = intent
     setContent {
       val ideViewModel: IdeViewModel = viewModel()
       val uiState by ideViewModel.uiState.collectAsStateWithLifecycle()
       val lifecycleOwner = LocalLifecycleOwner.current
+      val pendingIntent = incomingIntentState.value
+
+      LaunchedEffect(pendingIntent, ideViewModel) {
+        if (pendingIntent != null) {
+          ideViewModel.handleExternalIntent(pendingIntent)
+          incomingIntentState.value = null
+        }
+      }
 
       DisposableEffect(lifecycleOwner, ideViewModel) {
         val observer =
@@ -109,6 +122,12 @@ class MainActivity : ComponentActivity() {
         }
       }
     }
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    incomingIntentState.value = intent
   }
 
   private fun openExternalUrl(url: String) {

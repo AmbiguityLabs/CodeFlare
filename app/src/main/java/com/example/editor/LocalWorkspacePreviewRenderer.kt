@@ -4,12 +4,14 @@ import android.webkit.WebResourceResponse
 import com.example.data.remote.WorkerFile
 import com.example.data.remote.WorkerWorkspace
 import java.io.ByteArrayInputStream
+import java.io.File
+import java.net.URLDecoder
 
 object LocalWorkspacePreviewRenderer {
   const val LOCAL_PREVIEW_HOST = "local.edgecode.app"
   const val LOCAL_PREVIEW_ORIGIN = "https://local.edgecode.app"
 
-  private val PREVIEWABLE_EXTENSIONS = setOf("html", "htm", "md", "markdown", "svg")
+  private val PREVIEWABLE_EXTENSIONS = setOf("html", "htm", "xhtml", "md", "markdown", "mdx", "svg")
 
   fun isLocalPreviewUrl(url: String?): Boolean {
     if (url.isNullOrBlank()) return false
@@ -54,30 +56,78 @@ object LocalWorkspacePreviewRenderer {
     return files.firstOrNull { isPreviewableFile(it.path) }?.path
   }
 
+  fun normalizeRequestPath(requestUrl: String): String {
+    val stripped =
+      requestUrl
+        .substringAfter(LOCAL_PREVIEW_ORIGIN, "")
+        .substringBefore('?')
+        .substringBefore('#')
+        .trimStart('/')
+    val decoded = runCatching { URLDecoder.decode(stripped, "UTF-8") }.getOrDefault(stripped)
+    val parts = mutableListOf<String>()
+    decoded.replace('\\', '/').split('/').forEach { segment ->
+      when {
+        segment.isBlank() || segment == "." -> Unit
+        segment == ".." -> if (parts.isNotEmpty()) parts.removeAt(parts.lastIndex)
+        else -> parts.add(segment)
+      }
+    }
+    return parts.joinToString("/")
+  }
+
   fun resolveWebResource(
     workspace: WorkerWorkspace?,
     requestUrl: String,
     isDarkTheme: Boolean,
+    externalBinaryAssets: Map<String, ByteArray> = emptyMap(),
+    externalRootDir: File? = null,
   ): WebResourceResponse? {
     if (!isLocalPreviewUrl(requestUrl) || workspace == null) return null
-    val rawPath =
-      requestUrl
-        .removePrefix(LOCAL_PREVIEW_ORIGIN)
-        .substringBefore('?')
-        .substringBefore('#')
-        .trimStart('/')
-    val file = findWorkspaceFileForRequest(workspace.files, rawPath) ?: return buildNotFoundResponse(rawPath, isDarkTheme)
-    val ext = file.path.substringAfterLast('.', "").lowercase()
-    return when {
-      ext == "md" || ext == "markdown" -> {
-        val html = renderMarkdownToHtml(file.path, file.content, isDarkTheme)
-        WebResourceResponse("text/html", "UTF-8", ByteArrayInputStream(html.toByteArray(Charsets.UTF_8)))
-      }
-      else -> {
-        val mime = inferBrowserMimeType(file.path)
-        WebResourceResponse(mime, "UTF-8", ByteArrayInputStream(file.content.toByteArray(Charsets.UTF_8)))
+    val rawPath = normalizeRequestPath(requestUrl)
+
+    val file = findWorkspaceFileForRequest(workspace.files, rawPath)
+    if (file != null) {
+      val ext = file.path.substringAfterLast('.', "").lowercase()
+      return when {
+        ext in setOf("md", "markdown", "mdx") -> {
+          val html = renderMarkdownToHtml(file.path, file.content, isDarkTheme)
+          WebResourceResponse("text/html", "UTF-8", ByteArrayInputStream(html.toByteArray(Charsets.UTF_8)))
+        }
+        else -> {
+          val mime = inferBrowserMimeType(file.path)
+          val encoding = if (isTextMimeType(mime)) "UTF-8" else null
+          WebResourceResponse(mime, encoding, ByteArrayInputStream(file.content.toByteArray(Charsets.UTF_8)))
+        }
       }
     }
+
+    findBinaryAssetForRequest(externalBinaryAssets, rawPath)?.let { (assetPath, bytes) ->
+      val mime = inferBrowserMimeType(assetPath)
+      val encoding = if (isTextMimeType(mime)) "UTF-8" else null
+      return WebResourceResponse(mime, encoding, ByteArrayInputStream(bytes))
+    }
+
+    if (externalRootDir != null && externalRootDir.isDirectory && rawPath.isNotBlank()) {
+      val rootCanonical = runCatching { externalRootDir.canonicalFile }.getOrNull()
+      val candidate = File(externalRootDir, rawPath)
+      val candidateCanonical = runCatching { candidate.canonicalFile }.getOrNull()
+      if (
+        rootCanonical != null &&
+          candidateCanonical != null &&
+          candidateCanonical.path.startsWith(rootCanonical.path) &&
+          candidateCanonical.isFile &&
+          candidateCanonical.canRead()
+      ) {
+        val mime = inferBrowserMimeType(candidateCanonical.name)
+        val encoding = if (isTextMimeType(mime)) "UTF-8" else null
+        val bytes = runCatching { candidateCanonical.readBytes() }.getOrNull()
+        if (bytes != null) {
+          return WebResourceResponse(mime, encoding, ByteArrayInputStream(bytes))
+        }
+      }
+    }
+
+    return buildNotFoundResponse(rawPath, isDarkTheme)
   }
 
   fun findWorkspaceFileForRequest(
@@ -95,18 +145,66 @@ object LocalWorkspacePreviewRenderer {
     candidates.forEach { cand ->
       editable.firstOrNull { it.path.equals(cand, ignoreCase = true) }?.let { return it }
     }
+    // Fallback filename lookup for flat single-folder references when subfolder prefix wasn't in URL
+    if (normalized.contains('/')) {
+      val tail = normalized.substringAfterLast('/')
+      if (tail.isNotBlank()) {
+        editable.firstOrNull { it.path.equals(tail, ignoreCase = true) }?.let { return it }
+      }
+    }
     return null
   }
+
+  fun findBinaryAssetForRequest(
+    assets: Map<String, ByteArray>,
+    rawPath: String,
+  ): Pair<String, ByteArray>? {
+    if (assets.isEmpty() || rawPath.isBlank()) return null
+    val normalized = rawPath.trim('/')
+    assets[normalized]?.let { return normalized to it }
+    assets.entries.firstOrNull { it.key.equals(normalized, ignoreCase = true) }?.let {
+      return it.key to it.value
+    }
+    return null
+  }
+
+  fun isTextMimeType(mime: String): Boolean =
+    mime.startsWith("text/") ||
+      mime == "application/javascript" ||
+      mime == "application/json" ||
+      mime == "application/xml" ||
+      mime == "application/xhtml+xml" ||
+      mime == "image/svg+xml"
 
   fun inferBrowserMimeType(path: String): String {
     return when (path.substringAfterLast('.', "").lowercase()) {
       "html", "htm" -> "text/html"
-      "css" -> "text/css"
-      "js", "mjs", "jsx" -> "application/javascript"
-      "json", "jsonc" -> "application/json"
+      "xhtml" -> "application/xhtml+xml"
+      "css", "scss" -> "text/css"
+      "js", "mjs", "cjs", "jsx", "ts" -> "application/javascript"
+      "json", "jsonc", "webmanifest", "map" -> "application/json"
       "svg" -> "image/svg+xml"
       "xml" -> "application/xml"
-      "txt", "toml", "yaml", "yml" -> "text/plain"
+      "png" -> "image/png"
+      "jpg", "jpeg" -> "image/jpeg"
+      "gif" -> "image/gif"
+      "webp" -> "image/webp"
+      "ico" -> "image/x-icon"
+      "bmp" -> "image/bmp"
+      "avif" -> "image/avif"
+      "woff" -> "font/woff"
+      "woff2" -> "font/woff2"
+      "ttf" -> "font/ttf"
+      "otf" -> "font/otf"
+      "eot" -> "application/vnd.ms-fontobject"
+      "wasm" -> "application/wasm"
+      "mp3" -> "audio/mpeg"
+      "wav" -> "audio/wav"
+      "ogg" -> "audio/ogg"
+      "mp4" -> "video/mp4"
+      "webm" -> "video/webm"
+      "pdf" -> "application/pdf"
+      "txt", "toml", "yaml", "yml", "md", "markdown", "mdx" -> "text/plain"
       else -> "text/plain"
     }
   }

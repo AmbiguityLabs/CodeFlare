@@ -116,6 +116,7 @@ fun WorkerTestWindow(
   var rawHeadersMode by remember { mutableStateOf(false) }
   var responseOutputTab by remember { mutableIntStateOf(0) }
   var prettyJson by remember { mutableStateOf(true) }
+  var wrapResponse by remember { mutableStateOf(true) }
   var showEmptyHelp by remember { mutableStateOf(false) }
   var showMethodNote by remember { mutableStateOf(false) }
   var htmlWebViewRef by remember { mutableStateOf<WebView?>(null) }
@@ -749,6 +750,14 @@ fun WorkerTestWindow(
                 responseOutputTab = 0
               }
             }
+            val contentTypeHint =
+              remember(res.headers) {
+                res.headers.entries.firstOrNull { it.key.equals("content-type", ignoreCase = true) }?.value
+              }
+            val formatBadge =
+              remember(res.body, contentTypeHint, res.errorMessage) {
+                detectWorkerResponseBadge(res.body, contentTypeHint, res.errorMessage)
+              }
             val tabs =
               buildList {
                 add(0 to "Body")
@@ -766,6 +775,7 @@ fun WorkerTestWindow(
                   onClick = { responseOutputTab = idx },
                   color = if (active) palette.activePillBg else palette.chromePill,
                   shape = RoundedCornerShape(8.dp),
+                  border = BorderStroke(0.5.dp, if (active) palette.activePillFg.copy(alpha = 0.4f) else palette.border.copy(alpha = 0.35f)),
                 ) {
                   Text(
                     text = label,
@@ -776,11 +786,39 @@ fun WorkerTestWindow(
                 }
               }
               Spacer(Modifier.weight(1f))
+              if (responseOutputTab == 0) {
+                Surface(
+                  color = palette.chromePill,
+                  shape = RoundedCornerShape(6.dp),
+                  border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.35f)),
+                ) {
+                  Text(
+                    text = formatBadge,
+                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
+                    color = palette.textSecondary,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                  )
+                }
+                Surface(
+                  onClick = { wrapResponse = !wrapResponse },
+                  color = if (wrapResponse) palette.activePillBg else palette.chromePill,
+                  shape = RoundedCornerShape(8.dp),
+                  border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.35f)),
+                ) {
+                  Text(
+                    text = if (wrapResponse) "Wrap" else "NoWrap",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (wrapResponse) palette.activePillFg else palette.textSecondary,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                  )
+                }
+              }
               if (responseOutputTab == 0 && res.errorMessage == null) {
                 Surface(
                   onClick = { prettyJson = !prettyJson },
                   color = palette.chromePill,
                   shape = RoundedCornerShape(8.dp),
+                  border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.35f)),
                 ) {
                   Text(
                     text = if (prettyJson) "Pretty" else "Raw",
@@ -795,7 +833,7 @@ fun WorkerTestWindow(
             Surface(
               color = palette.editorBg,
               shape = RoundedCornerShape(8.dp),
-              border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.45f)),
+              border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.55f)),
               modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 320.dp),
             ) {
               when (responseOutputTab) {
@@ -855,40 +893,36 @@ fun WorkerTestWindow(
                       else if (prettyJson) prettyFormatJsonOrKeep(res.body)
                       else res.body
                     }
-                  val isJson =
-                    res.errorMessage == null &&
-                      prettyJson &&
-                      (displayBody.trimStart().startsWith("{") || displayBody.trimStart().startsWith("["))
-                  Box(
-                    modifier =
-                      Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
-                        .horizontalScroll(rememberScrollState())
-                        .padding(10.dp),
-                  ) {
-                    if (isJson) {
-                      val highlighted = remember(displayBody, palette) {
-                        SyntaxHighlighter.highlight(displayBody, WorkerLanguage.JSON, palette)
-                      }
-                      SmartDraggableText(
-                        text = displayBody,
-                        annotatedText = highlighted,
-                        surfaceId = "worker_res_json",
-                        domain = SmartTextDomain.JSON,
-                        style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
-                        onCopied = { onNotifyStatus("Copied JSON snippet") },
-                      )
+                  val domain =
+                    if (res.errorMessage == null && (formatBadge == "JSON" || formatBadge == "HTML" || formatBadge == "JS")) {
+                      SmartTextDomain.JSON
                     } else {
-                      SmartDraggableText(
-                        text = displayBody,
-                        surfaceId = "worker_res_body",
-                        domain = SmartTextDomain.TERMINAL_OR_LOG,
-                        style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
-                        color = if (res.errorMessage != null) RoseError else palette.textPrimary,
-                        onCopied = { onNotifyStatus("Copied response snippet") },
-                      )
+                      SmartTextDomain.TERMINAL_OR_LOG
                     }
+                  val highlighted =
+                    remember(displayBody, contentTypeHint, palette, res.errorMessage) {
+                      if (res.errorMessage != null || displayBody == "(empty response body)") {
+                        null
+                      } else {
+                        SyntaxHighlighter.highlightResponse(displayBody, contentTypeHint, palette)
+                      }
+                    }
+                  val bodyModifier =
+                    if (wrapResponse) {
+                      Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(10.dp)
+                    } else {
+                      Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()).padding(10.dp)
+                    }
+                  Box(modifier = bodyModifier) {
+                    SmartDraggableText(
+                      text = displayBody,
+                      annotatedText = highlighted,
+                      surfaceId = "worker_res_body",
+                      domain = domain,
+                      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 16.sp),
+                      color = if (res.errorMessage != null) RoseError else palette.textPrimary,
+                      onCopied = { onNotifyStatus("Copied response snippet") },
+                    )
                   }
                 }
               }
@@ -976,6 +1010,26 @@ private fun serializeHeadersToJson(rows: List<HeaderEntry>): String {
     }
   }
   return obj.toString(2)
+}
+
+private fun detectWorkerResponseBadge(
+  body: String,
+  contentTypeHint: String?,
+  errorMessage: String?,
+): String {
+  if (errorMessage != null) return "ERR"
+  val hint = contentTypeHint.orEmpty().lowercase()
+  val trimmed = body.trimStart()
+  return when {
+    hint.contains("json") || trimmed.startsWith("{") || trimmed.startsWith("[") -> "JSON"
+    hint.contains("html") || trimmed.startsWith("<!doctype", true) || trimmed.startsWith("<html", true) -> "HTML"
+    hint.contains("svg") || trimmed.startsWith("<svg", true) -> "SVG"
+    hint.contains("xml") || trimmed.startsWith("<?xml", true) -> "XML"
+    hint.contains("css") -> "CSS"
+    hint.contains("javascript") || hint.contains("typescript") -> "JS"
+    hint.contains("markdown") -> "MD"
+    else -> "TXT"
+  }
 }
 
 private fun prettyFormatJsonOrKeep(raw: String): String {

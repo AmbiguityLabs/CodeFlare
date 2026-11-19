@@ -41,8 +41,11 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.Computer
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.Http
@@ -50,6 +53,7 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Smartphone
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -73,6 +77,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import com.example.editor.LocalWorkspacePreviewRenderer
 import com.example.editor.drag.SmartDraggableText
 import com.example.editor.drag.edgeTextDropTarget
 import com.example.editor.selection.SmartTextDomain
@@ -99,6 +104,7 @@ import com.example.ui.theme.RoseError
 import com.example.ui.theme.UiStyleVersion
 import com.example.ui.viewmodel.IdeUiState
 import com.example.ui.viewmodel.WorkerPreviewConsoleEntry
+import java.io.File
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -118,6 +124,9 @@ fun DeployedWorkerPreviewPane(
   onNotifyStatus: (String) -> Unit,
   isFullScreen: Boolean = false,
   onToggleFullScreen: (() -> Unit)? = null,
+  onSwitchToCode: (() -> Unit)? = null,
+  onLinkProjectFolder: (() -> Unit)? = null,
+  onToggleViewport: (() -> Unit)? = null,
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
@@ -134,6 +143,12 @@ fun DeployedWorkerPreviewPane(
   val latestPreviewUrl by rememberUpdatedState(uiState.previewUrl)
   val latestOnUrlChange by rememberUpdatedState(onUrlChange)
   val latestOnAppendConsole by rememberUpdatedState(onAppendConsoleEntry)
+  val latestWorkspace by rememberUpdatedState(uiState.workspace)
+  val latestIsDarkTheme by rememberUpdatedState(uiState.editorSettings.darkTheme)
+  val latestBinaryAssets by rememberUpdatedState(uiState.externalBinaryAssets)
+  val latestExternalRootDir by rememberUpdatedState(
+    uiState.externalProjectRootPath?.takeIf { !it.startsWith("content://") }?.let { File(it) },
+  )
 
   fun normalizeWorkerUrl(raw: String): String {
     val trimmed = raw.trim()
@@ -231,6 +246,45 @@ fun DeployedWorkerPreviewPane(
 
       Spacer(Modifier.weight(1f))
 
+      val isLocalPreview = LocalWorkspacePreviewRenderer.isLocalPreviewUrl(uiState.previewUrl)
+      if (onSwitchToCode != null) {
+        IconRevealButton(
+          icon = Icons.Outlined.Code,
+          revealedLabel = "Code",
+          minimal = true,
+          onClick = onSwitchToCode,
+          height = 30.dp,
+          iconSize = 15.dp,
+          tag = "worker_preview_code_button",
+        )
+      }
+
+      if (isLocalPreview && onLinkProjectFolder != null) {
+        IconRevealButton(
+          icon = Icons.Outlined.FolderOpen,
+          revealedLabel = "Folder",
+          minimal = true,
+          active = uiState.externalProjectRootPath != null,
+          onClick = onLinkProjectFolder,
+          height = 30.dp,
+          iconSize = 15.dp,
+          tag = "worker_preview_link_folder_button",
+        )
+      }
+
+      if (onToggleViewport != null) {
+        IconRevealButton(
+          icon = if (uiState.isPreviewDesktopViewport) Icons.Outlined.Computer else Icons.Outlined.Smartphone,
+          revealedLabel = if (uiState.isPreviewDesktopViewport) "Desktop" else "Mobile",
+          minimal = true,
+          active = uiState.isPreviewDesktopViewport,
+          onClick = onToggleViewport,
+          height = 30.dp,
+          iconSize = 15.dp,
+          tag = "worker_preview_viewport_button",
+        )
+      }
+
       if (uiState.hasUnsavedChanges && !uiState.isLocalScratchpad && uiState.workspace != null) {
         IconRevealButton(
           icon = Icons.Outlined.CloudUpload,
@@ -243,7 +297,7 @@ fun DeployedWorkerPreviewPane(
         )
       }
 
-      if (uiState.previewUrl.isNotBlank()) {
+      if (uiState.previewUrl.isNotBlank() && !isLocalPreview) {
         IconRevealButton(
           icon = Icons.AutoMirrored.Outlined.OpenInNew,
           revealedLabel = "Visit",
@@ -429,6 +483,32 @@ fun DeployedWorkerPreviewPane(
                         request: WebResourceRequest?,
                       ): WebResourceResponse? {
                         val reqUrl = request?.url?.toString().orEmpty()
+                        if (LocalWorkspacePreviewRenderer.isLocalPreviewUrl(reqUrl)) {
+                          val localResp =
+                            LocalWorkspacePreviewRenderer.resolveWebResource(
+                              workspace = latestWorkspace,
+                              requestUrl = reqUrl,
+                              isDarkTheme = latestIsDarkTheme,
+                              externalBinaryAssets = latestBinaryAssets,
+                              externalRootDir = latestExternalRootDir,
+                            )
+                          if (localResp != null) {
+                            if (request?.isForMainFrame == false) {
+                              val code = localResp.statusCode
+                              val method = request.method ?: "GET"
+                              view?.post {
+                                latestOnAppendConsole(
+                                  if (code >= 400) "ERR" else "NET",
+                                  method,
+                                  reqUrl,
+                                  code,
+                                  null,
+                                )
+                              }
+                            }
+                            return localResp
+                          }
+                        }
                         if (request != null && !request.isForMainFrame && reqUrl.startsWith("http")) {
                           val workerHost = latestWorkerHost
                           val reqHost = request.url?.host
@@ -500,6 +580,17 @@ fun DeployedWorkerPreviewPane(
               update = { wv ->
                 if (webViewRef !== wv) {
                   webViewRef = wv
+                }
+                val desiredUa =
+                  if (uiState.isPreviewDesktopViewport) {
+                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+                  } else {
+                    null
+                  }
+                if (wv.settings.userAgentString != desiredUa && (uiState.isPreviewDesktopViewport || desiredUa == null)) {
+                  wv.settings.userAgentString = desiredUa
+                  wv.settings.useWideViewPort = true
+                  wv.settings.loadWithOverviewMode = uiState.isPreviewDesktopViewport
                 }
               },
               modifier = Modifier.fillMaxSize().testTag("deployed_worker_webview"),

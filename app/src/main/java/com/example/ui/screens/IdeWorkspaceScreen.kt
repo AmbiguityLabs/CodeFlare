@@ -65,6 +65,7 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Restore
+import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Sensors
 import androidx.compose.material.icons.outlined.Settings
@@ -244,6 +245,11 @@ fun IdeWorkspaceScreen(
   val importZipMergeLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
       if (uri != null) viewModel.inspectZipForImport(uri, ZipImportTargetMode.MERGE_INTO_ACTIVE)
+    }
+
+  val linkExternalFolderLauncher =
+    rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+      if (uri != null) viewModel.linkExternalProjectFolder(uri)
     }
 
   val triggerSingleUpload = { singleFileUploadLauncher.launch(arrayOf("*/*")) }
@@ -1073,6 +1079,7 @@ fun IdeWorkspaceScreen(
                     ProjectTestModeWorkspace(
                       uiState = uiState,
                       viewModel = viewModel,
+                      onLinkProjectFolder = { linkExternalFolderLauncher.launch(null) },
                     )
                   }
 
@@ -1347,6 +1354,18 @@ fun IdeWorkspaceScreen(
                   showRenameSymbolDialog = true
                 },
               )
+              if (uiState.activeFilePath != null && uiState.activeFilePath in uiState.externalFileUris) {
+                EdgeMenuItem(
+                  label = "Save to Original File",
+                  icon = Icons.Outlined.Save,
+                  tone = EdgeMenuTone.ACCENT,
+                  badgeText = "URI",
+                  onClick = {
+                    overflowMenuOpen = false
+                    viewModel.saveActiveExternalFileNow()
+                  },
+                )
+              }
               uiState.lastUndoableFileOpLabel?.let { opLabel ->
                 EdgeMenuItem(
                   label = "Undo $opLabel",
@@ -1488,17 +1507,27 @@ fun IdeWorkspaceScreen(
                 triggerImportWorkspaceBundle()
               },
             )
-            EdgeMenuItem(
-              label = "Git Sync",
-              icon = Icons.Outlined.AccountTree,
-              badgeText = "GIT",
-              onClick = {
-                overflowMenuOpen = false
-                showProjectGitModal = true
-              },
-            )
+              EdgeMenuItem(
+                label = "Link External Folder",
+                icon = Icons.Outlined.FolderOpen,
+                badgeText = "TREE",
+                enabled = activeWs != null,
+                onClick = {
+                  overflowMenuOpen = false
+                  if (activeWs != null) linkExternalFolderLauncher.launch(null)
+                },
+              )
+              EdgeMenuItem(
+                label = "Git Sync",
+                icon = Icons.Outlined.AccountTree,
+                badgeText = "GIT",
+                onClick = {
+                  overflowMenuOpen = false
+                  showProjectGitModal = true
+                },
+              )
+            }
           }
-        }
 
         val anyUiHidden =
           uiState.isTopBarHidden ||
@@ -1613,6 +1642,7 @@ fun IdeWorkspaceScreen(
 private fun ProjectTestModeWorkspace(
   uiState: IdeUiState,
   viewModel: IdeViewModel,
+  onLinkProjectFolder: () -> Unit,
 ) {
   val palette = LocalIdePalette.current
   val activeTab =
@@ -1721,6 +1751,7 @@ private fun ProjectTestModeWorkspace(
             onBodyChange = { b -> viewModel.updateLocalRunRequest(body = b) },
             onRunLocally = { viewModel.runWorkspaceLocally(openTestWorkspace = true) },
             onNotifyStatus = viewModel::showStatus,
+            onExecuteCliCommand = viewModel::executeCliInput,
             modifier = Modifier.fillMaxSize(),
           )
 
@@ -1741,6 +1772,12 @@ private fun ProjectTestModeWorkspace(
             onNotifyStatus = viewModel::showStatus,
             isFullScreen = uiState.isPreviewFullScreen,
             onToggleFullScreen = viewModel::togglePreviewFullScreen,
+            onSwitchToCode = {
+              viewModel.setProjectMode(ProjectMode.CODE)
+              viewModel.setPreviewFullScreen(false)
+            },
+            onLinkProjectFolder = onLinkProjectFolder,
+            onToggleViewport = viewModel::togglePreviewViewport,
             modifier = Modifier.fillMaxSize(),
           )
 

@@ -16,6 +16,7 @@ type FetchListener = (event: {
 }) => void;
 
 const entryFile = Deno.env.get("EDGECODE_ENTRY_FILE") ?? "";
+const evalSnippet = Deno.env.get("EDGECODE_EVAL_SNIPPET") ?? "";
 const bindingsRaw = Deno.env.get("EDGECODE_BINDINGS_JSON") ?? "[]";
 const port = Number(Deno.env.get("EDGECODE_PORT") ?? "8080");
 const hostname = Deno.env.get("EDGECODE_HOST") ?? "0.0.0.0";
@@ -207,11 +208,6 @@ if (typeof (globalThis as Record<string, unknown>).caches === "undefined") {
 }
 
 async function main() {
-  if (!entryFile) {
-    console.error("Missing EDGECODE_ENTRY_FILE");
-    Deno.exit(1);
-  }
-
   let parsedBindings: BindingSpec[] = [];
   try {
     parsedBindings = JSON.parse(bindingsRaw);
@@ -219,6 +215,27 @@ async function main() {
     parsedBindings = [];
   }
   const env = createEnv(parsedBindings);
+
+  if (evalSnippet.trim().length > 0) {
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+    const trimmed = evalSnippet.trim();
+    const fnBody =
+      trimmed.includes(";") || trimmed.includes("\n") || /\breturn\b/.test(trimmed)
+        ? trimmed
+        : `return (${trimmed});`;
+    const fn = new AsyncFunction("env", fnBody);
+    const result = await fn(env);
+    if (result !== undefined) {
+      console.log(typeof result === "string" ? result : JSON.stringify(result, null, 2));
+    }
+    console.log("__EDGECODE_READY__:SCRIPT:0");
+    Deno.exit(0);
+  }
+
+  if (!entryFile) {
+    console.error("Missing EDGECODE_ENTRY_FILE");
+    Deno.exit(1);
+  }
 
   const mod = await import(toFileUrl(entryFile));
 

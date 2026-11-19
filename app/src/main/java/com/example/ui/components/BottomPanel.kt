@@ -3,6 +3,7 @@ package com.example.ui.components
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -50,6 +51,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -59,6 +61,7 @@ import com.example.data.remote.ApiEnvVar
 import com.example.data.remote.ApiImportResult
 import com.example.data.remote.ApiTesterRequest
 import com.example.data.remote.DiagnosticSeverity
+import com.example.editor.SyntaxHighlighter
 import com.example.editor.drag.SmartDraggableText
 import com.example.editor.selection.SmartTextDomain
 import com.example.ui.theme.AmberWarn
@@ -104,6 +107,10 @@ fun BottomPanel(
   },
   onUpdateLocalRunRequest: (method: String, path: String, body: String) -> Unit = { _, _, _ -> },
   onRunWorkspaceLocally: () -> Unit = {},
+  onExecuteCliCommand: (String) -> Unit = {},
+  onSwitchToCode: (() -> Unit)? = null,
+  onLinkProjectFolder: (() -> Unit)? = null,
+  onToggleViewport: (() -> Unit)? = null,
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
@@ -219,6 +226,7 @@ fun BottomPanel(
             onBodyChange = { b -> onUpdateLocalRunRequest(uiState.localRunMethod, uiState.localRunUrlPath, b) },
             onRunLocally = onRunWorkspaceLocally,
             onNotifyStatus = onNotifyStatus,
+            onExecuteCliCommand = onExecuteCliCommand,
             modifier = Modifier.weight(1f),
           )
         BottomPanelTab.WORKER_PREVIEW ->
@@ -238,6 +246,9 @@ fun BottomPanel(
             onNotifyStatus = onNotifyStatus,
             isFullScreen = uiState.isBottomPanelExpanded,
             onToggleFullScreen = onToggleExpand,
+            onSwitchToCode = onSwitchToCode,
+            onLinkProjectFolder = onLinkProjectFolder,
+            onToggleViewport = onToggleViewport,
             modifier = Modifier.weight(1f),
           )
         BottomPanelTab.WORKER_TEST ->
@@ -293,9 +304,12 @@ fun ProblemsView(
   onJumpToProblem: (String, Int) -> Unit,
   onNotifyStatus: (String) -> Unit = {},
 ) {
+  val palette = LocalIdePalette.current
+  var severityFilter by remember { mutableStateOf("ALL") }
+
   if (uiState.diagnostics.isEmpty()) {
     var showInfo by remember { mutableStateOf(false) }
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    Box(modifier = Modifier.fillMaxSize().background(palette.editorBg), contentAlignment = Alignment.Center) {
       Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         IconButton(onClick = { showInfo = !showInfo }) {
           Icon(
@@ -308,8 +322,9 @@ fun ProblemsView(
         AnimatedVisibility(visible = showInfo) {
           Text(
             text = "0 problems",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontFamily = JetBrainsMono,
+            fontSize = 11.sp,
+            color = palette.textMuted,
           )
         }
       }
@@ -317,50 +332,104 @@ fun ProblemsView(
     return
   }
 
-  LazyColumn(
-    modifier = Modifier.fillMaxSize().padding(8.dp),
-    verticalArrangement = Arrangement.spacedBy(4.dp),
-  ) {
-    items(uiState.diagnostics) { diag ->
-      val badgeColor =
-        when (diag.severity) {
-          DiagnosticSeverity.ERROR -> RoseError
-          DiagnosticSeverity.WARNING -> AmberWarn
-          DiagnosticSeverity.INFO -> MaterialTheme.colorScheme.primary
+  val errorCount = remember(uiState.diagnostics) { uiState.diagnostics.count { it.severity == DiagnosticSeverity.ERROR } }
+  val warnCount = remember(uiState.diagnostics) { uiState.diagnostics.count { it.severity == DiagnosticSeverity.WARNING } }
+  val filtered =
+    remember(uiState.diagnostics, severityFilter) {
+      when (severityFilter) {
+        "ERR" -> uiState.diagnostics.filter { it.severity == DiagnosticSeverity.ERROR }
+        "WARN" -> uiState.diagnostics.filter { it.severity == DiagnosticSeverity.WARNING }
+        else -> uiState.diagnostics
+      }
+    }
+
+  Column(modifier = Modifier.fillMaxSize().background(palette.editorBg)) {
+    Row(
+      modifier =
+        Modifier
+          .fillMaxWidth()
+          .background(palette.chromeSurface)
+          .padding(horizontal = 8.dp, vertical = 5.dp),
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      listOf(
+        "ALL" to "All (${uiState.diagnostics.size})",
+        "ERR" to "Errors ($errorCount)",
+        "WARN" to "Warnings ($warnCount)",
+      ).forEach { (key, label) ->
+        val selected = severityFilter == key
+        Surface(
+          onClick = { severityFilter = key },
+          color = if (selected) palette.activePillBg else palette.editorBg,
+          shape = RoundedCornerShape(6.dp),
+          border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.55f)),
+        ) {
+          Text(
+            text = label,
+            fontFamily = JetBrainsMono,
+            fontSize = 10.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = if (selected) palette.activePillFg else palette.textSecondary,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+          )
         }
-      Surface(
-        onClick = { onJumpToProblem(diag.filePath, diag.line) },
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        modifier = Modifier.fillMaxWidth(),
-      ) {
-        Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-          Surface(color = badgeColor.copy(alpha = 0.15f), shape = RoundedCornerShape(6.dp)) {
-            Text(
-              text = diag.severity.name,
-              style = MaterialTheme.typography.labelSmall,
-              color = badgeColor,
-              modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-            )
+      }
+    }
+    HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.5.dp)
+
+    LazyColumn(
+      modifier = Modifier.fillMaxSize().padding(8.dp),
+      verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+      items(filtered) { diag ->
+        val badgeColor =
+          when (diag.severity) {
+            DiagnosticSeverity.ERROR -> RoseError
+            DiagnosticSeverity.WARNING -> AmberWarn
+            DiagnosticSeverity.INFO -> palette.activePillFg
           }
-          Spacer(Modifier.width(8.dp))
-          Column(modifier = Modifier.weight(1f)) {
-            SmartDraggableText(
-              text = diag.message,
-              surfaceId = "problem_msg_${diag.filePath}_${diag.line}",
-              domain = SmartTextDomain.TERMINAL_OR_LOG,
-              style = MaterialTheme.typography.bodySmall,
-              color = MaterialTheme.colorScheme.onSurface,
-              onCopied = { onNotifyStatus("Copied diagnostic") },
-            )
-            SmartDraggableText(
-              text = "${diag.filePath} • Ln ${diag.line}, Col ${diag.column}",
-              surfaceId = "problem_loc_${diag.filePath}_${diag.line}",
-              domain = SmartTextDomain.TERMINAL_OR_LOG,
-              style = MaterialTheme.typography.labelSmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-              onCopied = { onNotifyStatus("Copied location") },
-            )
+        Surface(
+          onClick = { onJumpToProblem(diag.filePath, diag.line) },
+          shape = RoundedCornerShape(8.dp),
+          color = palette.chromeSurface,
+          border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.45f)),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Row(modifier = Modifier.padding(9.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(
+              color = badgeColor.copy(alpha = 0.14f),
+              shape = RoundedCornerShape(5.dp),
+              border = BorderStroke(0.5.dp, badgeColor.copy(alpha = 0.35f)),
+            ) {
+              Text(
+                text = diag.severity.name,
+                fontFamily = JetBrainsMono,
+                fontSize = 9.5.sp,
+                fontWeight = FontWeight.Bold,
+                color = badgeColor,
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+              )
+            }
+            Spacer(Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+              SmartDraggableText(
+                text = diag.message,
+                surfaceId = "problem_msg_${diag.filePath}_${diag.line}",
+                domain = SmartTextDomain.TERMINAL_OR_LOG,
+                style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
+                color = palette.textPrimary,
+                onCopied = { onNotifyStatus("Copied diagnostic") },
+              )
+              SmartDraggableText(
+                text = "${diag.filePath} • Ln ${diag.line}, Col ${diag.column}",
+                surfaceId = "problem_loc_${diag.filePath}_${diag.line}",
+                domain = SmartTextDomain.TERMINAL_OR_LOG,
+                style = TextStyle(fontFamily = JetBrainsMono, fontSize = 10.sp),
+                color = palette.textMuted,
+                onCopied = { onNotifyStatus("Copied location") },
+              )
+            }
           }
         }
       }
@@ -373,37 +442,98 @@ fun ConsoleView(
   uiState: IdeUiState,
   onNotifyStatus: (String) -> Unit = {},
 ) {
-  LazyColumn(
-    modifier = Modifier.fillMaxSize().padding(10.dp),
-    verticalArrangement = Arrangement.spacedBy(4.dp),
-  ) {
-    items(uiState.consoleLogs.reversed()) { log ->
-      Row(
-        modifier =
-          Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceContainerLowest, RoundedCornerShape(6.dp))
-            .padding(horizontal = 8.dp, vertical = 5.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-      ) {
-        Text(log.timestamp, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(
-          log.level,
-          style = MaterialTheme.typography.labelSmall,
-          fontWeight = FontWeight.Bold,
-          color = if (log.level == "ERROR") RoseError else MaterialTheme.colorScheme.primary,
-        )
-        SmartDraggableText(
-          text = log.message,
-          surfaceId = "ide_console_${log.timestamp}_${log.message.hashCode()}",
-          domain = SmartTextDomain.TERMINAL_OR_LOG,
-          style = MaterialTheme.typography.labelSmall,
-          color = MaterialTheme.colorScheme.onSurface,
-          maxLines = 2,
-          overflow = TextOverflow.Ellipsis,
-          onCopied = { onNotifyStatus("Copied log snippet") },
-          modifier = Modifier.weight(1f),
-        )
+  val palette = LocalIdePalette.current
+  var levelFilter by remember { mutableStateOf("ALL") }
+  val logs =
+    remember(uiState.consoleLogs, levelFilter) {
+      val rev = uiState.consoleLogs.reversed()
+      when (levelFilter) {
+        "ERR" -> rev.filter { it.level.equals("ERROR", true) || it.level.equals("ERR", true) }
+        "INFO" -> rev.filter { it.level.equals("INFO", true) || it.level.equals("LOG", true) }
+        else -> rev
+      }
+    }
+
+  Column(modifier = Modifier.fillMaxSize().background(palette.editorBg)) {
+    Row(
+      modifier =
+        Modifier
+          .fillMaxWidth()
+          .background(palette.chromeSurface)
+          .padding(horizontal = 8.dp, vertical = 5.dp),
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      listOf("ALL", "INFO", "ERR").forEach { key ->
+        val selected = levelFilter == key
+        Surface(
+          onClick = { levelFilter = key },
+          color = if (selected) palette.activePillBg else palette.editorBg,
+          shape = RoundedCornerShape(6.dp),
+          border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.55f)),
+        ) {
+          Text(
+            text = key,
+            fontFamily = JetBrainsMono,
+            fontSize = 10.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = if (selected) palette.activePillFg else palette.textSecondary,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+          )
+        }
+      }
+      Spacer(Modifier.weight(1f))
+      Text(
+        text = "${logs.size}",
+        fontFamily = JetBrainsMono,
+        fontSize = 10.sp,
+        color = palette.textMuted,
+      )
+    }
+    HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.5.dp)
+
+    LazyColumn(
+      modifier = Modifier.fillMaxSize().padding(8.dp),
+      verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+      items(logs) { log ->
+        val isErr = log.level.equals("ERROR", true) || log.level.equals("ERR", true)
+        val levelColor = if (isErr) RoseError else palette.activePillFg
+        val annotated =
+          remember(log.message, palette) {
+            SyntaxHighlighter.highlightResponse(log.message, null, palette)
+          }
+        Row(
+          modifier =
+            Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(6.dp))
+              .background(palette.chromeSurface)
+              .border(0.5.dp, palette.border.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
+              .padding(horizontal = 8.dp, vertical = 6.dp),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          Text(log.timestamp, fontFamily = JetBrainsMono, fontSize = 10.sp, color = palette.textMuted)
+          Text(
+            log.level,
+            fontFamily = JetBrainsMono,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            color = levelColor,
+          )
+          SmartDraggableText(
+            text = log.message,
+            annotatedText = annotated,
+            surfaceId = "ide_console_${log.timestamp}_${log.message.hashCode()}",
+            domain = SmartTextDomain.TERMINAL_OR_LOG,
+            style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
+            color = palette.textPrimary,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+            onCopied = { onNotifyStatus("Copied log snippet") },
+            modifier = Modifier.weight(1f),
+          )
+        }
       }
     }
   }
@@ -415,37 +545,48 @@ fun LiveTailView(
   onToggleLiveTail: () -> Unit,
   onNotifyStatus: (String) -> Unit = {},
 ) {
+  val palette = LocalIdePalette.current
   Column(
-    modifier = Modifier.fillMaxSize().padding(10.dp),
-    verticalArrangement = Arrangement.spacedBy(8.dp),
+    modifier = Modifier.fillMaxSize().background(palette.editorBg),
   ) {
     Row(
-      modifier = Modifier.fillMaxWidth(),
+      modifier =
+        Modifier
+          .fillMaxWidth()
+          .background(palette.chromeSurface)
+          .padding(horizontal = 10.dp, vertical = 6.dp),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.SpaceBetween,
     ) {
       Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
       ) {
         Surface(
           color =
             if (uiState.isTailRunning) EmeraldLive.copy(alpha = 0.16f)
-            else MaterialTheme.colorScheme.surfaceContainerHighest,
-          shape = RoundedCornerShape(999.dp),
+            else palette.editorBg,
+          shape = RoundedCornerShape(6.dp),
+          border =
+            BorderStroke(
+              0.5.dp,
+              if (uiState.isTailRunning) EmeraldLive.copy(alpha = 0.4f) else palette.border.copy(alpha = 0.5f),
+            ),
         ) {
           Text(
             text = if (uiState.isTailRunning) "STREAMING" else "IDLE",
-            style = MaterialTheme.typography.labelSmall,
-            color = if (uiState.isTailRunning) EmeraldLive else MaterialTheme.colorScheme.onSurfaceVariant,
+            fontFamily = JetBrainsMono,
+            fontSize = 10.sp,
+            color = if (uiState.isTailRunning) EmeraldLive else palette.textSecondary,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
           )
         }
         Text(
           text = uiState.workspace?.scriptName ?: "No Worker",
-          style = MaterialTheme.typography.labelMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          fontFamily = JetBrainsMono,
+          fontSize = 11.sp,
+          color = palette.textSecondary,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )
@@ -460,10 +601,11 @@ fun LiveTailView(
             onToggleLiveTail()
           }
         },
-        height = 34.dp,
+        height = 32.dp,
         tag = "toggle_live_tail_button",
       )
     }
+    HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.5.dp)
 
     if (uiState.isLocalScratchpad || uiState.tailLogs.isEmpty()) {
       var showTailInfo by remember { mutableStateOf(false) }
@@ -473,7 +615,7 @@ fun LiveTailView(
             Icon(
               imageVector = Icons.Outlined.Info,
               contentDescription = "Live tail info",
-              tint = MaterialTheme.colorScheme.onSurfaceVariant,
+              tint = palette.textSecondary,
               modifier = Modifier.size(22.dp),
             )
           }
@@ -486,35 +628,44 @@ fun LiveTailView(
                   else -> "Tap Start Tail to stream logs."
                 },
               style = MaterialTheme.typography.bodySmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              color = palette.textSecondary,
             )
           }
         }
       }
     } else {
       LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
       ) {
         items(uiState.tailLogs.reversed()) { event ->
+          val annotated =
+            remember(event.message, palette) {
+              SyntaxHighlighter.highlightResponse(event.message, null, palette)
+            }
           Column(
             modifier =
               Modifier
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surfaceContainerLowest, RoundedCornerShape(8.dp))
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .clip(RoundedCornerShape(7.dp))
+                .background(palette.chromeSurface)
+                .border(0.5.dp, palette.border.copy(alpha = 0.4f), RoundedCornerShape(7.dp))
+                .padding(horizontal = 9.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
           ) {
             Text(
               text = event.timestamp,
-              style = MaterialTheme.typography.labelSmall,
+              fontFamily = JetBrainsMono,
+              fontSize = 10.sp,
               color = EmeraldLive,
             )
             SmartDraggableText(
               text = event.message,
+              annotatedText = annotated,
               surfaceId = "live_tail_${event.timestamp}_${event.message.hashCode()}",
               domain = SmartTextDomain.TERMINAL_OR_LOG,
-              style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMono),
-              color = MaterialTheme.colorScheme.onSurface,
+              style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
+              color = palette.textPrimary,
               onCopied = { onNotifyStatus("Copied tail event") },
             )
           }

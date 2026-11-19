@@ -1,6 +1,10 @@
 package com.example.editor
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import com.example.data.remote.CfWorkerBinding
 import com.example.data.remote.WorkerFile
 import com.example.data.remote.WorkerWorkspace
@@ -32,7 +36,7 @@ data class LocalRunLogEntry(
 )
 
 data class LocalScriptRunResult(
-  val mode: String, // "WORKER" | "SCRIPT" | "STATIC"
+  val mode: String, // "WORKER" | "SCRIPT" | "STATIC" | "JS SANDBOX"
   val entryPath: String,
   val statusCode: Int,
   val statusText: String,
@@ -73,6 +77,31 @@ object LocalScriptRunner {
   fun resolveDenoBinary(context: Context): File =
     File(resolveDenoBinaryPath(context.applicationInfo.nativeLibraryDir))
 
+  fun isPureDeclarationLibraryModule(content: String): Boolean {
+    val stripped = content.trim()
+    if (stripped.isEmpty()) return true
+    if (stripped.contains("export default") || stripped.contains("console.") || stripped.contains("Deno.")) {
+      return false
+    }
+    val nonCommentLines =
+      stripped
+        .lineSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && !it.startsWith("//") && !it.startsWith("/*") && !it.startsWith("*") }
+        .toList()
+    if (nonCommentLines.isEmpty()) return true
+    return nonCommentLines.all { line ->
+      line.startsWith("import ") ||
+        line.startsWith("export const ") ||
+        line.startsWith("export let ") ||
+        line.startsWith("export type ") ||
+        line.startsWith("export interface ") ||
+        line.startsWith("export enum ") ||
+        line.startsWith("export {") ||
+        line.startsWith("export *")
+    }
+  }
+
   fun resolveTargetEntryPath(
     workspace: WorkerWorkspace,
     activeFilePath: String?,
@@ -85,14 +114,9 @@ object LocalScriptRunner {
         return active.path
       }
       if (ext in setOf("js", "mjs", "cjs", "ts", "mts", "cts", "tsx", "jsx")) {
-        val looksExecutable =
-          active.content.contains("export default") ||
-            active.content.contains("fetch(") ||
-            active.content.contains("console.") ||
-            active.content.contains("Deno.") ||
-            active.content.contains("addEventListener") ||
-            active.path == workspace.entryModulePath
-        if (looksExecutable) return active.path
+        if (active.path == workspace.entryModulePath || !isPureDeclarationLibraryModule(active.content)) {
+          return active.path
+        }
       }
     }
     return workspace.entryModulePath
@@ -153,6 +177,162 @@ object LocalScriptRunner {
     }
   }
 
+  suspend fun evalSnippet(
+    context: Context,
+    workspace: WorkerWorkspace?,
+    snippet: String,
+    bindings: List<CfWorkerBinding> = workspace?.bindings.orEmpty(),
+  ): LocalScriptRunResult =
+    withContext(Dispatchers.IO) {
+      val startedAtMs = System.currentTimeMillis()
+      val ranAt = nowTime()
+      val cleanSnippet = snippet.trim()
+      if (cleanSnippet.isEmpty()) {
+        return@withContext LocalScriptRunResult(
+          mode = "SCRIPT",
+          entryPath = "repl",
+          statusCode = 400,
+          statusText = "EMPTY",
+          durationMs = 1L,
+          errorMessage = "Enter a JS/TS expression or command.",
+          ranAt = ranAt,
+        )
+      }
+
+      val denoBinary = resolveDenoBinary(context)
+      if (!denoBinary.exists()) {
+        return@withContext executeInWebViewSandbox(
+          context = context,
+          entryPath = "repl",
+          code = cleanSnippet,
+          isExpression = !cleanSnippet.contains(';') && !cleanSnippet.contains('\n'),
+          startedAtMs = startedAtMs,
+          ranAt = ranAt,
+        )
+      }
+      if (!denoBinary.canExecute()) {
+        runCatching { denoBinary.setExecutable(true, false) }
+      }
+
+      val runnerSource =
+        runCatching {
+          context.assets.open(RUNNER_ASSET_NAME).bufferedReader(Charsets.UTF_8).use { it.readText() }
+        }.getOrElse { err ->
+          return@withContext LocalScriptRunResult(
+            mode = "SCRIPT",
+            entryPath = "repl",
+            statusCode = 500,
+            statusText = "ASSET ERROR",
+            durationMs = (System.currentTimeMillis() - startedAtMs).coerceAtLeast(1L),
+            errorMessage = "Missing $RUNNER_ASSET_NAME: ${err.localizedMessage}",
+            ranAt = ranAt,
+          )
+        }
+
+      val workspaceDir = File(context.cacheDir, WORKSPACE_CACHE_DIR)
+      val runnerFile = stageWorkspaceFiles(workspaceDir, workspace?.files.orEmpty(), runnerSource)
+      val denoCacheDir = File(context.cacheDir, DENO_CACHE_DIR).apply { mkdirs() }
+      if (runnerFile == null) {
+        return@withContext LocalScriptRunResult(
+          mode = "SCRIPT",
+          entryPath = "repl",
+          statusCode = 500,
+          statusText = "STAGE ERROR",
+          durationMs = (System.currentTimeMillis() - startedAtMs).coerceAtLeast(1L),
+          errorMessage = "Could not stage universal runner",
+          ranAt = ranAt,
+        )
+      }
+
+      val pb =
+        ProcessBuilder(
+          denoBinary.absolutePath,
+          "run",
+          "--allow-all",
+          "--no-prompt",
+          runnerFile.absolutePath,
+        )
+      pb.directory(workspaceDir)
+      pb.environment().apply {
+        put("EDGECODE_EVAL_SNIPPET", cleanSnippet)
+        put("EDGECODE_BINDINGS_JSON", buildBindingsJson(bindings))
+        put("DENO_DIR", denoCacheDir.absolutePath)
+        put("HOME", context.cacheDir.absolutePath)
+        put("NO_COLOR", "1")
+        put("DENO_NO_UPDATE_CHECK", "1")
+        val existingLd = get("LD_LIBRARY_PATH").orEmpty()
+        val nativeDir = context.applicationInfo.nativeLibraryDir
+        put("LD_LIBRARY_PATH", if (existingLd.isBlank()) nativeDir else "$nativeDir:$existingLd")
+      }
+
+      val process =
+        runCatching { pb.start() }.getOrElse { err ->
+          return@withContext LocalScriptRunResult(
+            mode = "SCRIPT",
+            entryPath = "repl",
+            statusCode = 500,
+            statusText = "EXEC ERROR",
+            durationMs = (System.currentTimeMillis() - startedAtMs).coerceAtLeast(1L),
+            errorMessage = "Failed to start libdeno.so: ${err.localizedMessage}",
+            ranAt = ranAt,
+          )
+        }
+
+      val logBuffer = Collections.synchronizedList(mutableListOf<LocalRunLogEntry>())
+      val stdoutLines = Collections.synchronizedList(mutableListOf<String>())
+      val stderrLines = Collections.synchronizedList(mutableListOf<String>())
+
+      val outThread =
+        Thread {
+          runCatching {
+            BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8)).use { r ->
+              while (true) {
+                val line = r.readLine() ?: break
+                if (!line.startsWith(READY_PREFIX)) {
+                  stdoutLines.add(line)
+                  logBuffer.add(LocalRunLogEntry("LOG", line, nowTime()))
+                }
+              }
+            }
+          }
+        }.apply { isDaemon = true; start() }
+
+      val errThread =
+        Thread {
+          runCatching {
+            BufferedReader(InputStreamReader(process.errorStream, Charsets.UTF_8)).use { r ->
+              while (true) {
+                val line = r.readLine() ?: break
+                stderrLines.add(line)
+                logBuffer.add(LocalRunLogEntry("ERR", line, nowTime()))
+              }
+            }
+          }
+        }.apply { isDaemon = true; start() }
+
+      val finished = process.waitFor(10, TimeUnit.SECONDS)
+      if (!finished) process.destroyForcibly()
+      runCatching { outThread.join(300) }
+      runCatching { errThread.join(300) }
+
+      val exitCode = if (finished) runCatching { process.exitValue() }.getOrDefault(1) else 124
+      val outText = stdoutLines.joinToString("\n")
+      val errText = stderrLines.joinToString("\n")
+
+      LocalScriptRunResult(
+        mode = "SCRIPT",
+        entryPath = "repl",
+        statusCode = if (exitCode == 0) 200 else 500,
+        statusText = if (exitCode == 0) "EVAL OK" else "EXIT $exitCode",
+        durationMs = (System.currentTimeMillis() - startedAtMs).coerceAtLeast(1L),
+        headers = mapOf("content-type" to "text/plain; charset=utf-8"),
+        body = outText.ifBlank { errText },
+        logs = logBuffer.toList(),
+        errorMessage = if (exitCode != 0) errText.ifBlank { outText.ifBlank { "Eval exited $exitCode" } } else null,
+        ranAt = ranAt,
+      )
+    }
+
   suspend fun runWorkspace(
     context: Context,
     workspace: WorkerWorkspace,
@@ -174,12 +354,12 @@ object LocalScriptRunner {
         val content =
           when {
             file == null -> ""
-            ext == "md" || ext == "markdown" ->
+            ext in setOf("md", "markdown", "mdx") ->
               LocalWorkspacePreviewRenderer.renderMarkdownToHtml(file.path, file.content, isDarkTheme)
             else -> file.content
           }
         val mime =
-          if (ext == "md" || ext == "markdown") "text/html"
+          if (ext in setOf("md", "markdown", "mdx")) "text/html"
           else LocalWorkspacePreviewRenderer.inferBrowserMimeType(entryPath)
         val dur = (System.currentTimeMillis() - startedAtMs).coerceAtLeast(1L)
         return@withContext LocalScriptRunResult(
@@ -198,15 +378,29 @@ object LocalScriptRunner {
 
       val denoBinary = resolveDenoBinary(context)
       if (!denoBinary.exists()) {
+        val activeCode = workspace.files.firstOrNull { it.path == entryPath }?.content.orEmpty()
+        val ext = entryPath.substringAfterLast('.', "").lowercase()
+        if (ext in setOf("js", "mjs", "cjs")) {
+          return@withContext executeInWebViewSandbox(
+            context = context,
+            entryPath = entryPath,
+            code = activeCode,
+            isExpression = false,
+            startedAtMs = startedAtMs,
+            ranAt = ranAt,
+          )
+        }
         return@withContext LocalScriptRunResult(
           mode = "SCRIPT",
           entryPath = entryPath,
           statusCode = 500,
-          statusText = "BINARY MISSING",
+          statusText = "DENO NEEDED",
           durationMs = (System.currentTimeMillis() - startedAtMs).coerceAtLeast(1L),
-          logs = emptyList(),
+          logs = listOf(
+            LocalRunLogEntry("INFO", "libdeno.so not present in local build; needed for TS/Deno execution.", ranAt),
+          ),
           errorMessage =
-            "Embedded Deno binary not found at ${denoBinary.absolutePath}. Place an Android arm64-v8a binary at app/src/main/jniLibs/arm64-v8a/libdeno.so.",
+            "Embedded Deno runtime (libdeno.so) is not packaged in this local build. Pure .js files can run via WebView JS Sandbox; CI release APKs automatically bundle arm64-v8a libdeno.so.",
           ranAt = ranAt,
         )
       }
@@ -478,6 +672,168 @@ object LocalScriptRunner {
         )
       }
     }.getOrNull()
+  }
+
+  fun buildSandboxScriptWrapper(code: String, isExpression: Boolean): String {
+    val bodyCode =
+      if (isExpression) {
+        "return ($code);"
+      } else {
+        code
+      }
+    val quotedCode = JSONObject.quote(bodyCode)
+    return """
+      (function() {
+        var __logs = [];
+        var __origConsole = {
+          log: console.log,
+          info: console.info,
+          warn: console.warn,
+          error: console.error
+        };
+        function __fmt(args) {
+          return Array.prototype.slice.call(args).map(function(a) {
+            if (typeof a === 'string') return a;
+            try { return JSON.stringify(a); } catch (_e) { return String(a); }
+          }).join(' ');
+        }
+        console.log = function() { __logs.push({ l: 'LOG', m: __fmt(arguments) }); };
+        console.info = function() { __logs.push({ l: 'INFO', m: __fmt(arguments) }); };
+        console.warn = function() { __logs.push({ l: 'INFO', m: '[WARN] ' + __fmt(arguments) }); };
+        console.error = function() { __logs.push({ l: 'ERR', m: __fmt(arguments) }); };
+        var __ret = undefined;
+        var __err = null;
+        try {
+          var __fn = new Function($quotedCode);
+          __ret = __fn();
+        } catch (e) {
+          __err = (e && e.stack) ? String(e.stack) : String(e);
+        } finally {
+          console.log = __origConsole.log;
+          console.info = __origConsole.info;
+          console.warn = __origConsole.warn;
+          console.error = __origConsole.error;
+        }
+        var __retStr = '';
+        if (__ret !== undefined) {
+          if (typeof __ret === 'string') __retStr = __ret;
+          else { try { __retStr = JSON.stringify(__ret, null, 2); } catch (_e) { __retStr = String(__ret); } }
+        }
+        return JSON.stringify({ logs: __logs, result: __retStr, error: __err });
+      })()
+    """.trimIndent()
+  }
+
+  fun parseSandboxResultJson(
+    rawEvalReturn: String?,
+    entryPath: String,
+    startedAtMs: Long,
+    ranAt: String,
+  ): LocalScriptRunResult {
+    val dur = (System.currentTimeMillis() - startedAtMs).coerceAtLeast(1L)
+    if (rawEvalReturn.isNullOrBlank() || rawEvalReturn == "null") {
+      return LocalScriptRunResult(
+        mode = "JS SANDBOX",
+        entryPath = entryPath,
+        statusCode = 500,
+        statusText = "SANDBOX EMPTY",
+        durationMs = dur,
+        errorMessage = "WebView JS Sandbox returned empty result.",
+        ranAt = ranAt,
+      )
+    }
+    val jsonText =
+      runCatching {
+        val trimmed = rawEvalReturn.trim()
+        if (trimmed.startsWith("\"") && trimmed.endsWith("\"")) {
+          JSONArray("[$trimmed]").getString(0)
+        } else {
+          trimmed
+        }
+      }.getOrDefault(rawEvalReturn)
+
+    return runCatching {
+      val obj = JSONObject(jsonText)
+      val logsArr = obj.optJSONArray("logs") ?: JSONArray()
+      val logs =
+        buildList {
+          add(LocalRunLogEntry("INFO", "Executed in WebView JS Sandbox (libdeno.so not bundled locally)", ranAt))
+          for (i in 0 until logsArr.length()) {
+            val item = logsArr.optJSONObject(i) ?: continue
+            add(
+              LocalRunLogEntry(
+                level = item.optString("l", "LOG"),
+                message = item.optString("m", ""),
+                timestamp = ranAt,
+              ),
+            )
+          }
+        }
+      val errorMsg = obj.optString("error").takeIf { it.isNotBlank() && it != "null" }
+      val retValue = obj.optString("result").takeIf { it.isNotBlank() && it != "null" }
+      val logOutput = logs.filter { it.level != "INFO" }.joinToString("\n") { it.message }
+      val combinedBody =
+        listOfNotNull(logOutput.takeIf { it.isNotBlank() }, retValue).joinToString("\n")
+      LocalScriptRunResult(
+        mode = "JS SANDBOX",
+        entryPath = entryPath,
+        statusCode = if (errorMsg == null) 200 else 500,
+        statusText = if (errorMsg == null) "SANDBOX OK" else "JS ERROR",
+        durationMs = dur,
+        headers = mapOf("content-type" to "text/plain; charset=utf-8"),
+        body = combinedBody,
+        logs = logs,
+        errorMessage = errorMsg,
+        ranAt = ranAt,
+      )
+    }.getOrElse { err ->
+      LocalScriptRunResult(
+        mode = "JS SANDBOX",
+        entryPath = entryPath,
+        statusCode = 500,
+        statusText = "PARSE ERROR",
+        durationMs = dur,
+        errorMessage = err.localizedMessage ?: rawEvalReturn,
+        ranAt = ranAt,
+      )
+    }
+  }
+
+  private fun executeInWebViewSandbox(
+    context: Context,
+    entryPath: String,
+    code: String,
+    isExpression: Boolean,
+    startedAtMs: Long,
+    ranAt: String,
+  ): LocalScriptRunResult {
+    val latch = CountDownLatch(1)
+    val resultRef = AtomicReference<String?>(null)
+    val script = buildSandboxScriptWrapper(code, isExpression)
+
+    Handler(Looper.getMainLooper()).post {
+      runCatching {
+        val wv = WebView(context)
+        wv.settings.javaScriptEnabled = true
+        wv.webViewClient =
+          object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+              view?.evaluateJavascript(script) { value ->
+                resultRef.set(value)
+                latch.countDown()
+                runCatching { view.destroy() }
+              }
+            }
+          }
+        wv.loadDataWithBaseURL(LocalWorkspacePreviewRenderer.LOCAL_PREVIEW_ORIGIN, "<!DOCTYPE html><html><body></body></html>", "text/html", "UTF-8", null)
+      }.onFailure {
+        resultRef.set(null)
+        latch.countDown()
+      }
+    }
+
+    latch.await(6, TimeUnit.SECONDS)
+    return parseSandboxResultJson(resultRef.get(), entryPath, startedAtMs, ranAt)
   }
 
   private fun computeFingerprint(

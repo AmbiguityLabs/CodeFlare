@@ -357,24 +357,25 @@ fun SmartDraggableText(
         properties = PopupProperties(focusable = false),
       ) {
         Surface(
-          shape = RoundedCornerShape(if (isV2) 999.dp else 12.dp),
-          color = palette.glassElevated,
-          border = BorderStroke(1.dp, palette.border.copy(alpha = 0.65f)),
-          shadowElevation = 8.dp,
+          shape = RoundedCornerShape(10.dp),
+          color = palette.chromeSurface,
+          border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.75f)),
+          shadowElevation = 6.dp,
           modifier = Modifier.testTag("smart_text_popup_$surfaceId"),
         ) {
           Row(
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+            modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
           ) {
             if (showDragGrip) {
-              Row(
+              Box(
                 modifier =
                   Modifier
-                    .height(32.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(EmeraldLive.copy(alpha = 0.16f))
+                    .height(28.dp)
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(EmeraldLive.copy(alpha = 0.14f))
+                    .border(0.5.dp, EmeraldLive.copy(alpha = 0.35f), RoundedCornerShape(7.dp))
                     .pointerInput(currentState) {
                       awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
@@ -382,23 +383,15 @@ fun SmartDraggableText(
                         launchReadOnlyDrag(currentState)
                       }
                     }
-                    .padding(horizontal = 8.dp)
+                    .padding(horizontal = 7.dp)
                     .testTag("smart_text_drag_grip_$surfaceId"),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                contentAlignment = Alignment.Center,
               ) {
                 Icon(
                   imageVector = Icons.Outlined.DragIndicator,
                   contentDescription = "Drag selected text",
                   tint = EmeraldLive,
-                  modifier = Modifier.size(14.dp),
-                )
-                Text(
-                  text = "Drag",
-                  fontFamily = JetBrainsMono,
-                  fontSize = 10.sp,
-                  fontWeight = FontWeight.Bold,
-                  color = EmeraldLive,
+                  modifier = Modifier.size(15.dp),
                 )
               }
             }
@@ -407,9 +400,9 @@ fun SmartDraggableText(
               Box(
                 modifier =
                   Modifier
-                    .clip(RoundedCornerShape(999.dp))
+                    .clip(RoundedCornerShape(6.dp))
                     .background(palette.activePillBg)
-                    .padding(horizontal = 7.dp, vertical = 4.dp),
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
               ) {
                 Text(
                   text = currentScope.label,
@@ -425,8 +418,8 @@ fun SmartDraggableText(
               Box(
                 modifier =
                   Modifier
-                    .size(32.dp)
-                    .clip(RoundedCornerShape(999.dp))
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(7.dp))
                     .clickable(enabled = currentState.canShrink) {
                       ladderState = currentState.shrink()
                       haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -445,8 +438,8 @@ fun SmartDraggableText(
               Box(
                 modifier =
                   Modifier
-                    .size(32.dp)
-                    .clip(RoundedCornerShape(999.dp))
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(7.dp))
                     .clickable(enabled = currentState.canExpand) {
                       ladderState = currentState.expand()
                       haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -467,8 +460,8 @@ fun SmartDraggableText(
               Box(
                 modifier =
                   Modifier
-                    .size(32.dp)
-                    .clip(RoundedCornerShape(999.dp))
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(7.dp))
                     .clickable {
                       clipboard.setText(AnnotatedString(selectedSnippet))
                       onCopied?.invoke(selectedSnippet)
@@ -490,8 +483,8 @@ fun SmartDraggableText(
             Box(
               modifier =
                 Modifier
-                  .size(28.dp)
-                  .clip(RoundedCornerShape(999.dp))
+                  .size(26.dp)
+                  .clip(RoundedCornerShape(7.dp))
                   .clickable {
                     showSelectionPopup = false
                     ladderState = null

@@ -135,6 +135,7 @@ fun ApiTesterPane(
   var requestSubTab by remember { mutableIntStateOf(0) }
   // 0=Pretty, 1=Raw, 2=Headers, 3=Preview, 4=Assertions
   var responseSubTab by remember { mutableIntStateOf(0) }
+  var wrapResponse by remember { mutableStateOf(true) }
   var showSaveDialog by remember { mutableStateOf(false) }
   var showNewEnvDialog by remember { mutableStateOf(false) }
   var showImportDialog by remember { mutableStateOf(false) }
@@ -846,10 +847,19 @@ fun ApiTesterPane(
       val passedAssertions = assertions.count { it.passed }
       val allAssertionsPass = assertions.isNotEmpty() && passedAssertions == assertions.size
 
+      val contentTypeHint =
+        remember(res.headers) {
+          res.headers.entries.firstOrNull { it.key.equals("content-type", ignoreCase = true) }?.value
+        }
+      val formatBadge =
+        remember(res.body, contentTypeHint, res.errorMessage) {
+          detectApiResponseBadge(res.body, contentTypeHint, res.errorMessage)
+        }
+
       Surface(
         color = palette.chromeSurface,
         shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.55f)),
+        border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.6f)),
         modifier = Modifier.fillMaxWidth().testTag("api_response_card"),
       ) {
         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -864,7 +874,20 @@ fun ApiTesterPane(
               )
             }
             Text("${res.durationMs} ms", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
-            Text("${res.body.toByteArray().size} B", style = MaterialTheme.typography.labelSmall, color = palette.textMuted, modifier = Modifier.weight(1f))
+            Text("${res.body.toByteArray().size} B", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+            Surface(
+              color = palette.chromePill,
+              shape = RoundedCornerShape(6.dp),
+              border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.4f)),
+            ) {
+              Text(
+                text = formatBadge,
+                style = TextStyle(fontFamily = JetBrainsMono, fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
+                color = palette.textSecondary,
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+              )
+            }
+            Spacer(Modifier.weight(1f))
             if (assertions.isNotEmpty()) {
               val assertColor = if (allAssertionsPass) EmeraldLive else RoseError
               Surface(
@@ -893,26 +916,51 @@ fun ApiTesterPane(
             }
           }
 
-          Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            val respTabs = buildList {
-              add("Pretty")
-              add("Raw")
-              add("Headers (${res.headers.size})")
-              add("Preview")
-              if (assertions.isNotEmpty()) add("Assertions ($passedAssertions/${assertions.size})")
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+          ) {
+            Row(
+              modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+              val respTabs = buildList {
+                add("Pretty")
+                add("Raw")
+                add("Headers (${res.headers.size})")
+                add("Preview")
+                if (assertions.isNotEmpty()) add("Assertions ($passedAssertions/${assertions.size})")
+              }
+              respTabs.forEachIndexed { idx, label ->
+                val active = responseSubTab == idx
+                Surface(
+                  onClick = { responseSubTab = idx },
+                  shape = RoundedCornerShape(8.dp),
+                  color = if (active) palette.activePillBg else palette.chromePill,
+                  border = BorderStroke(0.5.dp, if (active) palette.activePillFg.copy(alpha = 0.4f) else palette.border.copy(alpha = 0.35f)),
+                ) {
+                  Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (active) palette.activePillFg else palette.textSecondary,
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                  )
+                }
+              }
             }
-            respTabs.forEachIndexed { idx, label ->
-              val active = responseSubTab == idx
+            if (responseSubTab == 0 || responseSubTab == 1) {
               Surface(
-                onClick = { responseSubTab = idx },
+                onClick = { wrapResponse = !wrapResponse },
                 shape = RoundedCornerShape(8.dp),
-                color = if (active) palette.activePillBg else palette.chromePill,
+                color = if (wrapResponse) palette.activePillBg else palette.chromePill,
+                border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.35f)),
               ) {
                 Text(
-                  text = label,
+                  text = if (wrapResponse) "Wrap" else "NoWrap",
                   style = MaterialTheme.typography.labelSmall,
-                  color = if (active) palette.activePillFg else palette.textSecondary,
-                  modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                  color = if (wrapResponse) palette.activePillFg else palette.textSecondary,
+                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                 )
               }
             }
@@ -925,7 +973,7 @@ fun ApiTesterPane(
                 Surface(
                   color = badgeColor.copy(alpha = 0.12f),
                   shape = RoundedCornerShape(9.dp),
-                  border = BorderStroke(1.dp, badgeColor.copy(alpha = 0.35f)),
+                  border = BorderStroke(0.5.dp, badgeColor.copy(alpha = 0.4f)),
                   modifier = Modifier.fillMaxWidth(),
                 ) {
                   Row(
@@ -963,51 +1011,64 @@ fun ApiTesterPane(
               modifier = Modifier.fillMaxWidth().height(260.dp).clip(RoundedCornerShape(8.dp)),
             )
           } else {
-            Box(
-              modifier =
+            val boxScrollModifier =
+              if (!wrapResponse && (responseSubTab == 0 || responseSubTab == 1)) {
                 Modifier
                   .fillMaxWidth()
                   .clip(RoundedCornerShape(8.dp))
                   .background(palette.editorBg)
-                  .border(0.75.dp, palette.border.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
-                  .padding(10.dp),
-            ) {
+                  .border(0.5.dp, palette.border.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                  .horizontalScroll(rememberScrollState())
+                  .padding(10.dp)
+              } else {
+                Modifier
+                  .fillMaxWidth()
+                  .clip(RoundedCornerShape(8.dp))
+                  .background(palette.editorBg)
+                  .border(0.5.dp, palette.border.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                  .padding(10.dp)
+              }
+            Box(modifier = boxScrollModifier) {
               when (responseSubTab) {
                 0 -> {
                   val pretty = remember(res.body, res.errorMessage) {
                     res.errorMessage ?: ApiRequestUtils.prettyPrintIfJson(res.body)
                   }
-                  val trimmed = pretty.trimStart()
-                  val isJson = res.errorMessage == null && (trimmed.startsWith("{") || trimmed.startsWith("["))
-                  if (isJson) {
-                    val highlighted = remember(pretty, palette) {
-                      SyntaxHighlighter.highlight(pretty, WorkerLanguage.JSON, palette)
+                  val effectiveText = pretty.ifBlank { "(empty body)" }
+                  val highlighted =
+                    remember(effectiveText, contentTypeHint, palette, res.errorMessage) {
+                      if (res.errorMessage != null || effectiveText == "(empty body)") {
+                        null
+                      } else {
+                        SyntaxHighlighter.highlightResponse(effectiveText, contentTypeHint, palette)
+                      }
                     }
-                    SmartDraggableText(
-                      text = pretty,
-                      annotatedText = highlighted,
-                      surfaceId = "api_res_json",
-                      domain = SmartTextDomain.JSON,
-                      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
-                      onCopied = { onNotifyStatus("Copied JSON snippet") },
-                    )
-                  } else {
-                    SmartDraggableText(
-                      text = pretty.ifBlank { "(empty body)" },
-                      surfaceId = "api_res_pretty",
-                      domain = SmartTextDomain.TERMINAL_OR_LOG,
-                      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
-                      color = if (res.errorMessage != null) RoseError else palette.textPrimary,
-                      onCopied = { onNotifyStatus("Copied response snippet") },
-                    )
-                  }
+                  SmartDraggableText(
+                    text = effectiveText,
+                    annotatedText = highlighted,
+                    surfaceId = "api_res_pretty",
+                    domain = if (res.errorMessage == null && formatBadge == "JSON") SmartTextDomain.JSON else SmartTextDomain.TERMINAL_OR_LOG,
+                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 16.sp),
+                    color = if (res.errorMessage != null) RoseError else palette.textPrimary,
+                    onCopied = { onNotifyStatus("Copied response snippet") },
+                  )
                 }
                 1 -> {
+                  val rawText = (res.errorMessage ?: res.body).ifBlank { "(empty body)" }
+                  val highlighted =
+                    remember(rawText, contentTypeHint, palette, res.errorMessage) {
+                      if (res.errorMessage != null || rawText == "(empty body)") {
+                        null
+                      } else {
+                        SyntaxHighlighter.highlightResponse(rawText, contentTypeHint, palette)
+                      }
+                    }
                   SmartDraggableText(
-                    text = (res.errorMessage ?: res.body).ifBlank { "(empty body)" },
+                    text = rawText,
+                    annotatedText = highlighted,
                     surfaceId = "api_res_raw",
                     domain = SmartTextDomain.TERMINAL_OR_LOG,
-                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
+                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 16.sp),
                     color = if (res.errorMessage != null) RoseError else palette.textPrimary,
                     onCopied = { onNotifyStatus("Copied raw response") },
                   )
@@ -1038,11 +1099,21 @@ fun ApiTesterPane(
                     remember(res.body, res.errorMessage) {
                       res.errorMessage ?: ApiRequestUtils.prettyPrintIfJson(res.body)
                     }
+                  val effectivePreview = previewText.ifBlank { "(no preview content)" }
+                  val highlighted =
+                    remember(effectivePreview, contentTypeHint, palette, res.errorMessage) {
+                      if (res.errorMessage != null || effectivePreview == "(no preview content)") {
+                        null
+                      } else {
+                        SyntaxHighlighter.highlightResponse(effectivePreview, contentTypeHint, palette)
+                      }
+                    }
                   SmartDraggableText(
-                    text = previewText.ifBlank { "(no preview content)" },
+                    text = effectivePreview,
+                    annotatedText = highlighted,
                     surfaceId = "api_res_preview",
                     domain = SmartTextDomain.TERMINAL_OR_LOG,
-                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
+                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 16.sp),
                     color = if (res.errorMessage != null) RoseError else palette.textPrimary,
                     onCopied = { onNotifyStatus("Copied preview snippet") },
                   )
@@ -1510,4 +1581,24 @@ private fun SandboxedHtmlPreviewBox(
     },
     modifier = modifier,
   )
+}
+
+private fun detectApiResponseBadge(
+  body: String,
+  contentTypeHint: String?,
+  errorMessage: String?,
+): String {
+  if (errorMessage != null) return "ERR"
+  val hint = contentTypeHint.orEmpty().lowercase()
+  val trimmed = body.trimStart()
+  return when {
+    hint.contains("json") || trimmed.startsWith("{") || trimmed.startsWith("[") -> "JSON"
+    hint.contains("html") || trimmed.startsWith("<!doctype", true) || trimmed.startsWith("<html", true) -> "HTML"
+    hint.contains("svg") || trimmed.startsWith("<svg", true) -> "SVG"
+    hint.contains("xml") || trimmed.startsWith("<?xml", true) -> "XML"
+    hint.contains("css") -> "CSS"
+    hint.contains("javascript") || hint.contains("typescript") -> "JS"
+    hint.contains("markdown") -> "MD"
+    else -> "TXT"
+  }
 }
