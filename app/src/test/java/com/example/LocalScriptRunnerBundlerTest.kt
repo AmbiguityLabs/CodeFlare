@@ -137,9 +137,14 @@ class LocalScriptRunnerBundlerTest {
           CfWorkerBinding(name = "SESSION_KV", type = "kv_namespace"),
         ),
       )
-    assertTrue(json.contains("API_URL"))
-    assertTrue(json.contains("https://example.com"))
-    assertTrue(json.contains("SESSION_KV"))
-    assertTrue(json.contains("kv_namespace"))
+    val parsed = org.json.JSONArray(json)
+    assertEquals(2, parsed.length())
+    val first = parsed.getJSONObject(0)
+    assertEquals("API_URL", first.getString("name"))
+    assertEquals("plain_text", first.getString("type"))
+    assertEquals("https://example.com", first.getString("text"))
+    val second = parsed.getJSONObject(1)
+    assertEquals("SESSION_KV", second.getString("name"))
+    assertEquals("kv_namespace", second.getString("type"))
   }
 }

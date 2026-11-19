@@ -63,6 +63,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import com.example.data.security.SmartSelectionHoldMode
+import com.example.editor.selection.SelectionLadder
 import com.example.editor.selection.SelectionLadderState
 import com.example.editor.selection.SmartSelectionInitialDepth
 import com.example.editor.selection.SmartTextDomain
@@ -70,6 +72,7 @@ import com.example.editor.selection.SmartTextSelectionEngine
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.LocalSelectionDragConfig
 import com.example.ui.theme.UiStyleVersion
 import kotlin.math.hypot
 import kotlin.math.roundToInt
@@ -133,15 +136,16 @@ fun SmartDraggableText(
   modifier: Modifier = Modifier,
   annotatedText: AnnotatedString? = null,
   domain: SmartTextDomain = SmartTextDomain.TERMINAL_OR_LOG,
-  initialDepth: SmartSelectionInitialDepth = SmartSelectionInitialDepth.SMART_AUTO,
-  holdDelayMs: Long = 320L,
-  holdToDragImmediately: Boolean = true,
-  progressiveHold: Boolean = false,
-  allowGlobalDrag: Boolean = true,
-  showScopeBadge: Boolean = true,
-  showExpandShrink: Boolean = true,
-  showDragGrip: Boolean = true,
-  showQuickActions: Boolean = true,
+  initialDepth: SmartSelectionInitialDepth = LocalSelectionDragConfig.current.initialDepth,
+  holdDelayMs: Long = LocalSelectionDragConfig.current.holdDelayMs.toLong(),
+  holdToDragImmediately: Boolean = LocalSelectionDragConfig.current.immediateSlideToDrag,
+  progressiveHold: Boolean = LocalSelectionDragConfig.current.holdMode == SmartSelectionHoldMode.PROGRESSIVE_HOLD,
+  classicWordOnly: Boolean = LocalSelectionDragConfig.current.holdMode == SmartSelectionHoldMode.CLASSIC_WORD,
+  allowGlobalDrag: Boolean = LocalSelectionDragConfig.current.allowCrossAppDrag,
+  showScopeBadge: Boolean = LocalSelectionDragConfig.current.showScopeBadge,
+  showExpandShrink: Boolean = LocalSelectionDragConfig.current.showExpandShrink,
+  showDragGrip: Boolean = LocalSelectionDragConfig.current.showDragGrip,
+  showQuickActions: Boolean = LocalSelectionDragConfig.current.showQuickActions,
   style: TextStyle = TextStyle.Default,
   color: Color = Color.Unspecified,
   maxLines: Int = Int.MAX_VALUE,
@@ -166,6 +170,7 @@ fun SmartDraggableText(
   val latestHoldDelayMs by rememberUpdatedState(holdDelayMs)
   val latestHoldToDrag by rememberUpdatedState(holdToDragImmediately)
   val latestProgressive by rememberUpdatedState(progressiveHold)
+  val latestClassicWord by rememberUpdatedState(classicWordOnly)
   val latestAllowGlobal by rememberUpdatedState(allowGlobalDrag)
   val latestPalette by rememberUpdatedState(palette)
 
@@ -255,20 +260,27 @@ fun SmartDraggableText(
                 if (movedPastSlopBeforeHold || latestText.isEmpty()) return@launch
                 val layout = layoutResult ?: return@launch
                 val anchorOffset = layout.getOffsetForPosition(downPos).coerceIn(0, latestText.length)
-                val ladder =
+                val rawLadder =
                   SmartTextSelectionEngine.resolveAt(
                     text = latestText,
                     offset = anchorOffset,
                     domain = latestDomain,
-                    initialDepth = latestInitialDepth,
+                    initialDepth = if (latestClassicWord) SmartSelectionInitialDepth.COMPACT else latestInitialDepth,
                   )
+                val ladder =
+                  if (latestClassicWord) {
+                    val wordScope = rawLadder.scopes.firstOrNull()?.copy(label = "Word")
+                    if (wordScope != null) SelectionLadder(listOf(wordScope), 0, anchorOffset) else rawLadder
+                  } else {
+                    rawLadder
+                  }
                 val initialState = SelectionLadderState(ladder = ladder, activeIndex = ladder.initialIndex)
                 ladderState = initialState
                 popupAnchorPx = IntOffset(downPos.x.roundToInt(), (downPos.y - 48f).roundToInt())
                 holdTriggered = true
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
 
-                if (latestProgressive) {
+                if (latestProgressive && !latestClassicWord) {
                   progressiveJob =
                     launch {
                       while (true) {

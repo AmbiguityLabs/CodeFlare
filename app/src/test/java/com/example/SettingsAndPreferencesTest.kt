@@ -5,9 +5,13 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.data.remote.CloudflareClientFactory
 import com.example.data.repository.CloudflareRepository
 import com.example.data.security.AuthPreferencesStore
+import com.example.data.security.DefaultEditorDragPolicy
 import com.example.data.security.EditorSettings
 import com.example.data.security.FloatingBarStyleConfig
 import com.example.data.security.PopupMenuStyleConfig
+import com.example.data.security.SelectionDragConfig
+import com.example.data.security.SmartSelectionHoldMode
+import com.example.editor.selection.SmartSelectionInitialDepth
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -234,5 +238,48 @@ class SettingsAndPreferencesTest {
     assertEquals(0.35f, clampedMenu.opacity, 0.001f)
     assertEquals(0.75f, clampedMenu.borderOpacity, 0.001f)
     assertEquals(8, clampedMenu.cornerRadiusDp)
+  }
+
+  @Test
+  fun selectionDragConfigPersistsRoundTripClampsAndFallsBackCleanly() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val store = AuthPreferencesStore(context)
+
+    val custom =
+      SelectionDragConfig(
+        holdMode = SmartSelectionHoldMode.PROGRESSIVE_HOLD,
+        initialDepth = SmartSelectionInitialDepth.BROAD,
+        defaultEditorDragMode = DefaultEditorDragPolicy.ALWAYS_COPY,
+        immediateSlideToDrag = false,
+        holdDelayMs = 450,
+        allowCrossAppDrag = false,
+        showScopeBadge = false,
+        showExpandShrink = true,
+        showDragGrip = false,
+        showModeToggle = true,
+        showDropTargetLoupe = false,
+        showQuickActions = true,
+        showCodeActions = false,
+      )
+
+    store.updateEditorSettings { it.copy(selectionDragConfig = custom) }
+    val loaded = store.editorSettingsFlow.first().selectionDragConfig
+    assertEquals(custom, loaded)
+    assertEquals(3, loaded.enabledOverlayCount)
+
+    // Out-of-range holdDelayMs clamps cleanly to 200..600ms
+    assertEquals(200, custom.copy(holdDelayMs = 50).normalized().holdDelayMs)
+    assertEquals(600, custom.copy(holdDelayMs = 1800).normalized().holdDelayMs)
+
+    // Corrupted/incomplete serialized payload falls back safely
+    assertEquals(SelectionDragConfig.DEFAULT, SelectionDragConfig.decode("bad|payload"))
+    val partialValidDecode = SelectionDragConfig.decode("CLASSIC_WORD|COMPACT|ALWAYS_MOVE|0|240|0|0|0|0|0|0|0|0")
+    assertEquals(SmartSelectionHoldMode.CLASSIC_WORD, partialValidDecode.holdMode)
+    assertEquals(SmartSelectionInitialDepth.COMPACT, partialValidDecode.initialDepth)
+    assertEquals(DefaultEditorDragPolicy.ALWAYS_MOVE, partialValidDecode.defaultEditorDragMode)
+    assertFalse(partialValidDecode.immediateSlideToDrag)
+    assertEquals(240, partialValidDecode.holdDelayMs)
+    assertFalse(partialValidDecode.allowCrossAppDrag)
+    assertEquals(0, partialValidDecode.enabledOverlayCount)
   }
 }

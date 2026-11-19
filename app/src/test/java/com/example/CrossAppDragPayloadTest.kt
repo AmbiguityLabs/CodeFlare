@@ -82,7 +82,7 @@ class CrossAppDragPayloadTest {
   fun stripsHtmlTagsAndDecodesEntitiesWhenOnlyHtmlPayloadPresent() {
     val ctx = ApplicationProvider.getApplicationContext<Context>()
     val desc = ClipDescription("Browser HTML", arrayOf(ClipDescription.MIMETYPE_TEXT_HTML))
-    val item = ClipData.Item(null, "<p>fetch(&quot;https://edge.dev&quot;)<br/>&lt;ok&gt; &amp; ready&#39;s&nbsp;go</p>")
+    val item = ClipData.Item("", "<p>fetch(&quot;https://edge.dev&quot;)<br/>&lt;ok&gt; &amp; ready&#39;s&nbsp;go</p>")
     val clip = ClipData(desc, item)
 
     val extracted = EdgeTextDragCoordinator.extractTextFromClipData(clip, ctx)

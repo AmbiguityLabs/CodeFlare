@@ -59,7 +59,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -117,15 +116,16 @@ fun Modifier.edgeEditorLoupe(
   lineHeight: Float,
   background: Color,
   outline: Color,
+  outlineProvider: () -> Color = { outline },
+  extraLiftDpProvider: () -> Float = { 0f },
 ): Modifier {
   val layer = rememberGraphicsLayer()
   val appear = remember { Animatable(0f) }
   val lastSource = remember { arrayOf(Offset.Zero) }
+  val active = loupeSourceProvider() != null
 
-  LaunchedEffect(loupeSourceProvider) {
-    snapshotFlow { loupeSourceProvider() != null }.collect { active ->
-      appear.animateTo(if (active) 1f else 0f, tween(if (active) 140 else 110))
-    }
+  LaunchedEffect(active) {
+    appear.animateTo(if (active) 1f else 0f, tween(if (active) 140 else 110))
   }
 
   return drawWithContent {
@@ -142,8 +142,12 @@ fun Modifier.edgeEditorLoupe(
     val w = 120.dp.toPx()
     val h = 46.dp.toPx()
     val edge = 4.dp.toPx()
+    val extraLiftPx = extraLiftDpProvider().coerceAtLeast(0f).dp.toPx()
     val cx = source.x.coerceIn(w / 2f + edge, (size.width - w / 2f - edge).coerceAtLeast(w / 2f + edge))
-    val cy = (source.y - lineHeight / 2f - 12.dp.toPx() - h / 2f).coerceAtLeast(h / 2f - 44.dp.toPx())
+    val rawCy = source.y - lineHeight / 2f - 12.dp.toPx() - extraLiftPx - h / 2f
+    val minCy = h / 2f + 6.dp.toPx()
+    val maxCy = (size.height - h / 2f - 6.dp.toPx()).coerceAtLeast(minCy)
+    val cy = rawCy.coerceIn(minCy, maxCy)
     val rect = Rect(Offset(cx - w / 2f, cy - h / 2f), Size(w, h))
     val radius = CornerRadius(15.dp.toPx())
     val handleClearance = 2.dp.toPx()
@@ -170,7 +174,7 @@ fun Modifier.edgeEditorLoupe(
           drawLayer(layer)
         }
       }
-      drawRoundRect(outline, rect.topLeft, rect.size, radius, style = Stroke(1.dp.toPx()))
+      drawRoundRect(outlineProvider(), rect.topLeft, rect.size, radius, style = Stroke(1.25.dp.toPx()))
       drawIntoCanvas { it.restore() }
     }
   }

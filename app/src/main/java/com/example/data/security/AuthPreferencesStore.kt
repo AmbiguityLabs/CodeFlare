@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.editor.selection.SmartSelectionInitialDepth
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -192,6 +193,95 @@ data class PopupMenuStyleConfig(
   }
 }
 
+enum class SmartSelectionHoldMode(val shortLabel: String) {
+  SMART_HOLD_TOOLBAR("Smart Hold"),
+  PROGRESSIVE_HOLD("Progressive"),
+  CLASSIC_WORD("Classic Word"),
+}
+
+enum class DefaultEditorDragPolicy(val shortLabel: String) {
+  SMART("Smart"),
+  ALWAYS_COPY("Always Copy"),
+  ALWAYS_MOVE("Always Move"),
+}
+
+data class SelectionDragConfig(
+  val holdMode: SmartSelectionHoldMode = SmartSelectionHoldMode.SMART_HOLD_TOOLBAR,
+  val initialDepth: SmartSelectionInitialDepth = SmartSelectionInitialDepth.SMART_AUTO,
+  val defaultEditorDragMode: DefaultEditorDragPolicy = DefaultEditorDragPolicy.SMART,
+  val immediateSlideToDrag: Boolean = true,
+  val holdDelayMs: Int = 320,
+  val allowCrossAppDrag: Boolean = true,
+  val showScopeBadge: Boolean = true,
+  val showExpandShrink: Boolean = true,
+  val showDragGrip: Boolean = true,
+  val showModeToggle: Boolean = true,
+  val showDropTargetLoupe: Boolean = true,
+  val showQuickActions: Boolean = true,
+  val showCodeActions: Boolean = true,
+) {
+  fun normalized(): SelectionDragConfig =
+    copy(
+      holdDelayMs = holdDelayMs.coerceIn(200, 600),
+    )
+
+  fun encode(): String {
+    val n = normalized()
+    return listOf(
+      n.holdMode.name,
+      n.initialDepth.name,
+      n.defaultEditorDragMode.name,
+      if (n.immediateSlideToDrag) 1 else 0,
+      n.holdDelayMs,
+      if (n.allowCrossAppDrag) 1 else 0,
+      if (n.showScopeBadge) 1 else 0,
+      if (n.showExpandShrink) 1 else 0,
+      if (n.showDragGrip) 1 else 0,
+      if (n.showModeToggle) 1 else 0,
+      if (n.showDropTargetLoupe) 1 else 0,
+      if (n.showQuickActions) 1 else 0,
+      if (n.showCodeActions) 1 else 0,
+    ).joinToString("|")
+  }
+
+  val enabledOverlayCount: Int
+    get() =
+      listOf(
+        showScopeBadge,
+        showExpandShrink,
+        showDragGrip,
+        showModeToggle,
+        showDropTargetLoupe,
+        showQuickActions,
+        showCodeActions,
+      ).count { it }
+
+  companion object {
+    val DEFAULT = SelectionDragConfig()
+
+    fun decode(raw: String?, fallback: SelectionDragConfig = DEFAULT): SelectionDragConfig {
+      if (raw.isNullOrBlank()) return fallback
+      val parts = raw.split("|")
+      if (parts.size < 13) return fallback
+      return SelectionDragConfig(
+        holdMode = runCatching { SmartSelectionHoldMode.valueOf(parts[0]) }.getOrDefault(fallback.holdMode),
+        initialDepth = runCatching { SmartSelectionInitialDepth.valueOf(parts[1]) }.getOrDefault(fallback.initialDepth),
+        defaultEditorDragMode = runCatching { DefaultEditorDragPolicy.valueOf(parts[2]) }.getOrDefault(fallback.defaultEditorDragMode),
+        immediateSlideToDrag = parts[3] != "0",
+        holdDelayMs = parts[4].toIntOrNull() ?: fallback.holdDelayMs,
+        allowCrossAppDrag = parts[5] != "0",
+        showScopeBadge = parts[6] != "0",
+        showExpandShrink = parts[7] != "0",
+        showDragGrip = parts[8] != "0",
+        showModeToggle = parts[9] != "0",
+        showDropTargetLoupe = parts[10] != "0",
+        showQuickActions = parts[11] != "0",
+        showCodeActions = parts[12] != "0",
+      ).normalized()
+    }
+  }
+}
+
 data class EditorSettings(
   val darkTheme: Boolean = true,
   val dynamicColor: Boolean = false,
@@ -225,6 +315,7 @@ data class EditorSettings(
   val editorBarStyle: FloatingBarStyleConfig = FloatingBarStyleConfig.EDITOR_DEFAULT,
   val homeMenuStyle: PopupMenuStyleConfig = PopupMenuStyleConfig.DEFAULT,
   val editorMenuStyle: PopupMenuStyleConfig = PopupMenuStyleConfig.DEFAULT,
+  val selectionDragConfig: SelectionDragConfig = SelectionDragConfig.DEFAULT,
 )
 
 class AuthPreferencesStore(private val context: Context) {
@@ -276,6 +367,7 @@ class AuthPreferencesStore(private val context: Context) {
     val EDITOR_BAR_STYLE = stringPreferencesKey("ui_editor_bar_style")
     val HOME_MENU_STYLE = stringPreferencesKey("ui_home_menu_style")
     val EDITOR_MENU_STYLE = stringPreferencesKey("ui_editor_menu_style")
+    val SELECTION_DRAG_CONFIG = stringPreferencesKey("editor_selection_drag_config")
   }
 
   val credentialsFlow: Flow<StoredCredentials?> =
@@ -348,6 +440,7 @@ class AuthPreferencesStore(private val context: Context) {
         editorBarStyle = FloatingBarStyleConfig.decode(prefs[Keys.EDITOR_BAR_STYLE], FloatingBarStyleConfig.EDITOR_DEFAULT),
         homeMenuStyle = PopupMenuStyleConfig.decode(prefs[Keys.HOME_MENU_STYLE], PopupMenuStyleConfig.DEFAULT),
         editorMenuStyle = PopupMenuStyleConfig.decode(prefs[Keys.EDITOR_MENU_STYLE], PopupMenuStyleConfig.DEFAULT),
+        selectionDragConfig = SelectionDragConfig.decode(prefs[Keys.SELECTION_DRAG_CONFIG], SelectionDragConfig.DEFAULT),
       )
     }
 
@@ -455,6 +548,7 @@ class AuthPreferencesStore(private val context: Context) {
       prefs[Keys.EDITOR_BAR_STYLE] = next.editorBarStyle.encode()
       prefs[Keys.HOME_MENU_STYLE] = next.homeMenuStyle.encode()
       prefs[Keys.EDITOR_MENU_STYLE] = next.editorMenuStyle.encode()
+      prefs[Keys.SELECTION_DRAG_CONFIG] = next.selectionDragConfig.encode()
     }
   }
 }

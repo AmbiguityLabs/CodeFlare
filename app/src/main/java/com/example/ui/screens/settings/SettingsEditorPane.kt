@@ -5,6 +5,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,37 +21,62 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.WrapText
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DataObject
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Difference
+import androidx.compose.material.icons.outlined.DragIndicator
 import androidx.compose.material.icons.outlined.FormatIndentIncrease
 import androidx.compose.material.icons.outlined.FormatListNumbered
 import androidx.compose.material.icons.outlined.Keyboard
+import androidx.compose.material.icons.outlined.OpenWith
 import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.outlined.Remove
+import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.Swipe
 import androidx.compose.material.icons.outlined.TextFields
+import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.UnfoldLess
+import androidx.compose.material.icons.outlined.ZoomIn
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.remote.WorkerLanguage
+import com.example.data.security.DefaultEditorDragPolicy
 import com.example.data.security.EditorSettings
+import com.example.data.security.SelectionDragConfig
+import com.example.data.security.SmartSelectionHoldMode
 import com.example.editor.SyntaxHighlighter
+import com.example.editor.selection.SelectionLadderState
+import com.example.editor.selection.SmartSelectionInitialDepth
+import com.example.editor.selection.SmartTextDomain
+import com.example.editor.selection.SmartTextSelectionEngine
 import com.example.ui.components.IconRevealButton
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
@@ -415,6 +441,441 @@ fun SettingsEditorPane(
             height = 36.dp,
             tag = "settings_clear_drafts_button",
           )
+        }
+      }
+    }
+
+    val selConfig = settings.selectionDragConfig.normalized()
+    SettingsFoldableSection(
+      title = "Selection & Drag",
+      icon = Icons.Outlined.TouchApp,
+      summary = "${selConfig.holdMode.shortLabel} · ${selConfig.enabledOverlayCount}/7",
+      initiallyExpanded = false,
+      contentPadding = 14.dp,
+      modifier = Modifier.testTag("settings_selection_drag_section"),
+    ) {
+      val previewCode = "const url = \"https://edge.dev/v1\";"
+      val previewAnchorOffset = 22 // inside https://edge.dev/v1
+      val previewLadder =
+        remember(selConfig.initialDepth, selConfig.holdMode) {
+          SmartTextSelectionEngine.resolveAt(
+            text = previewCode,
+            offset = previewAnchorOffset,
+            domain = SmartTextDomain.CODE_JS_TS,
+            initialDepth =
+              if (selConfig.holdMode == SmartSelectionHoldMode.CLASSIC_WORD) SmartSelectionInitialDepth.COMPACT
+              else selConfig.initialDepth,
+          )
+        }
+      var previewStepOffset by remember(selConfig.initialDepth, selConfig.holdMode) { mutableIntStateOf(0) }
+      val effectiveIndex =
+        if (selConfig.holdMode == SmartSelectionHoldMode.CLASSIC_WORD) 0
+        else (previewLadder.initialIndex + previewStepOffset).coerceIn(0, (previewLadder.scopes.lastIndex).coerceAtLeast(0))
+      val previewState = SelectionLadderState(previewLadder, effectiveIndex)
+      val previewScope = previewState.currentScope
+      val previewHighlightStart = if (selConfig.holdMode == SmartSelectionHoldMode.CLASSIC_WORD) 21 else (previewScope?.start ?: 21)
+      val previewHighlightEnd = if (selConfig.holdMode == SmartSelectionHoldMode.CLASSIC_WORD) 25 else (previewScope?.end ?: 25)
+      val previewLabel = if (selConfig.holdMode == SmartSelectionHoldMode.CLASSIC_WORD) "Word" else (previewScope?.label ?: "Token")
+
+      val baseAnnotated =
+        remember(previewCode, palette) {
+          SyntaxHighlighter.highlight(previewCode, WorkerLanguage.JAVASCRIPT, palette)
+        }
+      val highlightedPreview =
+        remember(baseAnnotated, previewHighlightStart, previewHighlightEnd, palette.activePillBg, palette.activePillFg) {
+          buildAnnotatedString {
+            append(baseAnnotated)
+            addStyle(
+              style =
+                SpanStyle(
+                  background = palette.activePillBg.copy(alpha = 0.8f),
+                  color = palette.activePillFg,
+                  fontWeight = FontWeight.Bold,
+                ),
+              start = previewHighlightStart.coerceIn(0, previewCode.length),
+              end = previewHighlightEnd.coerceIn(0, previewCode.length),
+            )
+          }
+        }
+
+      fun updateSelectionConfig(block: (SelectionDragConfig) -> SelectionDragConfig) {
+        onUpdateSettings { cur ->
+          cur.copy(selectionDragConfig = block(cur.selectionDragConfig).normalized())
+        }
+      }
+
+      Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // Interactive Live Preview Card
+        Surface(
+          color = palette.editorBg,
+          shape = RoundedCornerShape(if (isV2) 16.dp else 10.dp),
+          border = if (isV2) null else BorderStroke(0.75.dp, palette.border.copy(alpha = 0.6f)),
+          modifier = Modifier.fillMaxWidth().testTag("settings_selection_drag_preview"),
+        ) {
+          Column(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+          ) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Text(
+                text = "LIVE SELECTION PREVIEW",
+                fontFamily = JetBrainsMono,
+                fontSize = 9.5.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.7.sp,
+                color = palette.textMuted,
+              )
+              Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (selConfig.showDropTargetLoupe) {
+                  Text(
+                    text = "1.5x LOUPE",
+                    fontFamily = JetBrainsMono,
+                    fontSize = 8.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = EmeraldLive,
+                  )
+                }
+                Text(
+                  text = "${selConfig.holdDelayMs}ms",
+                  fontFamily = JetBrainsMono,
+                  fontSize = 9.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = palette.activePillFg,
+                )
+              }
+            }
+
+            // Simulated Floating Selection Toolbar reacting to all 7 switches
+            Surface(
+              color = palette.glassElevated,
+              shape = RoundedCornerShape(10.dp),
+              border = BorderStroke(0.75.dp, palette.glassBorderHighlight),
+            ) {
+              Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 6.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+              ) {
+                if (selConfig.showDragGrip) {
+                  Row(
+                    modifier =
+                      Modifier
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(palette.activePillBg.copy(alpha = 0.7f))
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                  ) {
+                    Icon(Icons.Outlined.DragIndicator, contentDescription = null, tint = palette.activePillFg, modifier = Modifier.size(12.dp))
+                    Text("Drag", fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold, color = palette.activePillFg)
+                  }
+                }
+                if (selConfig.showScopeBadge) {
+                  Text(
+                    text = previewLabel,
+                    fontFamily = JetBrainsMono,
+                    fontSize = 9.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = palette.activePillFg,
+                    modifier =
+                      Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(palette.editorBg)
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                  )
+                }
+                if (selConfig.showExpandShrink && selConfig.holdMode != SmartSelectionHoldMode.CLASSIC_WORD) {
+                  Surface(
+                    onClick = { if (previewState.canShrink) previewStepOffset-- },
+                    enabled = previewState.canShrink,
+                    shape = RoundedCornerShape(6.dp),
+                    color = Color.Transparent,
+                  ) {
+                    Icon(
+                      Icons.Outlined.Remove,
+                      contentDescription = "Shrink preview scope",
+                      tint = if (previewState.canShrink) palette.textPrimary else palette.textMuted.copy(alpha = 0.35f),
+                      modifier = Modifier.padding(4.dp).size(14.dp),
+                    )
+                  }
+                  Surface(
+                    onClick = { if (previewState.canExpand) previewStepOffset++ },
+                    enabled = previewState.canExpand,
+                    shape = RoundedCornerShape(6.dp),
+                    color = Color.Transparent,
+                  ) {
+                    Icon(
+                      Icons.Outlined.Add,
+                      contentDescription = "Expand preview scope",
+                      tint = if (previewState.canExpand) palette.activePillFg else palette.textMuted.copy(alpha = 0.35f),
+                      modifier = Modifier.padding(4.dp).size(14.dp),
+                    )
+                  }
+                }
+                if (selConfig.showModeToggle) {
+                  val isMove = selConfig.defaultEditorDragMode != DefaultEditorDragPolicy.ALWAYS_COPY
+                  val modeTint = if (isMove) palette.ctaBg else EmeraldLive
+                  Text(
+                    text = if (isMove) "Move" else "Copy",
+                    fontFamily = JetBrainsMono,
+                    fontSize = 9.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = modeTint,
+                    modifier =
+                      Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(modeTint.copy(alpha = 0.14f))
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                  )
+                }
+                if (selConfig.showQuickActions) {
+                  Text("Copy · Cut", fontSize = 9.5.sp, color = palette.textPrimary, modifier = Modifier.padding(horizontal = 4.dp))
+                }
+                if (selConfig.showCodeActions) {
+                  Text("// Rename", fontFamily = JetBrainsMono, fontSize = 9.5.sp, color = palette.textSecondary, modifier = Modifier.padding(horizontal = 4.dp))
+                }
+                if (selConfig.enabledOverlayCount == 0) {
+                  Text("Overlay hidden", fontFamily = JetBrainsMono, fontSize = 9.5.sp, color = palette.textMuted)
+                }
+              }
+            }
+
+            Box(
+              modifier =
+                Modifier
+                  .fillMaxWidth()
+                  .clip(RoundedCornerShape(8.dp))
+                  .background(palette.editorActiveLineBg)
+                  .horizontalScroll(rememberScrollState())
+                  .padding(horizontal = 10.dp, vertical = 8.dp),
+            ) {
+              Text(
+                text = highlightedPreview,
+                fontFamily = JetBrainsMono,
+                fontSize = 12.sp,
+                color = palette.textPrimary,
+                maxLines = 1,
+              )
+            }
+
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Text(
+                text =
+                  if (selConfig.immediateSlideToDrag) "Hold -> slide launches drag immediately"
+                  else "Hold selects · use Drag grip or re-hold to drag",
+                fontSize = 11.sp,
+                color = palette.textSecondary,
+              )
+              if (selConfig.allowCrossAppDrag) {
+                Text(
+                  text = "GLOBAL",
+                  fontFamily = JetBrainsMono,
+                  fontSize = 8.5.sp,
+                  fontWeight = FontWeight.Bold,
+                  color = palette.activePillFg,
+                )
+              }
+            }
+          }
+        }
+
+        // Hold Mode
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          Text("Hold Behavior", fontSize = 13.5.sp, fontWeight = FontWeight.Medium, color = palette.textPrimary)
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            SmartSelectionHoldMode.entries.forEach { mode ->
+              val selected = selConfig.holdMode == mode
+              SettingsChoiceChip(
+                label = mode.shortLabel,
+                selected = selected,
+                onClick = { updateSelectionConfig { it.copy(holdMode = mode) } },
+                modifier = Modifier.weight(1f).testTag("sel_hold_mode_${mode.name}"),
+              )
+            }
+          }
+        }
+
+        // Initial Depth
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          Text("Initial Scope Depth", fontSize = 13.5.sp, fontWeight = FontWeight.Medium, color = palette.textPrimary)
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf(
+              SmartSelectionInitialDepth.COMPACT to "Compact",
+              SmartSelectionInitialDepth.SMART_AUTO to "Smart Auto",
+              SmartSelectionInitialDepth.BROAD to "Broad",
+            ).forEach { (depth, label) ->
+              SettingsChoiceChip(
+                label = label,
+                selected = selConfig.initialDepth == depth,
+                onClick = { updateSelectionConfig { it.copy(initialDepth = depth) } },
+                modifier = Modifier.weight(1f).testTag("sel_depth_${depth.name}"),
+              )
+            }
+          }
+        }
+
+        // Default Editor Drag Policy
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          Text("Default Editor Drag Mode", fontSize = 13.5.sp, fontWeight = FontWeight.Medium, color = palette.textPrimary)
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            DefaultEditorDragPolicy.entries.forEach { policy ->
+              SettingsChoiceChip(
+                label = policy.shortLabel,
+                selected = selConfig.defaultEditorDragMode == policy,
+                onClick = { updateSelectionConfig { it.copy(defaultEditorDragMode = policy) } },
+                modifier = Modifier.weight(1f).testTag("sel_drag_policy_${policy.name}"),
+              )
+            }
+          }
+        }
+
+        // Hold Trigger Delay
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text("Hold Trigger Delay", fontSize = 13.5.sp, fontWeight = FontWeight.Medium, color = palette.textPrimary)
+            Text(
+              text = "${selConfig.holdDelayMs}ms",
+              fontFamily = JetBrainsMono,
+              fontSize = 11.sp,
+              fontWeight = FontWeight.SemiBold,
+              color = palette.activePillFg,
+            )
+          }
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(240, 320, 450).forEach { ms ->
+              SettingsChoiceChip(
+                label = "${ms}ms",
+                selected = selConfig.holdDelayMs == ms,
+                onClick = { updateSelectionConfig { it.copy(holdDelayMs = ms) } },
+                monospace = true,
+                modifier = Modifier.weight(1f).testTag("sel_hold_delay_$ms"),
+              )
+            }
+          }
+        }
+
+        SettingsHairlineDivider()
+
+        // Drag Behavior Switches
+        SettingsToggleRow(
+          title = "Immediate Slide-to-Drag",
+          leadingIcon = Icons.Outlined.Swipe,
+          checked = selConfig.immediateSlideToDrag,
+          onCheckedChange = { enabled -> updateSelectionConfig { it.copy(immediateSlideToDrag = enabled) } },
+          horizontalPadding = 2.dp,
+          modifier = Modifier.testTag("sel_toggle_immediate_slide"),
+        )
+        SettingsHairlineDivider()
+        SettingsToggleRow(
+          title = "Cross-App Global Drag",
+          leadingIcon = Icons.Outlined.OpenWith,
+          checked = selConfig.allowCrossAppDrag,
+          onCheckedChange = { enabled -> updateSelectionConfig { it.copy(allowCrossAppDrag = enabled) } },
+          horizontalPadding = 2.dp,
+          modifier = Modifier.testTag("sel_toggle_cross_app"),
+        )
+
+        SettingsHairlineDivider()
+
+        Text(
+          text = "HOLD OVERLAY ELEMENTS (${selConfig.enabledOverlayCount}/7)",
+          fontFamily = JetBrainsMono,
+          fontSize = 9.5.sp,
+          fontWeight = FontWeight.Bold,
+          letterSpacing = 0.7.sp,
+          color = palette.textMuted,
+        )
+
+        SettingsToggleRow(
+          title = "Scope Badge",
+          leadingIcon = Icons.Outlined.AutoAwesome,
+          checked = selConfig.showScopeBadge,
+          onCheckedChange = { v -> updateSelectionConfig { it.copy(showScopeBadge = v) } },
+          horizontalPadding = 2.dp,
+          modifier = Modifier.testTag("sel_toggle_scope_badge"),
+        )
+        SettingsHairlineDivider()
+        SettingsToggleRow(
+          title = "Expand / Shrink Buttons",
+          leadingIcon = Icons.Outlined.Tune,
+          checked = selConfig.showExpandShrink,
+          onCheckedChange = { v -> updateSelectionConfig { it.copy(showExpandShrink = v) } },
+          horizontalPadding = 2.dp,
+          modifier = Modifier.testTag("sel_toggle_expand_shrink"),
+        )
+        SettingsHairlineDivider()
+        SettingsToggleRow(
+          title = "Drag Grip",
+          leadingIcon = Icons.Outlined.DragIndicator,
+          checked = selConfig.showDragGrip,
+          onCheckedChange = { v -> updateSelectionConfig { it.copy(showDragGrip = v) } },
+          horizontalPadding = 2.dp,
+          modifier = Modifier.testTag("sel_toggle_drag_grip"),
+        )
+        SettingsHairlineDivider()
+        SettingsToggleRow(
+          title = "Move / Copy Switch",
+          leadingIcon = Icons.Outlined.ContentCopy,
+          checked = selConfig.showModeToggle,
+          onCheckedChange = { v -> updateSelectionConfig { it.copy(showModeToggle = v) } },
+          horizontalPadding = 2.dp,
+          modifier = Modifier.testTag("sel_toggle_mode_switch"),
+        )
+        SettingsHairlineDivider()
+        SettingsToggleRow(
+          title = "Drop Target Loupe (1.5x)",
+          leadingIcon = Icons.Outlined.ZoomIn,
+          checked = selConfig.showDropTargetLoupe,
+          onCheckedChange = { v -> updateSelectionConfig { it.copy(showDropTargetLoupe = v) } },
+          horizontalPadding = 2.dp,
+          modifier = Modifier.testTag("sel_toggle_drop_loupe"),
+        )
+        SettingsHairlineDivider()
+        SettingsToggleRow(
+          title = "Quick Actions (Copy, Cut, Paste, All)",
+          leadingIcon = Icons.Outlined.Timer,
+          checked = selConfig.showQuickActions,
+          onCheckedChange = { v -> updateSelectionConfig { it.copy(showQuickActions = v) } },
+          horizontalPadding = 2.dp,
+          modifier = Modifier.testTag("sel_toggle_quick_actions"),
+        )
+        SettingsHairlineDivider()
+        SettingsToggleRow(
+          title = "Code Actions (//, Rename)",
+          leadingIcon = Icons.Outlined.Code,
+          checked = selConfig.showCodeActions,
+          onCheckedChange = { v -> updateSelectionConfig { it.copy(showCodeActions = v) } },
+          horizontalPadding = 2.dp,
+          modifier = Modifier.testTag("sel_toggle_code_actions"),
+        )
+
+        if (selConfig != SelectionDragConfig.DEFAULT) {
+          SettingsHairlineDivider()
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+          ) {
+            OutlinedButton(
+              onClick = { updateSelectionConfig { SelectionDragConfig.DEFAULT } },
+              modifier = Modifier.testTag("sel_reset_defaults"),
+            ) {
+              Icon(Icons.Outlined.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+              Spacer(Modifier.width(6.dp))
+              Text("Reset Defaults", fontSize = 12.sp)
+            }
+          }
         }
       }
     }

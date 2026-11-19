@@ -60,6 +60,7 @@ class MainActivity : ComponentActivity() {
             homeMenu = uiState.editorSettings.homeMenuStyle,
             editorMenu = uiState.editorSettings.editorMenuStyle,
           ),
+        selectionDragConfig = uiState.editorSettings.selectionDragConfig,
       ) {
         when {
           uiState.isBootstrapping -> {

@@ -69,7 +69,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.remote.DiagnosticItem
 import com.example.data.remote.WorkerLanguage
+import com.example.data.security.DefaultEditorDragPolicy
 import com.example.data.security.EditorSettings
+import com.example.data.security.SmartSelectionHoldMode
 import com.example.editor.BracketMatch
 import com.example.editor.CodeAnalyzer
 import com.example.editor.CodeSymbol
@@ -92,6 +94,7 @@ import com.example.editor.selection.SelectionLadderState
 import com.example.editor.selection.SelectionScope
 import com.example.editor.selection.SmartTextDomain
 import com.example.editor.selection.SmartTextSelectionEngine
+import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.UiStyleVersion
@@ -293,11 +296,28 @@ fun EdgeCodeEditorSurface(
   var showTouchHandles by remember { mutableStateOf(false) }
   var activeHandleDrag by remember { mutableStateOf<DraggedHandle?>(null) }
 
+  val selectionConfig = editorSettings.selectionDragConfig.normalized()
+  val latestSelectionConfig by rememberUpdatedState(selectionConfig)
+
   // Smart Selection Ladder + Drag-and-Drop state
   var selectionLadder by remember(filePath) { mutableStateOf<SelectionLadderState?>(null) }
   var activeHoldScope by remember(filePath) { mutableStateOf<SelectionScope?>(null) }
   var userDragMode by remember(filePath, readOnly) {
-    mutableStateOf(if (readOnly) DragTransferMode.COPY else DragTransferMode.MOVE)
+    mutableStateOf(
+      if (readOnly || selectionConfig.defaultEditorDragMode == DefaultEditorDragPolicy.ALWAYS_COPY) {
+        DragTransferMode.COPY
+      } else {
+        DragTransferMode.MOVE
+      },
+    )
+  }
+  LaunchedEffect(readOnly, selectionConfig.defaultEditorDragMode) {
+    userDragMode =
+      if (readOnly || selectionConfig.defaultEditorDragMode == DefaultEditorDragPolicy.ALWAYS_COPY) {
+        DragTransferMode.COPY
+      } else {
+        DragTransferMode.MOVE
+      }
   }
   var isSelfDragActive by remember(filePath) { mutableStateOf(false) }
   var dropHoverState by remember(filePath) { mutableStateOf<EditorDropHoverState?>(null) }
@@ -614,7 +634,13 @@ fun EdgeCodeEditorSurface(
     val sel = session.selection
     if (sel.collapsed) return false
     val selected = session.selectedText()?.takeIf { it.isNotEmpty() } ?: return false
-    val effectivePreferred = if (readOnly) DragTransferMode.COPY else userDragMode
+    val cfg = latestSelectionConfig
+    val effectivePreferred =
+      when {
+        readOnly -> DragTransferMode.COPY
+        cfg.defaultEditorDragMode == DefaultEditorDragPolicy.ALWAYS_COPY -> DragTransferMode.COPY
+        else -> userDragMode
+      }
     val payload =
       EdgeDragPayload(
         dragId = EdgeTextDragCoordinator.nextDragId(),
@@ -630,7 +656,7 @@ fun EdgeCodeEditorSurface(
         view = view,
         payload = payload,
         palette = palette,
-        allowGlobal = true,
+        allowGlobal = cfg.allowCrossAppDrag,
         isV2 = isV2Style,
       )
     if (started) {
@@ -789,16 +815,35 @@ fun EdgeCodeEditorSurface(
       }
     }
 
+  val dropLoupeOffset =
+    dropHoverState
+      ?.takeIf { selectionConfig.showDropTargetLoupe && activeHandleDrag == null }
+      ?.let { hover ->
+        val c = geometry.caretGeometry(hover.dropDocOffset, session.doc, session.foldModel, lineStyles, renderCache)
+        Offset(c.horizontalPosition, c.top + lineH * 0.5f)
+      }
+  val activeLoupeSource = loupeSource ?: dropLoupeOffset
+  val isDropLoupeActive = loupeSource == null && dropLoupeOffset != null
+  val loupeOutline =
+    when {
+      isDropLoupeActive && dropHoverState != null ->
+        if (dropHoverState!!.effectiveMode == DragTransferMode.MOVE) palette.ctaBg.copy(alpha = 0.85f)
+        else EmeraldLive.copy(alpha = 0.85f)
+      else -> palette.activePillFg.copy(alpha = 0.65f)
+    }
+
   Box(
     modifier =
       modifier
         .fillMaxSize()
         .clipToBounds()
         .edgeEditorLoupe(
-          loupeSourceProvider = { loupeSource },
+          loupeSourceProvider = { activeLoupeSource },
           lineHeight = lineH,
           background = palette.editorBg,
-          outline = palette.activePillFg.copy(alpha = 0.65f),
+          outline = loupeOutline,
+          outlineProvider = { loupeOutline },
+          extraLiftDpProvider = { if (isDropLoupeActive) 68f else 0f },
         )
         .testTag("code_editor_input"),
   ) {
@@ -1028,7 +1073,9 @@ fun EdgeCodeEditorSurface(
                 !session.selection.collapsed &&
                   downPos.x >= geometry.effectiveGutterPx &&
                   downOffset in session.selection.min..session.selection.max
-              val holdDelayMs = if (downInExistingSelection) 220L else 320L.coerceAtMost(longPressTimeout)
+              val configuredHoldMs = latestSelectionConfig.holdDelayMs.toLong().coerceIn(200L, 600L)
+              val holdDelayMs = if (downInExistingSelection) minOf(220L, configuredHoldMs) else configuredHoldMs
+              var progressiveHoldJob: Job? = null
 
               val longPressJob =
                 scope.launch {
@@ -1039,17 +1086,47 @@ fun EdgeCodeEditorSurface(
                       // Priority 2: Hold inside existing selection body starts Drag & Drop directly
                       dragLaunched = launchSelectionDrag()
                     } else {
-                      // Priority 3: Smart structural auto-selection on hold
+                      // Priority 3: Smart structural or classic-word selection on hold
                       haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                      val domain = SmartTextDomain.from(language, filePath)
-                      val ladder = SmartTextSelectionEngine.resolveAt(session.doc.chars, downOffset, domain)
-                      val initial = ladder.initialScope
-                      if (initial != null) {
-                        selectionLadder = SelectionLadderState(ladder)
-                        activeHoldScope = initial
-                        session.setSelection(initial.toTextRange())
-                      } else {
+                      val cfg = latestSelectionConfig
+                      if (cfg.holdMode == SmartSelectionHoldMode.CLASSIC_WORD) {
+                        selectionLadder = null
+                        activeHoldScope = null
                         session.selectWordAt(downOffset)
+                      } else {
+                        val domain = SmartTextDomain.from(language, filePath)
+                        val ladder =
+                          SmartTextSelectionEngine.resolveAt(
+                            text = session.doc.chars,
+                            offset = downOffset,
+                            domain = domain,
+                            initialDepth = cfg.initialDepth,
+                          )
+                        val initial = ladder.initialScope
+                        if (initial != null) {
+                          selectionLadder = SelectionLadderState(ladder)
+                          activeHoldScope = initial
+                          session.setSelection(initial.toTextRange())
+                        } else {
+                          session.selectWordAt(downOffset)
+                        }
+                        if (cfg.holdMode == SmartSelectionHoldMode.PROGRESSIVE_HOLD) {
+                          progressiveHoldJob =
+                            launch {
+                              while (!draggingScroll && !pinching && !dragLaunched) {
+                                delay(450L)
+                                if (draggingScroll || pinching || dragLaunched) break
+                                val cur = selectionLadder ?: break
+                                if (!cur.canExpand) break
+                                val next = cur.expand()
+                                val nextScope = next.currentScope ?: break
+                                selectionLadder = next
+                                activeHoldScope = nextScope
+                                session.setSelection(nextScope.toTextRange())
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                              }
+                            }
+                        }
                       }
                       showTouchHandles = true
                       focusRequester.requestFocus()
@@ -1071,6 +1148,7 @@ fun EdgeCodeEditorSurface(
                       pinching = true
                       isPinching = true
                       longPressJob.cancel()
+                      progressiveHoldJob?.cancel()
                       activeHoldScope = null
                       pinchStartZoom = liveZoomPercent
                       pinchScaleAccum = 1f
@@ -1099,8 +1177,13 @@ fun EdgeCodeEditorSurface(
                     val delta = primary.position - primary.previousPosition
                     val movedDist = (primary.position - downPos).getDistance()
 
-                    // One-motion Hold -> Slide to Drag immediately!
-                    if (longPressFired && !dragLaunched && movedDist > touchSlop) {
+                    // One-motion Hold -> Slide to Drag immediately (honors immediateSlideToDrag)!
+                    if (longPressFired &&
+                      !dragLaunched &&
+                      movedDist > touchSlop &&
+                      (downInExistingSelection || latestSelectionConfig.immediateSlideToDrag)
+                    ) {
+                      progressiveHoldJob?.cancel()
                       primary.consume()
                       dragLaunched = launchSelectionDrag()
                       if (dragLaunched) break
@@ -1109,6 +1192,7 @@ fun EdgeCodeEditorSurface(
                     if (!draggingScroll && !longPressFired && movedDist > touchSlop) {
                       draggingScroll = true
                       longPressJob.cancel()
+                      progressiveHoldJob?.cancel()
                     }
                     if (draggingScroll) {
                       primary.consume()
@@ -1119,6 +1203,7 @@ fun EdgeCodeEditorSurface(
                 }
               } finally {
                 longPressJob.cancel()
+                progressiveHoldJob?.cancel()
                 activeHoldScope = null
               }
 
@@ -1299,7 +1384,8 @@ fun EdgeCodeEditorSurface(
     EdgeSmartHoldScopePill(
       scope = activeHoldScope,
       anchorY = selAnchorY,
-      dragHintVisible = !session.selection.collapsed,
+      dragHintVisible = !session.selection.collapsed && selectionConfig.immediateSlideToDrag,
+      showScopeBadge = selectionConfig.showScopeBadge,
     )
     EdgeSelectionToolbar(
       visible =
@@ -1316,9 +1402,21 @@ fun EdgeCodeEditorSurface(
       canExpandScope = selectionLadder?.canExpand == true,
       canShrinkScope = selectionLadder?.canShrink == true,
       dragMode = if (readOnly) DragTransferMode.COPY else userDragMode,
+      showScopeBadge = selectionConfig.showScopeBadge,
+      showExpandShrink = selectionConfig.showExpandShrink,
+      showDragGrip = selectionConfig.showDragGrip,
+      showModeToggle = selectionConfig.showModeToggle,
+      showQuickActions = selectionConfig.showQuickActions,
+      showCodeActions = selectionConfig.showCodeActions,
       onExpandScope = {
         val current = selectionLadder ?: run {
-          val ladder = SmartTextSelectionEngine.resolveAt(session.doc.chars, session.selection.min, SmartTextDomain.from(language, filePath))
+          val ladder =
+            SmartTextSelectionEngine.resolveAt(
+              text = session.doc.chars,
+              offset = session.selection.min,
+              domain = SmartTextDomain.from(language, filePath),
+              initialDepth = selectionConfig.initialDepth,
+            )
           SelectionLadderState(ladder)
         }
         val next = current.expand()

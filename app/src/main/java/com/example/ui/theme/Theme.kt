@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import com.example.data.security.FloatingBarStyleConfig
 import com.example.data.security.PopupMenuStyleConfig
+import com.example.data.security.SelectionDragConfig
 
 @Immutable
 data class BarStylePreferences(
@@ -27,6 +28,7 @@ data class BarStylePreferences(
 val LocalIdePalette = staticCompositionLocalOf { DarkIdePalette }
 val LocalBarStylePreferences = staticCompositionLocalOf { BarStylePreferences() }
 val LocalPopupMenuStyle = staticCompositionLocalOf { PopupMenuStyleConfig.DEFAULT }
+val LocalSelectionDragConfig = staticCompositionLocalOf { SelectionDragConfig.DEFAULT }
 
 private fun buildDarkColorScheme(palette: IdePalette) =
   darkColorScheme(
@@ -89,6 +91,7 @@ fun EdgeCodeTheme(
   themePreset: EditorThemePreset = EditorThemePreset.OLIVE_OBSIDIAN,
   uiStyle: UiStyleVersion = UiStyleVersion.V1_DEFAULT,
   barPreferences: BarStylePreferences = BarStylePreferences(),
+  selectionDragConfig: SelectionDragConfig = SelectionDragConfig.DEFAULT,
   content: @Composable () -> Unit,
 ) {
   val context = LocalContext.current
@@ -106,6 +109,7 @@ fun EdgeCodeTheme(
     LocalIdePalette provides palette,
     LocalBarStylePreferences provides barPreferences,
     LocalPopupMenuStyle provides barPreferences.homeMenu,
+    LocalSelectionDragConfig provides selectionDragConfig.normalized(),
   ) {
     MaterialTheme(
       colorScheme = colorScheme,
