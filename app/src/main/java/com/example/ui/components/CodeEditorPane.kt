@@ -73,6 +73,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import com.example.editor.drag.edgeTextDropTarget
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -673,6 +674,14 @@ fun CodeEditorPane(
                   .clip(RoundedCornerShape(8.dp))
                   .background(palette.editorBg)
                   .border(0.75.dp, palette.border.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                  .edgeTextDropTarget(
+                    targetSurfaceId = "Find",
+                    currentValue = uiState.findQuery,
+                    onValueChange = onFindQueryChange,
+                    singleLine = true,
+                    replaceAll = true,
+                    shape = RoundedCornerShape(8.dp),
+                  )
                   .padding(horizontal = 9.dp),
               contentAlignment = Alignment.CenterStart,
             ) {
@@ -803,6 +812,14 @@ fun CodeEditorPane(
                     .clip(RoundedCornerShape(8.dp))
                     .background(palette.editorBg)
                     .border(0.75.dp, palette.border.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                    .edgeTextDropTarget(
+                      targetSurfaceId = "Replace",
+                      currentValue = uiState.replaceQuery,
+                      onValueChange = onReplaceQueryChange,
+                      singleLine = true,
+                      replaceAll = true,
+                      shape = RoundedCornerShape(8.dp),
+                    )
                     .padding(horizontal = 9.dp),
                 contentAlignment = Alignment.CenterStart,
               ) {

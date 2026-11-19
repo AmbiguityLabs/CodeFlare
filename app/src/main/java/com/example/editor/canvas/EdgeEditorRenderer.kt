@@ -19,6 +19,8 @@ import androidx.compose.ui.unit.dp
 import com.example.data.remote.DiagnosticItem
 import com.example.data.remote.DiagnosticSeverity
 import com.example.editor.BracketMatch
+import com.example.editor.drag.DragTransferMode
+import com.example.editor.drag.EditorDropHoverState
 import com.example.editor.engine.EdgeEditorSession
 import com.example.editor.engine.EditorDocument
 import com.example.editor.engine.IncrementalLineStyles
@@ -52,6 +54,8 @@ data class EdgeEditorDrawParams(
   val caretAlpha: Float,
   val showCaret: Boolean,
   val showTouchHandles: Boolean,
+  val dropHoverState: EditorDropHoverState? = null,
+  val isSelfDragMoveActive: Boolean = false,
 )
 
 /**
@@ -169,7 +173,12 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
     }
 
     // 1c. Per-line highlights, text, squiggles, brackets, composing underline
-    val selBg = palette.activePillBg.copy(alpha = if (palette.isDark) 0.72f else 0.65f)
+    val selBg =
+      if (p.isSelfDragMoveActive) {
+        palette.activePillBg.copy(alpha = 0.24f)
+      } else {
+        palette.activePillBg.copy(alpha = if (palette.isDark) 0.72f else 0.65f)
+      }
     val symBg = palette.activePillFg.copy(alpha = 0.14f)
     val bracketFill = palette.activePillBg.copy(alpha = 0.9f)
     val bracketStroke = palette.activePillFg.copy(alpha = 0.85f)
@@ -328,7 +337,7 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
     }
 
     // 1d. Animated gliding caret
-    if (p.showCaret && sel.collapsed && p.caretAlpha > 0.01f) {
+    if (p.showCaret && sel.collapsed && p.caretAlpha > 0.01f && p.dropHoverState == null) {
       val caretW = 2.dp.toPx()
       drawRoundRect(
         color = palette.ctaBg.copy(alpha = p.caretAlpha),
@@ -336,6 +345,40 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
         size = Size(caretW, (lineH - 4f).coerceAtLeast(8f)),
         cornerRadius = CornerRadius(1.dp.toPx()),
       )
+    }
+
+    // 1e. Live Drag-and-Drop Caret Preview (high-contrast vertical bar + diamond cap + soft halo)
+    p.dropHoverState?.let { drop ->
+      val dropCaret = geom.caretGeometry(drop.dropDocOffset, doc, fold, p.styles, p.cache)
+      val dropColor = if (drop.effectiveMode == DragTransferMode.MOVE) palette.ctaBg else EmeraldLive
+      val barW = 2.5.dp.toPx()
+      val cx = dropCaret.horizontalPosition.coerceIn(gutterW + 1f, size.width - 2f)
+      // Soft halo behind drop bar
+      drawRoundRect(
+        color = dropColor.copy(alpha = 0.22f),
+        topLeft = Offset(cx - 5.dp.toPx(), dropCaret.top),
+        size = Size(10.dp.toPx(), lineH),
+        cornerRadius = CornerRadius(4.dp.toPx()),
+      )
+      // Crisp drop bar
+      drawRoundRect(
+        color = dropColor,
+        topLeft = Offset(cx - barW * 0.5f, dropCaret.top),
+        size = Size(barW, lineH),
+        cornerRadius = CornerRadius(1.25.dp.toPx()),
+      )
+      // Top diamond cap so user spots the drop column instantly
+      val capR = 4.dp.toPx()
+      val capY = (dropCaret.top - 1.dp.toPx()).coerceAtLeast(capR)
+      val diamond =
+        Path().apply {
+          moveTo(cx, capY - capR)
+          lineTo(cx + capR, capY)
+          lineTo(cx, capY + capR)
+          lineTo(cx - capR, capY)
+          close()
+        }
+      drawPath(diamond, color = dropColor)
     }
   }
 
@@ -469,7 +512,7 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
   }
 
   // ---- Pass 3: Touch selection teardrop handles ----
-  if (p.showTouchHandles && !sel.collapsed) {
+  if (p.showTouchHandles && !sel.collapsed && p.dropHoverState == null && !p.isSelfDragMoveActive) {
     val startCaret = geom.caretGeometry(sel.min, doc, fold, p.styles, p.cache)
     val endCaret = geom.caretGeometry(sel.max, doc, fold, p.styles, p.cache)
     val handleColor = palette.ctaBg
@@ -479,6 +522,18 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
     if (endCaret.horizontalPosition >= gutterW - 4f && endCaret.bottom in 0f..(size.height + 24f)) {
       drawSelectionTeardrop(Offset(endCaret.horizontalPosition, endCaret.bottom), isStart = false, color = handleColor)
     }
+  }
+
+  // ---- Pass 4: Luminous Drop Zone Frame while dragging over canvas ----
+  p.dropHoverState?.let { drop ->
+    val frameColor = if (drop.effectiveMode == DragTransferMode.MOVE) palette.ctaBg else EmeraldLive
+    val strokePx = 1.75.dp.toPx()
+    drawRect(
+      color = frameColor.copy(alpha = 0.55f),
+      topLeft = Offset(strokePx * 0.5f, strokePx * 0.5f),
+      size = Size((size.width - strokePx).coerceAtLeast(0f), (size.height - strokePx).coerceAtLeast(0f)),
+      style = Stroke(width = strokePx),
+    )
   }
 }
 

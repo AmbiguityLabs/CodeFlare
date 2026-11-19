@@ -26,7 +26,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Send
@@ -73,6 +72,9 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import com.example.editor.drag.SmartDraggableText
+import com.example.editor.drag.edgeTextDropTarget
+import com.example.editor.selection.SmartTextDomain
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -465,6 +467,14 @@ fun ApiTesterPane(
             .clip(RoundedCornerShape(10.dp))
             .background(palette.chromeSurface)
             .border(0.75.dp, palette.border.copy(alpha = 0.7f), RoundedCornerShape(10.dp))
+            .edgeTextDropTarget(
+              targetSurfaceId = "API URL",
+              currentValue = req.url,
+              onValueChange = { nextUrl -> onUpdateRequest { it.copy(url = nextUrl) } },
+              singleLine = true,
+              shape = RoundedCornerShape(10.dp),
+              onDropFeedback = onNotifyStatus,
+            )
             .padding(horizontal = 10.dp, vertical = 10.dp),
         contentAlignment = Alignment.CenterStart,
       ) {
@@ -953,68 +963,89 @@ fun ApiTesterPane(
               modifier = Modifier.fillMaxWidth().height(260.dp).clip(RoundedCornerShape(8.dp)),
             )
           } else {
-            SelectionContainer {
-              Box(
-                modifier =
-                  Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(palette.editorBg)
-                    .border(0.75.dp, palette.border.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
-                    .padding(10.dp),
-              ) {
-                when (responseSubTab) {
-                  0 -> {
-                    val pretty = remember(res.body, res.errorMessage) {
-                      res.errorMessage ?: ApiRequestUtils.prettyPrintIfJson(res.body)
-                    }
-                    val trimmed = pretty.trimStart()
-                    val isJson = res.errorMessage == null && (trimmed.startsWith("{") || trimmed.startsWith("["))
-                    if (isJson) {
-                      val highlighted = remember(pretty, palette) {
-                        SyntaxHighlighter.highlight(pretty, WorkerLanguage.JSON, palette)
-                      }
-                      Text(highlighted, style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp))
-                    } else {
-                      Text(
-                        text = pretty.ifBlank { "(empty body)" },
-                        style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
-                        color = if (res.errorMessage != null) RoseError else palette.textPrimary,
-                      )
-                    }
+            Box(
+              modifier =
+                Modifier
+                  .fillMaxWidth()
+                  .clip(RoundedCornerShape(8.dp))
+                  .background(palette.editorBg)
+                  .border(0.75.dp, palette.border.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                  .padding(10.dp),
+            ) {
+              when (responseSubTab) {
+                0 -> {
+                  val pretty = remember(res.body, res.errorMessage) {
+                    res.errorMessage ?: ApiRequestUtils.prettyPrintIfJson(res.body)
                   }
-                  1 -> {
-                    Text(
-                      text = (res.errorMessage ?: res.body).ifBlank { "(empty body)" },
+                  val trimmed = pretty.trimStart()
+                  val isJson = res.errorMessage == null && (trimmed.startsWith("{") || trimmed.startsWith("["))
+                  if (isJson) {
+                    val highlighted = remember(pretty, palette) {
+                      SyntaxHighlighter.highlight(pretty, WorkerLanguage.JSON, palette)
+                    }
+                    SmartDraggableText(
+                      text = pretty,
+                      annotatedText = highlighted,
+                      surfaceId = "api_res_json",
+                      domain = SmartTextDomain.JSON,
+                      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
+                      onCopied = { onNotifyStatus("Copied JSON snippet") },
+                    )
+                  } else {
+                    SmartDraggableText(
+                      text = pretty.ifBlank { "(empty body)" },
+                      surfaceId = "api_res_pretty",
+                      domain = SmartTextDomain.TERMINAL_OR_LOG,
                       style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
                       color = if (res.errorMessage != null) RoseError else palette.textPrimary,
+                      onCopied = { onNotifyStatus("Copied response snippet") },
                     )
                   }
-                  2 -> {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                      if (res.headers.isEmpty()) {
-                        Text("(no response headers)", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
-                      } else {
-                        res.headers.forEach { (k, v) ->
-                          Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("$k:", style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold), color = palette.activePillFg)
-                            Text(v, style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp), color = palette.textPrimary)
-                          }
+                }
+                1 -> {
+                  SmartDraggableText(
+                    text = (res.errorMessage ?: res.body).ifBlank { "(empty body)" },
+                    surfaceId = "api_res_raw",
+                    domain = SmartTextDomain.TERMINAL_OR_LOG,
+                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
+                    color = if (res.errorMessage != null) RoseError else palette.textPrimary,
+                    onCopied = { onNotifyStatus("Copied raw response") },
+                  )
+                }
+                2 -> {
+                  Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (res.headers.isEmpty()) {
+                      Text("(no response headers)", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+                    } else {
+                      res.headers.forEach { (k, v) ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                          Text("$k:", style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold), color = palette.activePillFg)
+                          SmartDraggableText(
+                            text = v,
+                            surfaceId = "api_res_header_$k",
+                            domain = SmartTextDomain.TERMINAL_OR_LOG,
+                            style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
+                            color = palette.textPrimary,
+                            onCopied = { onNotifyStatus("Copied header value") },
+                          )
                         }
                       }
                     }
                   }
-                  else -> {
-                    val previewText =
-                      remember(res.body, res.errorMessage) {
-                        res.errorMessage ?: ApiRequestUtils.prettyPrintIfJson(res.body)
-                      }
-                    Text(
-                      text = previewText.ifBlank { "(no preview content)" },
-                      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
-                      color = if (res.errorMessage != null) RoseError else palette.textPrimary,
-                    )
-                  }
+                }
+                else -> {
+                  val previewText =
+                    remember(res.body, res.errorMessage) {
+                      res.errorMessage ?: ApiRequestUtils.prettyPrintIfJson(res.body)
+                    }
+                  SmartDraggableText(
+                    text = previewText.ifBlank { "(no preview content)" },
+                    surfaceId = "api_res_preview",
+                    domain = SmartTextDomain.TERMINAL_OR_LOG,
+                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
+                    color = if (res.errorMessage != null) RoseError else palette.textPrimary,
+                    onCopied = { onNotifyStatus("Copied preview snippet") },
+                  )
                 }
               }
             }
@@ -1211,7 +1242,16 @@ private fun ApiAuthEditor(
         onValueChange = { tok -> onUpdateRequest { it.copy(bearerToken = tok) } },
         label = { Text("Bearer Token (supports {{apiToken}})") },
         singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .edgeTextDropTarget(
+              targetSurfaceId = "Bearer Token",
+              currentValue = req.bearerToken,
+              onValueChange = { tok -> onUpdateRequest { it.copy(bearerToken = tok) } },
+              singleLine = true,
+              replaceAll = true,
+            ),
       )
     ApiAuthType.BASIC ->
       Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1220,14 +1260,32 @@ private fun ApiAuthEditor(
           onValueChange = { u -> onUpdateRequest { it.copy(basicUser = u) } },
           label = { Text("Username") },
           singleLine = true,
-          modifier = Modifier.weight(1f),
+          modifier =
+            Modifier
+              .weight(1f)
+              .edgeTextDropTarget(
+                targetSurfaceId = "Basic User",
+                currentValue = req.basicUser,
+                onValueChange = { u -> onUpdateRequest { it.copy(basicUser = u) } },
+                singleLine = true,
+                replaceAll = true,
+              ),
         )
         OutlinedTextField(
           value = req.basicPass,
           onValueChange = { p -> onUpdateRequest { it.copy(basicPass = p) } },
           label = { Text("Password") },
           singleLine = true,
-          modifier = Modifier.weight(1f),
+          modifier =
+            Modifier
+              .weight(1f)
+              .edgeTextDropTarget(
+                targetSurfaceId = "Basic Pass",
+                currentValue = req.basicPass,
+                onValueChange = { p -> onUpdateRequest { it.copy(basicPass = p) } },
+                singleLine = true,
+                replaceAll = true,
+              ),
         )
       }
     ApiAuthType.API_KEY ->
@@ -1237,14 +1295,32 @@ private fun ApiAuthEditor(
           onValueChange = { k -> onUpdateRequest { it.copy(apiKeyName = k) } },
           label = { Text("Header Name") },
           singleLine = true,
-          modifier = Modifier.weight(1f),
+          modifier =
+            Modifier
+              .weight(1f)
+              .edgeTextDropTarget(
+                targetSurfaceId = "API Key Header",
+                currentValue = req.apiKeyName,
+                onValueChange = { k -> onUpdateRequest { it.copy(apiKeyName = k) } },
+                singleLine = true,
+                replaceAll = true,
+              ),
         )
         OutlinedTextField(
           value = req.apiKeyValue,
           onValueChange = { v -> onUpdateRequest { it.copy(apiKeyValue = v) } },
           label = { Text("Key Value") },
           singleLine = true,
-          modifier = Modifier.weight(1.2f),
+          modifier =
+            Modifier
+              .weight(1.2f)
+              .edgeTextDropTarget(
+                targetSurfaceId = "API Key Value",
+                currentValue = req.apiKeyValue,
+                onValueChange = { v -> onUpdateRequest { it.copy(apiKeyValue = v) } },
+                singleLine = true,
+                replaceAll = true,
+              ),
         )
       }
   }
@@ -1289,7 +1365,16 @@ private fun ApiBodyEditor(
         label = { Text(if (req.bodyType == ApiBodyType.JSON) "JSON Payload" else "Raw Text Body") },
         maxLines = 8,
         textStyle = TextStyle(fontFamily = JetBrainsMono, fontSize = 12.sp),
-        modifier = Modifier.fillMaxWidth().testTag("api_body_input"),
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .edgeTextDropTarget(
+              targetSurfaceId = "API Body",
+              currentValue = req.rawBody,
+              onValueChange = { body -> onUpdateRequest { it.copy(rawBody = body) } },
+              singleLine = false,
+            )
+            .testTag("api_body_input"),
       )
       if (req.bodyType == ApiBodyType.JSON) {
         TextButton(onClick = { onUpdateRequest { it.copy(rawBody = ApiRequestUtils.prettyPrintIfJson(it.rawBody)) } }) {
@@ -1318,14 +1403,31 @@ private fun KeyValueRowsEditor(
         onValueChange = { k -> onRowsChange(rows.mapIndexed { i, r -> if (i == idx) r.copy(key = k) else r }) },
         placeholder = { Text(keyPlaceholder) },
         singleLine = true,
-        modifier = Modifier.weight(1f),
+        modifier =
+          Modifier
+            .weight(1f)
+            .edgeTextDropTarget(
+              targetSurfaceId = "Row Key",
+              currentValue = row.key,
+              onValueChange = { k -> onRowsChange(rows.mapIndexed { i, r -> if (i == idx) r.copy(key = k) else r }) },
+              singleLine = true,
+              replaceAll = true,
+            ),
       )
       OutlinedTextField(
         value = row.value,
         onValueChange = { v -> onRowsChange(rows.mapIndexed { i, r -> if (i == idx) r.copy(value = v) else r }) },
         placeholder = { Text(valuePlaceholder) },
         singleLine = true,
-        modifier = Modifier.weight(1.2f),
+        modifier =
+          Modifier
+            .weight(1.2f)
+            .edgeTextDropTarget(
+              targetSurfaceId = "Row Value",
+              currentValue = row.value,
+              onValueChange = { v -> onRowsChange(rows.mapIndexed { i, r -> if (i == idx) r.copy(value = v) else r }) },
+              singleLine = true,
+            ),
       )
       IconButton(
         onClick = { onRowsChange(rows.filterIndexed { i, _ -> i != idx }) },

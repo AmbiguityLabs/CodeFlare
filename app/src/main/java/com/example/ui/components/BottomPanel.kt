@@ -59,6 +59,8 @@ import com.example.data.remote.ApiEnvVar
 import com.example.data.remote.ApiImportResult
 import com.example.data.remote.ApiTesterRequest
 import com.example.data.remote.DiagnosticSeverity
+import com.example.editor.drag.SmartDraggableText
+import com.example.editor.selection.SmartTextDomain
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
@@ -275,11 +277,11 @@ fun BottomPanel(
             modifier = Modifier.weight(1f),
           )
         BottomPanelTab.PROBLEMS ->
-          ProblemsView(uiState = uiState, onJumpToProblem = onJumpToProblem)
+          ProblemsView(uiState = uiState, onJumpToProblem = onJumpToProblem, onNotifyStatus = onNotifyStatus)
         BottomPanelTab.TAIL_LOGS ->
-          LiveTailView(uiState = uiState, onToggleLiveTail = onToggleLiveTail)
+          LiveTailView(uiState = uiState, onToggleLiveTail = onToggleLiveTail, onNotifyStatus = onNotifyStatus)
         BottomPanelTab.CONSOLE ->
-          ConsoleView(uiState = uiState)
+          ConsoleView(uiState = uiState, onNotifyStatus = onNotifyStatus)
       }
     }
   }
@@ -289,6 +291,7 @@ fun BottomPanel(
 fun ProblemsView(
   uiState: IdeUiState,
   onJumpToProblem: (String, Int) -> Unit,
+  onNotifyStatus: (String) -> Unit = {},
 ) {
   if (uiState.diagnostics.isEmpty()) {
     var showInfo by remember { mutableStateOf(false) }
@@ -342,11 +345,21 @@ fun ProblemsView(
           }
           Spacer(Modifier.width(8.dp))
           Column(modifier = Modifier.weight(1f)) {
-            Text(diag.message, style = MaterialTheme.typography.bodySmall)
-            Text(
-              "${diag.filePath} • Ln ${diag.line}, Col ${diag.column}",
+            SmartDraggableText(
+              text = diag.message,
+              surfaceId = "problem_msg_${diag.filePath}_${diag.line}",
+              domain = SmartTextDomain.TERMINAL_OR_LOG,
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurface,
+              onCopied = { onNotifyStatus("Copied diagnostic") },
+            )
+            SmartDraggableText(
+              text = "${diag.filePath} • Ln ${diag.line}, Col ${diag.column}",
+              surfaceId = "problem_loc_${diag.filePath}_${diag.line}",
+              domain = SmartTextDomain.TERMINAL_OR_LOG,
               style = MaterialTheme.typography.labelSmall,
               color = MaterialTheme.colorScheme.onSurfaceVariant,
+              onCopied = { onNotifyStatus("Copied location") },
             )
           }
         }
@@ -356,7 +369,10 @@ fun ProblemsView(
 }
 
 @Composable
-fun ConsoleView(uiState: IdeUiState) {
+fun ConsoleView(
+  uiState: IdeUiState,
+  onNotifyStatus: (String) -> Unit = {},
+) {
   LazyColumn(
     modifier = Modifier.fillMaxSize().padding(10.dp),
     verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -377,11 +393,15 @@ fun ConsoleView(uiState: IdeUiState) {
           fontWeight = FontWeight.Bold,
           color = if (log.level == "ERROR") RoseError else MaterialTheme.colorScheme.primary,
         )
-        Text(
-          log.message,
+        SmartDraggableText(
+          text = log.message,
+          surfaceId = "ide_console_${log.timestamp}_${log.message.hashCode()}",
+          domain = SmartTextDomain.TERMINAL_OR_LOG,
           style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurface,
           maxLines = 2,
           overflow = TextOverflow.Ellipsis,
+          onCopied = { onNotifyStatus("Copied log snippet") },
           modifier = Modifier.weight(1f),
         )
       }
@@ -393,6 +413,7 @@ fun ConsoleView(uiState: IdeUiState) {
 fun LiveTailView(
   uiState: IdeUiState,
   onToggleLiveTail: () -> Unit,
+  onNotifyStatus: (String) -> Unit = {},
 ) {
   Column(
     modifier = Modifier.fillMaxSize().padding(10.dp),
@@ -488,10 +509,13 @@ fun LiveTailView(
               style = MaterialTheme.typography.labelSmall,
               color = EmeraldLive,
             )
-            Text(
+            SmartDraggableText(
               text = event.message,
+              surfaceId = "live_tail_${event.timestamp}_${event.message.hashCode()}",
+              domain = SmartTextDomain.TERMINAL_OR_LOG,
               style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMono),
               color = MaterialTheme.colorScheme.onSurface,
+              onCopied = { onNotifyStatus("Copied tail event") },
             )
           }
         }

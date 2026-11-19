@@ -36,9 +36,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.ContentPaste
+import androidx.compose.material.icons.outlined.DragIndicator
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.OpenWith
+import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -88,9 +93,11 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.editor.CodeSymbol
+import com.example.editor.drag.DragTransferMode
 import com.example.editor.engine.ClipboardHistoryStore
 import com.example.editor.engine.EdgeEditorSession
 import com.example.editor.engine.LineChange
+import com.example.editor.selection.SelectionScope
 import com.example.idecore.completion.EdgeCompletionItem
 import com.example.idecore.completion.EdgeCompletionKind
 import com.example.ui.theme.AmberWarn
@@ -570,7 +577,70 @@ fun BoxScope.EdgeDiffHunkPreviewCard(
   }
 }
 
-// ---- 6. Frosted Floating Selection Action Toolbar ----
+// ---- 6. Frosted Floating Selection Action Toolbar + Live Hold Scope Pill ----
+
+@Composable
+fun BoxScope.EdgeSmartHoldScopePill(
+  scope: SelectionScope?,
+  anchorY: Float,
+  dragHintVisible: Boolean,
+  showScopeBadge: Boolean = true,
+) {
+  if (!showScopeBadge) return
+  val palette = LocalIdePalette.current
+  val density = LocalDensity.current
+  val topOffsetPx =
+    with(density) {
+      val desired = anchorY - 46.dp.toPx()
+      if (desired < 8.dp.toPx()) (anchorY + 36.dp.toPx()).roundToInt() else desired.roundToInt()
+    }
+
+  AnimatedVisibility(
+    visible = scope != null,
+    enter = fadeIn(tween(90)) + scaleIn(tween(110), initialScale = 0.9f),
+    exit = fadeOut(tween(80)),
+    modifier =
+      Modifier
+        .align(Alignment.TopCenter)
+        .offset { IntOffset(0, topOffsetPx.coerceAtLeast(8)) },
+  ) {
+    val active = scope ?: return@AnimatedVisibility
+    Surface(
+      color = palette.glassElevated.copy(alpha = 0.96f),
+      shape = RoundedCornerShape(999.dp),
+      border = BorderStroke(0.75.dp, palette.ctaBg.copy(alpha = 0.55f)),
+      shadowElevation = 5.dp,
+      modifier = Modifier.testTag("editor_hold_scope_pill"),
+    ) {
+      Row(
+        modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        Text(
+          text = active.label,
+          fontFamily = JetBrainsMono,
+          fontSize = 10.5.sp,
+          fontWeight = FontWeight.Bold,
+          color = palette.activePillFg,
+        )
+        Text(
+          text = "${active.length}ch",
+          fontFamily = JetBrainsMono,
+          fontSize = 9.5.sp,
+          color = palette.textMuted,
+        )
+        if (dragHintVisible) {
+          Text(
+            text = "· Slide to drag",
+            fontSize = 10.sp,
+            color = palette.textSecondary,
+          )
+        }
+      }
+    }
+  }
+}
 
 @Composable
 fun BoxScope.EdgeSelectionToolbar(
@@ -578,6 +648,20 @@ fun BoxScope.EdgeSelectionToolbar(
   anchorY: Float,
   readOnly: Boolean,
   hasClipboardHistory: Boolean,
+  scopeLabel: String? = null,
+  canExpandScope: Boolean = false,
+  canShrinkScope: Boolean = false,
+  dragMode: DragTransferMode = DragTransferMode.MOVE,
+  showScopeBadge: Boolean = true,
+  showExpandShrink: Boolean = true,
+  showDragGrip: Boolean = true,
+  showModeToggle: Boolean = true,
+  showQuickActions: Boolean = true,
+  showCodeActions: Boolean = true,
+  onExpandScope: () -> Unit = {},
+  onShrinkScope: () -> Unit = {},
+  onToggleDragMode: () -> Unit = {},
+  onStartToolbarDrag: () -> Unit = {},
   onCopy: () -> Unit,
   onCut: () -> Unit,
   onPaste: () -> Unit,
@@ -590,12 +674,20 @@ fun BoxScope.EdgeSelectionToolbar(
   val density = LocalDensity.current
   val topOffsetPx =
     with(density) {
-      val desired = anchorY - 52.dp.toPx()
-      if (desired < 8.dp.toPx()) (anchorY + 32.dp.toPx()).roundToInt() else desired.roundToInt()
+      val desired = anchorY - 54.dp.toPx()
+      if (desired < 8.dp.toPx()) (anchorY + 34.dp.toPx()).roundToInt() else desired.roundToInt()
     }
 
+  val hasAnyControl =
+    (showScopeBadge && !scopeLabel.isNullOrBlank()) ||
+      (showExpandShrink && (canExpandScope || canShrinkScope)) ||
+      showDragGrip ||
+      (showModeToggle && !readOnly) ||
+      showQuickActions ||
+      (showCodeActions && !readOnly)
+
   AnimatedVisibility(
-    visible = visible,
+    visible = visible && hasAnyControl,
     enter = fadeIn(tween(100)) + scaleIn(tween(100), initialScale = 0.94f),
     exit = fadeOut(tween(80)),
     modifier =
@@ -615,20 +707,142 @@ fun BoxScope.EdgeSelectionToolbar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp),
       ) {
-        ToolbarPillButton("Copy", onCopy, "sel_copy")
-        if (!readOnly) ToolbarPillButton("Cut", onCut, "sel_cut")
-        if (!readOnly) ToolbarPillButton("Paste", onPaste, "sel_paste")
-        if (!readOnly && hasClipboardHistory) {
-          IconButton(
-            onClick = onOpenPasteHistory,
-            modifier = Modifier.size(30.dp).testTag("sel_paste_history"),
+        // Instant Drag Grip: touch-drag or press directly starts Android Drag & Drop
+        if (showDragGrip) {
+          Box(
+            modifier =
+              Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(palette.activePillBg.copy(alpha = 0.65f))
+                .pointerInput(onStartToolbarDrag) {
+                  awaitEachGesture {
+                    val down = awaitPointerEvent(PointerEventPass.Main).changes.firstOrNull { it.pressed } ?: return@awaitEachGesture
+                    down.consume()
+                    onStartToolbarDrag()
+                  }
+                }
+                .padding(horizontal = 7.dp, vertical = 6.dp)
+                .testTag("sel_drag_grip"),
+            contentAlignment = Alignment.Center,
           ) {
-            Icon(Icons.Outlined.History, contentDescription = "Paste History", tint = palette.activePillFg, modifier = Modifier.size(15.dp))
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+              Icon(
+                imageVector = Icons.Outlined.DragIndicator,
+                contentDescription = "Drag selected text",
+                tint = palette.activePillFg,
+                modifier = Modifier.size(15.dp),
+              )
+              Text(
+                text = "Drag",
+                fontSize = 10.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = palette.activePillFg,
+              )
+            }
           }
         }
-        ToolbarPillButton("All", onSelectAll, "sel_all")
-        if (!readOnly) ToolbarPillButton("//", onComment, "sel_comment")
-        if (!readOnly) ToolbarPillButton("Rename", onRename, "sel_rename")
+
+        // Smart Scope Badge + Expand / Shrink ladder steppers
+        if (showScopeBadge && !scopeLabel.isNullOrBlank()) {
+          Box(
+            modifier =
+              Modifier
+                .clip(RoundedCornerShape(7.dp))
+                .background(palette.editorBg.copy(alpha = 0.72f))
+                .padding(horizontal = 7.dp, vertical = 4.dp)
+                .testTag("sel_scope_badge"),
+          ) {
+            Text(
+              text = scopeLabel,
+              fontFamily = JetBrainsMono,
+              fontSize = 10.sp,
+              fontWeight = FontWeight.Bold,
+              color = palette.activePillFg,
+            )
+          }
+        }
+
+        if (showExpandShrink && (canExpandScope || canShrinkScope)) {
+          IconButton(
+            onClick = onShrinkScope,
+            enabled = canShrinkScope,
+            modifier = Modifier.size(30.dp).testTag("sel_shrink_scope"),
+          ) {
+            Icon(
+              imageVector = Icons.Outlined.Remove,
+              contentDescription = "Shrink selection scope",
+              tint = if (canShrinkScope) palette.textPrimary else palette.textMuted.copy(alpha = 0.35f),
+              modifier = Modifier.size(16.dp),
+            )
+          }
+          IconButton(
+            onClick = onExpandScope,
+            enabled = canExpandScope,
+            modifier = Modifier.size(30.dp).testTag("sel_expand_scope"),
+          ) {
+            Icon(
+              imageVector = Icons.Outlined.Add,
+              contentDescription = "Expand selection scope",
+              tint = if (canExpandScope) palette.activePillFg else palette.textMuted.copy(alpha = 0.35f),
+              modifier = Modifier.size(16.dp),
+            )
+          }
+        }
+
+        // Move / Copy mode toggle chip
+        if (showModeToggle && !readOnly) {
+          val isMove = dragMode == DragTransferMode.MOVE
+          val modeTint = if (isMove) palette.ctaBg else EmeraldLive
+          Surface(
+            onClick = onToggleDragMode,
+            shape = RoundedCornerShape(8.dp),
+            color = modeTint.copy(alpha = 0.14f),
+            modifier = Modifier.testTag("sel_drag_mode_toggle"),
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+              Icon(
+                imageVector = if (isMove) Icons.Outlined.OpenWith else Icons.Outlined.ContentCopy,
+                contentDescription = if (isMove) "Drag mode: Move" else "Drag mode: Copy",
+                tint = modeTint,
+                modifier = Modifier.size(13.dp),
+              )
+              Text(
+                text = if (isMove) "Move" else "Copy",
+                fontFamily = JetBrainsMono,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = modeTint,
+              )
+            }
+          }
+        }
+
+        if (showQuickActions) {
+          ToolbarPillButton("Copy", onCopy, "sel_copy")
+          if (!readOnly) ToolbarPillButton("Cut", onCut, "sel_cut")
+          if (!readOnly) ToolbarPillButton("Paste", onPaste, "sel_paste")
+          if (!readOnly && hasClipboardHistory) {
+            IconButton(
+              onClick = onOpenPasteHistory,
+              modifier = Modifier.size(30.dp).testTag("sel_paste_history"),
+            ) {
+              Icon(Icons.Outlined.History, contentDescription = "Paste History", tint = palette.activePillFg, modifier = Modifier.size(15.dp))
+            }
+          }
+          ToolbarPillButton("All", onSelectAll, "sel_all")
+        }
+
+        if (showCodeActions && !readOnly) {
+          ToolbarPillButton("//", onComment, "sel_comment")
+          ToolbarPillButton("Rename", onRename, "sel_rename")
+        }
       }
     }
   }

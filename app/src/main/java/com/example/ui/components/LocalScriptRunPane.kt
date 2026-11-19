@@ -25,7 +25,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Code
@@ -62,6 +61,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.editor.LocalWorkspacePreviewRenderer
+import com.example.editor.drag.SmartDraggableText
+import com.example.editor.drag.edgeTextDropTarget
+import com.example.editor.selection.SmartTextDomain
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
@@ -150,15 +152,24 @@ fun LocalScriptRunPane(
         }
       }
 
+      val pathShape = RoundedCornerShape(if (isV2) 12.dp else 8.dp)
       Box(
         modifier =
           Modifier
             .weight(1f)
             .height(36.dp)
-            .clip(RoundedCornerShape(if (isV2) 12.dp else 8.dp))
+            .clip(pathShape)
             .background(palette.editorBg)
             .then(
-              if (isV2) Modifier else Modifier.border(0.75.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(8.dp)),
+              if (isV2) Modifier else Modifier.border(0.75.dp, palette.border.copy(alpha = 0.6f), pathShape),
+            )
+            .edgeTextDropTarget(
+              targetSurfaceId = "CLI Path",
+              currentValue = uiState.localRunUrlPath,
+              onValueChange = onPathChange,
+              singleLine = true,
+              shape = pathShape,
+              onDropFeedback = onNotifyStatus,
             )
             .padding(horizontal = 10.dp),
         contentAlignment = Alignment.CenterStart,
@@ -202,6 +213,7 @@ fun LocalScriptRunPane(
     }
 
     AnimatedVisibility(visible = showBodyEditor) {
+      val bodyShape = RoundedCornerShape(if (isV2) 16.dp else 10.dp)
       OutlinedTextField(
         value = uiState.localRunBody,
         onValueChange = onBodyChange,
@@ -209,8 +221,19 @@ fun LocalScriptRunPane(
         textStyle = TextStyle(fontFamily = JetBrainsMono, fontSize = 12.sp),
         minLines = 3,
         maxLines = 6,
-        shape = RoundedCornerShape(if (isV2) 16.dp else 10.dp),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+        shape = bodyShape,
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .edgeTextDropTarget(
+              targetSurfaceId = "CLI Body",
+              currentValue = uiState.localRunBody,
+              onValueChange = onBodyChange,
+              singleLine = false,
+              shape = bodyShape,
+              onDropFeedback = onNotifyStatus,
+            ),
       )
     }
 
@@ -318,14 +341,16 @@ fun LocalScriptRunPane(
       when (resultViewTab) {
         0 -> {
           if (result.errorMessage != null) {
-            SelectionContainer(
+            Box(
               modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp),
             ) {
-              Text(
+              SmartDraggableText(
                 text = result.errorMessage,
-                fontFamily = JetBrainsMono,
-                fontSize = 12.sp,
+                surfaceId = "cli_error_output",
+                domain = SmartTextDomain.TERMINAL_OR_LOG,
+                style = TextStyle(fontFamily = JetBrainsMono, fontSize = 12.sp, lineHeight = 18.sp),
                 color = RoseError,
+                onCopied = { onNotifyStatus("Copied error snippet") },
               )
             }
           } else if (result.isHtmlBody) {
@@ -348,7 +373,15 @@ fun LocalScriptRunPane(
               modifier = Modifier.fillMaxSize(),
             )
           } else {
-            SelectionContainer(
+            val displayText = result.body.ifEmpty { "(empty)" }
+            val trimmedBody = displayText.trimStart()
+            val domain =
+              if (trimmedBody.startsWith("{") || trimmedBody.startsWith("[")) {
+                SmartTextDomain.JSON
+              } else {
+                SmartTextDomain.TERMINAL_OR_LOG
+              }
+            Box(
               modifier =
                 Modifier
                   .fillMaxSize()
@@ -356,12 +389,13 @@ fun LocalScriptRunPane(
                   .horizontalScroll(rememberScrollState())
                   .padding(14.dp),
             ) {
-              Text(
-                text = result.body.ifEmpty { "(empty)" },
-                fontFamily = JetBrainsMono,
-                fontSize = 12.sp,
-                lineHeight = 18.sp,
+              SmartDraggableText(
+                text = displayText,
+                surfaceId = "cli_body_output",
+                domain = domain,
+                style = TextStyle(fontFamily = JetBrainsMono, fontSize = 12.sp, lineHeight = 18.sp),
                 color = palette.textPrimary,
+                onCopied = { onNotifyStatus("Copied output snippet") },
               )
             }
           }
@@ -391,7 +425,15 @@ fun LocalScriptRunPane(
                 ) {
                   Text(log.timestamp, fontFamily = JetBrainsMono, fontSize = 10.sp, color = palette.textMuted)
                   Text(log.level, fontFamily = JetBrainsMono, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = tone)
-                  Text(log.message, fontFamily = JetBrainsMono, fontSize = 11.5.sp, color = palette.textPrimary, modifier = Modifier.weight(1f))
+                  SmartDraggableText(
+                    text = log.message,
+                    surfaceId = "cli_log_${log.timestamp}_${log.message.hashCode()}",
+                    domain = SmartTextDomain.TERMINAL_OR_LOG,
+                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
+                    color = palette.textPrimary,
+                    onCopied = { onNotifyStatus("Copied log snippet") },
+                    modifier = Modifier.weight(1f),
+                  )
                 }
               }
             }
@@ -414,7 +456,15 @@ fun LocalScriptRunPane(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
               ) {
                 Text(k, fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = palette.activePillFg)
-                Text(v, fontFamily = JetBrainsMono, fontSize = 11.sp, color = palette.textSecondary, modifier = Modifier.weight(1f))
+                SmartDraggableText(
+                  text = v,
+                  surfaceId = "cli_header_$k",
+                  domain = SmartTextDomain.TERMINAL_OR_LOG,
+                  style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
+                  color = palette.textSecondary,
+                  onCopied = { onNotifyStatus("Copied header value") },
+                  modifier = Modifier.weight(1f),
+                )
               }
             }
           }

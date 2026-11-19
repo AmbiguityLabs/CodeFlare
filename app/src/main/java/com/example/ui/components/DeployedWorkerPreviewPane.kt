@@ -73,6 +73,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import com.example.editor.drag.SmartDraggableText
+import com.example.editor.drag.edgeTextDropTarget
+import com.example.editor.selection.SmartTextDomain
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -311,6 +314,14 @@ fun DeployedWorkerPreviewPane(
               .clip(RoundedCornerShape(8.dp))
               .background(palette.editorBg)
               .border(1.dp, palette.border.copy(alpha = 0.65f), RoundedCornerShape(8.dp))
+              .edgeTextDropTarget(
+                targetSurfaceId = "Preview URL",
+                currentValue = uiState.previewUrl,
+                onValueChange = onUrlChange,
+                singleLine = true,
+                shape = RoundedCornerShape(8.dp),
+                onDropFeedback = onNotifyStatus,
+              )
               .padding(horizontal = 10.dp),
           contentAlignment = Alignment.CenterStart,
         ) {
@@ -758,8 +769,10 @@ private fun PreviewConsoleRow(
         modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
       )
     }
-    Text(
+    SmartDraggableText(
       text = entry.message,
+      surfaceId = "preview_console_${entry.timestamp}_${entry.message.hashCode()}",
+      domain = SmartTextDomain.TERMINAL_OR_LOG,
       style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
       color = palette.textSecondary,
       maxLines = 1,

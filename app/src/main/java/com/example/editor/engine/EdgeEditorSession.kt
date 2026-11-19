@@ -35,15 +35,30 @@ data class ExtractedTextSnapshot(
   val partialEndOffset: Int,
 )
 
-private data class UndoEntry(
-  val start: Int,
-  val removedText: String,
-  val insertedText: String,
-  val selectionBefore: TextRange,
-  val selectionAfter: TextRange,
-  val timestampMs: Long,
-  val kind: EditKind,
-)
+private sealed interface UndoRecord {
+  data class SingleEdit(
+    val start: Int,
+    val removedText: String,
+    val insertedText: String,
+    val selectionBefore: TextRange,
+    val selectionAfter: TextRange,
+    val timestampMs: Long,
+    val kind: EditKind,
+  ) : UndoRecord
+
+  /**
+   * Atomic same-document move recorded in O(movedText.length) memory.
+   * Forward removes [srcStart, srcStart + movedText.length) then inserts [movedText] at [adjustedDst].
+   * Undo removes [adjustedDst, adjustedDst + movedText.length) then inserts [movedText] back at [srcStart].
+   */
+  data class MoveEdit(
+    val srcStart: Int,
+    val movedText: String,
+    val adjustedDst: Int,
+    val selectionBefore: TextRange,
+    val selectionAfter: TextRange,
+  ) : UndoRecord
+}
 
 private enum class EditKind {
   INSERT,
@@ -111,8 +126,8 @@ class EdgeEditorSession(
   var onSpliceStyles: ((doc: EditorDocument, startLine: Int, oldEndLine: Int, lineDelta: Int) -> Unit)? = null
   var onUserEdit: (() -> Unit)? = null
 
-  private val undoStack = ArrayDeque<UndoEntry>()
-  private val redoStack = ArrayDeque<UndoEntry>()
+  private val undoStack = ArrayDeque<UndoRecord>()
+  private val redoStack = ArrayDeque<UndoRecord>()
   private var batchDepth = 0
   private var batchHadTextChange = false
   private var batchHadStateChange = false
@@ -421,6 +436,72 @@ class EdgeEditorSession(
     applyEdit(s, e, normalized, TextRange(caret.coerceIn(0, doc.length - (e - s) + normalized.length)), EditKind.ATOMIC, resyncIme = true)
   }
 
+  /**
+   * Inserts [text] at [offset] as a single atomic undo step, auto-unfolding the target line.
+   * Returns true if any non-empty text was inserted.
+   */
+  fun insertAt(offset: Int, text: String, selectInserted: Boolean = true): Boolean {
+    if (readOnly || text.isEmpty()) return false
+    val normalized = EditorDocument.normalizeNewlines(text)
+    if (normalized.isEmpty()) return false
+    val pos = offset.coerceIn(0, doc.length)
+    ensureLineUnfolded(doc.lineForOffset(pos))
+    val nextSel =
+      if (selectInserted) TextRange(pos, pos + normalized.length)
+      else TextRange(pos + normalized.length)
+    applyEdit(pos, pos, normalized, nextSel, EditKind.ATOMIC, resyncIme = true)
+    return true
+  }
+
+  /**
+   * Atomically moves `[sourceStart, sourceEnd)` to [destinationOffset] within the same document
+   * as ONE compound undo/redo step.
+   *
+   * - Dropping inside or directly touching `[sourceStart, sourceEnd]` is a clean no-op (returns false).
+   * - Automatically adjusts destination offset when moving forward past [sourceEnd].
+   * - Unfolds target line if folded so moved text is immediately visible.
+   */
+  fun moveRange(sourceStart: Int, sourceEnd: Int, destinationOffset: Int): Boolean {
+    if (readOnly) return false
+    val s = sourceStart.coerceIn(0, doc.length)
+    val e = sourceEnd.coerceIn(s, doc.length)
+    val movedLen = e - s
+    if (movedLen <= 0) return false
+    val rawDst = destinationOffset.coerceIn(0, doc.length)
+    if (rawDst in s..e) return false
+
+    val movedText = doc.substring(s, e)
+    val adjustedDst = if (rawDst > e) rawDst - movedLen else rawDst
+    val selBefore = selection
+    val selAfter = TextRange(adjustedDst, adjustedDst + movedLen)
+
+    ensureLineUnfolded(doc.lineForOffset(rawDst))
+    ensureLineUnfolded(doc.lineForOffset(s))
+
+    undoStack.addLast(
+      UndoRecord.MoveEdit(
+        srcStart = s,
+        movedText = movedText,
+        adjustedDst = adjustedDst,
+        selectionBefore = selBefore,
+        selectionAfter = selAfter,
+      ),
+    )
+    while (undoStack.size > MAX_UNDO_ENTRIES) {
+      undoStack.removeFirst()
+    }
+    redoStack.clear()
+    lastEditTimeMs = System.currentTimeMillis()
+
+    applyRawMove(
+      removeAt = s,
+      insertAt = adjustedDst,
+      movedText = movedText,
+      nextSelection = selAfter,
+    )
+    return true
+  }
+
   fun backspace(resyncIme: Boolean = false) {
     if (readOnly) return
     if (!selection.collapsed) {
@@ -530,13 +611,23 @@ class EdgeEditorSession(
     if (readOnly || undoStack.isEmpty()) return false
     val entry = undoStack.removeLast()
     redoStack.addLast(entry)
-    applyRawEdit(
-      start = entry.start,
-      end = entry.start + entry.insertedText.length,
-      replacement = entry.removedText,
-      nextSelection = entry.selectionBefore,
-      resyncIme = true,
-    )
+    when (entry) {
+      is UndoRecord.SingleEdit ->
+        applyRawEdit(
+          start = entry.start,
+          end = entry.start + entry.insertedText.length,
+          replacement = entry.removedText,
+          nextSelection = entry.selectionBefore,
+          resyncIme = true,
+        )
+      is UndoRecord.MoveEdit ->
+        applyRawMove(
+          removeAt = entry.adjustedDst,
+          insertAt = entry.srcStart,
+          movedText = entry.movedText,
+          nextSelection = entry.selectionBefore,
+        )
+    }
     return true
   }
 
@@ -544,14 +635,56 @@ class EdgeEditorSession(
     if (readOnly || redoStack.isEmpty()) return false
     val entry = redoStack.removeLast()
     undoStack.addLast(entry)
-    applyRawEdit(
-      start = entry.start,
-      end = entry.start + entry.removedText.length,
-      replacement = entry.insertedText,
-      nextSelection = entry.selectionAfter,
-      resyncIme = true,
-    )
+    when (entry) {
+      is UndoRecord.SingleEdit ->
+        applyRawEdit(
+          start = entry.start,
+          end = entry.start + entry.removedText.length,
+          replacement = entry.insertedText,
+          nextSelection = entry.selectionAfter,
+          resyncIme = true,
+        )
+      is UndoRecord.MoveEdit ->
+        applyRawMove(
+          removeAt = entry.srcStart,
+          insertAt = entry.adjustedDst,
+          movedText = entry.movedText,
+          nextSelection = entry.selectionAfter,
+        )
+    }
     return true
+  }
+
+  private fun applyRawMove(
+    removeAt: Int,
+    insertAt: Int,
+    movedText: String,
+    nextSelection: TextRange,
+  ) {
+    val len = movedText.length
+    beginBatch()
+    try {
+      val remStart = removeAt.coerceIn(0, doc.length)
+      val remEnd = (remStart + len).coerceIn(remStart, doc.length)
+      applyRawEdit(
+        start = remStart,
+        end = remEnd,
+        replacement = "",
+        nextSelection = TextRange(remStart),
+        resyncIme = false,
+      )
+      val insPos = insertAt.coerceIn(0, doc.length)
+      ensureLineUnfolded(doc.lineForOffset(insPos))
+      applyRawEdit(
+        start = insPos,
+        end = insPos,
+        replacement = movedText,
+        nextSelection = nextSelection,
+        resyncIme = true,
+      )
+    } finally {
+      endBatch()
+    }
   }
 
   // ---- Android IME Bridge Methods ----
@@ -928,7 +1061,7 @@ class EdgeEditorSession(
     nowMs: Long,
     kind: EditKind,
   ) {
-    val prev = undoStack.lastOrNull()
+    val prev = undoStack.lastOrNull() as? UndoRecord.SingleEdit
     val withinWindow = nowMs - lastEditTimeMs <= UNDO_COALESCE_MS
     lastEditTimeMs = nowMs
 
@@ -970,7 +1103,7 @@ class EdgeEditorSession(
       }
     }
 
-    undoStack.addLast(UndoEntry(start, removed, inserted, selBefore, selAfter, nowMs, kind))
+    undoStack.addLast(UndoRecord.SingleEdit(start, removed, inserted, selBefore, selAfter, nowMs, kind))
     while (undoStack.size > MAX_UNDO_ENTRIES) {
       undoStack.removeFirst()
     }
