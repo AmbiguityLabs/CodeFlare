@@ -399,7 +399,7 @@ fun SmartDraggableText(
       val aboveLocalY = selTopY - estPopH - gapPx
       val belowLocalY = selBottomY + gapPx
       val maxScreenY = (screenHeightPx - estPopH - marginPx).coerceAtLeast(safeTopScreenY)
-      val localY =
+      val rawLocalY =
         if (containerPosInWindow.y + aboveLocalY >= safeTopScreenY) {
           aboveLocalY
         } else if (containerPosInWindow.y + belowLocalY <= maxScreenY) {
@@ -407,7 +407,8 @@ fun SmartDraggableText(
         } else {
           // Selection spans full viewport (e.g. Select All): anchor cleanly at top visible band
           (safeTopScreenY - containerPosInWindow.y).coerceAtLeast(0f)
-        }.roundToInt()
+        }
+      val localY = rawLocalY.roundToInt()
 
       val canShrinkNow = fullTextSelected || currentState.canShrink
       val canExpandNow = !fullTextSelected && currentState.canExpand
