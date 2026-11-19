@@ -5,6 +5,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -32,14 +33,20 @@ import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.BookmarkAdd
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.CloseFullscreen
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.FileOpen
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.OpenInFull
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
@@ -136,6 +143,10 @@ fun ApiTesterPane(
   // 0=Pretty, 1=Raw, 2=Headers, 3=Preview, 4=Assertions
   var responseSubTab by remember { mutableIntStateOf(0) }
   var wrapResponse by remember { mutableStateOf(true) }
+  var requestCardCollapsed by remember { mutableStateOf(false) }
+  var responseExpanded by remember { mutableStateOf(false) }
+  var showResponseSearch by remember { mutableStateOf(false) }
+  var responseSearchQuery by remember { mutableStateOf("") }
   var showSaveDialog by remember { mutableStateOf(false) }
   var showNewEnvDialog by remember { mutableStateOf(false) }
   var showImportDialog by remember { mutableStateOf(false) }
@@ -611,30 +622,52 @@ fun ApiTesterPane(
         "Saved (${uiState.apiCollections.size + uiState.apiHistory.size})",
       )
     Row(
-      modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-      horizontalArrangement = Arrangement.spacedBy(6.dp),
+      modifier = Modifier.fillMaxWidth(),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-      reqTabs.forEachIndexed { idx, label ->
-        val active = requestSubTab == idx
-        Surface(
-          onClick = { requestSubTab = idx },
-          shape = RoundedCornerShape(9.dp),
-          color = if (active) palette.activePillBg else palette.chromePill,
-          modifier = Modifier.minimumInteractiveComponentSize().testTag("api_req_tab_$idx"),
-        ) {
-          Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
-            Text(
-              text = label,
-              style = MaterialTheme.typography.labelSmall,
-              color = if (active) palette.activePillFg else palette.textSecondary,
-              fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-              maxLines = 1,
-            )
+      Row(
+        modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        reqTabs.forEachIndexed { idx, label ->
+          val active = requestSubTab == idx
+          Surface(
+            onClick = {
+              requestSubTab = idx
+              if (requestCardCollapsed) requestCardCollapsed = false
+            },
+            shape = RoundedCornerShape(9.dp),
+            color = if (active) palette.activePillBg else palette.chromePill,
+            modifier = Modifier.minimumInteractiveComponentSize().testTag("api_req_tab_$idx"),
+          ) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
+              Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (active) palette.activePillFg else palette.textSecondary,
+                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                maxLines = 1,
+                softWrap = false,
+              )
+            }
           }
         }
       }
+      IconButton(
+        onClick = { requestCardCollapsed = !requestCardCollapsed },
+        modifier = Modifier.size(30.dp).testTag("api_collapse_request"),
+      ) {
+        Icon(
+          imageVector = if (requestCardCollapsed) Icons.Outlined.ExpandMore else Icons.Outlined.ExpandLess,
+          contentDescription = if (requestCardCollapsed) "Expand request builder" else "Collapse request builder",
+          tint = palette.textSecondary,
+          modifier = Modifier.size(18.dp),
+        )
+      }
     }
 
+    AnimatedVisibility(visible = !requestCardCollapsed) {
     Surface(
       color = palette.chromeSurface,
       shape = RoundedCornerShape(10.dp),
@@ -833,6 +866,7 @@ fun ApiTesterPane(
         }
       }
     }
+    }
 
     // 4. Response Inspector + Automated Assertion Summary
     uiState.httpTestResult?.let { res ->
@@ -863,18 +897,20 @@ fun ApiTesterPane(
         modifier = Modifier.fillMaxWidth().testTag("api_response_card"),
       ) {
         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Surface(color = statusColor.copy(alpha = 0.16f), shape = RoundedCornerShape(999.dp)) {
               Text(
                 text = if (res.errorMessage != null && res.statusCode == 0) "ERR" else "${res.statusCode} ${res.statusText}",
                 style = MaterialTheme.typography.labelSmall,
                 color = statusColor,
                 fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                softWrap = false,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
               )
             }
-            Text("${res.durationMs} ms", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
-            Text("${res.body.toByteArray().size} B", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+            Text("${res.durationMs} ms", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary, maxLines = 1, softWrap = false)
+            Text("${res.body.toByteArray().size} B", style = MaterialTheme.typography.labelSmall, color = palette.textMuted, maxLines = 1, softWrap = false)
             Surface(
               color = palette.chromePill,
               shape = RoundedCornerShape(6.dp),
@@ -884,6 +920,8 @@ fun ApiTesterPane(
                 text = formatBadge,
                 style = TextStyle(fontFamily = JetBrainsMono, fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
                 color = palette.textSecondary,
+                maxLines = 1,
+                softWrap = false,
                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
               )
             }
@@ -901,18 +939,104 @@ fun ApiTesterPane(
                   style = MaterialTheme.typography.labelSmall,
                   color = assertColor,
                   fontWeight = FontWeight.Bold,
+                  maxLines = 1,
+                  softWrap = false,
                   modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                 )
               }
+            }
+            IconButton(
+              onClick = { showResponseSearch = !showResponseSearch },
+              modifier = Modifier.size(30.dp).testTag("api_res_search_toggle"),
+            ) {
+              Icon(
+                Icons.Outlined.Search,
+                contentDescription = "Search response",
+                tint = if (showResponseSearch) palette.activePillFg else palette.textSecondary,
+                modifier = Modifier.size(16.dp),
+              )
+            }
+            IconButton(
+              onClick = { responseExpanded = !responseExpanded },
+              modifier = Modifier.size(30.dp).testTag("api_res_expand_toggle"),
+            ) {
+              Icon(
+                imageVector = if (responseExpanded) Icons.Outlined.CloseFullscreen else Icons.Outlined.OpenInFull,
+                contentDescription = if (responseExpanded) "Restore response height" else "Expand response",
+                tint = if (responseExpanded) palette.activePillFg else palette.textSecondary,
+                modifier = Modifier.size(15.dp),
+              )
             }
             IconButton(
               onClick = {
                 clipboard.setText(AnnotatedString(res.body))
                 onNotifyStatus("Copied response body")
               },
-              modifier = Modifier.minimumInteractiveComponentSize(),
+              modifier = Modifier.size(30.dp),
             ) {
               Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy response body", tint = palette.activePillFg, modifier = Modifier.size(16.dp))
+            }
+          }
+
+          val prettyOrRawTextForSearch =
+            remember(responseSubTab, res.body, res.errorMessage) {
+              when (responseSubTab) {
+                0, 3 -> (res.errorMessage ?: ApiRequestUtils.prettyPrintIfJson(res.body)).ifBlank { "(empty body)" }
+                1 -> (res.errorMessage ?: res.body).ifBlank { "(empty body)" }
+                else -> ""
+              }
+            }
+          val activeSearchMatches =
+            remember(showResponseSearch, responseSearchQuery, prettyOrRawTextForSearch) {
+              if (!showResponseSearch || responseSearchQuery.isBlank() || prettyOrRawTextForSearch.isEmpty()) emptyList()
+              else findTextOccurrences(prettyOrRawTextForSearch, responseSearchQuery)
+            }
+
+          AnimatedVisibility(visible = showResponseSearch) {
+            Row(
+              modifier =
+                Modifier
+                  .fillMaxWidth()
+                  .clip(RoundedCornerShape(8.dp))
+                  .background(palette.editorBg)
+                  .border(0.5.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                  .padding(horizontal = 8.dp, vertical = 5.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+              Icon(Icons.Outlined.Search, contentDescription = null, tint = palette.activePillFg, modifier = Modifier.size(14.dp))
+              Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                if (responseSearchQuery.isEmpty()) {
+                  Text(
+                    text = "Find in response…",
+                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
+                    color = palette.textMuted,
+                    maxLines = 1,
+                  )
+                }
+                BasicTextField(
+                  value = responseSearchQuery,
+                  onValueChange = { responseSearchQuery = it },
+                  singleLine = true,
+                  textStyle = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, color = palette.textPrimary),
+                  cursorBrush = SolidColor(palette.activePillFg),
+                  modifier = Modifier.fillMaxWidth().testTag("api_res_search_input"),
+                )
+              }
+              if (responseSearchQuery.isNotEmpty()) {
+                if (responseSubTab != 2 && responseSubTab != 4) {
+                  Text(
+                    text = "${activeSearchMatches.size} hits",
+                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 10.sp),
+                    color = if (activeSearchMatches.isNotEmpty()) palette.activePillFg else palette.textMuted,
+                    maxLines = 1,
+                    softWrap = false,
+                  )
+                }
+                IconButton(onClick = { responseSearchQuery = "" }, modifier = Modifier.size(22.dp)) {
+                  Icon(Icons.Outlined.Close, contentDescription = "Clear search", tint = palette.textMuted, modifier = Modifier.size(13.dp))
+                }
+              }
             }
           }
 
@@ -944,6 +1068,8 @@ fun ApiTesterPane(
                     text = label,
                     style = MaterialTheme.typography.labelSmall,
                     color = if (active) palette.activePillFg else palette.textSecondary,
+                    maxLines = 1,
+                    softWrap = false,
                     modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
                   )
                 }
@@ -960,6 +1086,8 @@ fun ApiTesterPane(
                   text = if (wrapResponse) "Wrap" else "NoWrap",
                   style = MaterialTheme.typography.labelSmall,
                   color = if (wrapResponse) palette.activePillFg else palette.textSecondary,
+                  maxLines = 1,
+                  softWrap = false,
                   modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                 )
               }
@@ -1008,24 +1136,28 @@ fun ApiTesterPane(
             SandboxedHtmlPreviewBox(
               baseUrl = res.url,
               html = res.body,
-              modifier = Modifier.fillMaxWidth().height(260.dp).clip(RoundedCornerShape(8.dp)),
+              modifier = Modifier.fillMaxWidth().height(if (responseExpanded) 440.dp else 260.dp).clip(RoundedCornerShape(8.dp)),
             )
           } else {
             val boxScrollModifier =
               if (!wrapResponse && (responseSubTab == 0 || responseSubTab == 1)) {
                 Modifier
                   .fillMaxWidth()
+                  .heightIn(min = 120.dp, max = if (responseExpanded) 540.dp else 360.dp)
                   .clip(RoundedCornerShape(8.dp))
                   .background(palette.editorBg)
                   .border(0.5.dp, palette.border.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                  .verticalScroll(rememberScrollState())
                   .horizontalScroll(rememberScrollState())
                   .padding(10.dp)
               } else {
                 Modifier
                   .fillMaxWidth()
+                  .heightIn(min = 120.dp, max = if (responseExpanded) 540.dp else 360.dp)
                   .clip(RoundedCornerShape(8.dp))
                   .background(palette.editorBg)
                   .border(0.5.dp, palette.border.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                  .verticalScroll(rememberScrollState())
                   .padding(10.dp)
               }
             Box(modifier = boxScrollModifier) {
@@ -1043,9 +1175,19 @@ fun ApiTesterPane(
                         SyntaxHighlighter.highlightResponse(effectiveText, contentTypeHint, palette)
                       }
                     }
+                  val highlightedWithSearch =
+                    remember(highlighted, effectiveText, activeSearchMatches, palette) {
+                      applySearchMatchHighlight(
+                        base = highlighted,
+                        plainText = effectiveText,
+                        matches = activeSearchMatches,
+                        matchBg = palette.searchMatchBg,
+                        matchFg = palette.textPrimary,
+                      )
+                    }
                   SmartDraggableText(
                     text = effectiveText,
-                    annotatedText = highlighted,
+                    annotatedText = highlightedWithSearch,
                     surfaceId = "api_res_pretty",
                     domain = if (res.errorMessage == null && formatBadge == "JSON") SmartTextDomain.JSON else SmartTextDomain.TERMINAL_OR_LOG,
                     style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 16.sp),
@@ -1063,9 +1205,19 @@ fun ApiTesterPane(
                         SyntaxHighlighter.highlightResponse(rawText, contentTypeHint, palette)
                       }
                     }
+                  val highlightedWithSearch =
+                    remember(highlighted, rawText, activeSearchMatches, palette) {
+                      applySearchMatchHighlight(
+                        base = highlighted,
+                        plainText = rawText,
+                        matches = activeSearchMatches,
+                        matchBg = palette.searchMatchBg,
+                        matchFg = palette.textPrimary,
+                      )
+                    }
                   SmartDraggableText(
                     text = rawText,
-                    annotatedText = highlighted,
+                    annotatedText = highlightedWithSearch,
                     surfaceId = "api_res_raw",
                     domain = SmartTextDomain.TERMINAL_OR_LOG,
                     style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 16.sp),
@@ -1074,11 +1226,22 @@ fun ApiTesterPane(
                   )
                 }
                 2 -> {
+                  val displayedHeaders =
+                    remember(res.headers, showResponseSearch, responseSearchQuery) {
+                      if (!showResponseSearch || responseSearchQuery.isBlank()) {
+                        res.headers.entries.toList()
+                      } else {
+                        res.headers.entries.filter { (k, v) ->
+                          k.contains(responseSearchQuery, ignoreCase = true) ||
+                            v.contains(responseSearchQuery, ignoreCase = true)
+                        }
+                      }
+                    }
                   Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (res.headers.isEmpty()) {
-                      Text("(no response headers)", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+                    if (displayedHeaders.isEmpty()) {
+                      Text("(no matching response headers)", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
                     } else {
-                      res.headers.forEach { (k, v) ->
+                      displayedHeaders.forEach { (k, v) ->
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                           Text("$k:", style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold), color = palette.activePillFg)
                           SmartDraggableText(
@@ -1108,9 +1271,19 @@ fun ApiTesterPane(
                         SyntaxHighlighter.highlightResponse(effectivePreview, contentTypeHint, palette)
                       }
                     }
+                  val highlightedWithSearch =
+                    remember(highlighted, effectivePreview, activeSearchMatches, palette) {
+                      applySearchMatchHighlight(
+                        base = highlighted,
+                        plainText = effectivePreview,
+                        matches = activeSearchMatches,
+                        matchBg = palette.searchMatchBg,
+                        matchFg = palette.textPrimary,
+                      )
+                    }
                   SmartDraggableText(
                     text = effectivePreview,
-                    annotatedText = highlighted,
+                    annotatedText = highlightedWithSearch,
                     surfaceId = "api_res_preview",
                     domain = SmartTextDomain.TERMINAL_OR_LOG,
                     style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 16.sp),
@@ -1124,6 +1297,7 @@ fun ApiTesterPane(
         }
       }
     }
+    Spacer(Modifier.height(72.dp))
   }
 }
 

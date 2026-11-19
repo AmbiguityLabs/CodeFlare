@@ -480,3 +480,87 @@ fun paletteFor(
     )
   }
 }
+
+@Immutable
+data class IdeSelectionColors(
+  val canvasFill: Color,
+  val canvasMoveFill: Color,
+  val canvasOutline: Color,
+  val handleFill: Color,
+  val spanBg: Color,
+  val spanFg: Color,
+)
+
+fun selectionColorsFor(palette: IdePalette): IdeSelectionColors {
+  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
+  return if (palette.isDark) {
+    when {
+      isV2 ->
+        IdeSelectionColors(
+          canvasFill = Color(0xFF2563EB).copy(alpha = 0.56f),
+          canvasMoveFill = Color(0xFF2563EB).copy(alpha = 0.24f),
+          canvasOutline = Color(0xFF60A5FA).copy(alpha = 0.85f),
+          handleFill = Color(0xFF60A5FA),
+          spanBg = Color(0xFF1D4ED8),
+          spanFg = Color(0xFFFFFFFF),
+        )
+      palette.preset == EditorThemePreset.OLIVE_OBSIDIAN ->
+        IdeSelectionColors(
+          canvasFill = Color(0xFF4D7C0F).copy(alpha = 0.62f),
+          canvasMoveFill = Color(0xFF4D7C0F).copy(alpha = 0.26f),
+          canvasOutline = Color(0xFFA3E635).copy(alpha = 0.78f),
+          handleFill = palette.ctaBg,
+          spanBg = Color(0xFF4D7C0F),
+          spanFg = Color(0xFFF7FEE7),
+        )
+      palette.preset == EditorThemePreset.MIDNIGHT_NOIR ->
+        IdeSelectionColors(
+          canvasFill = Color(0xFF6D28D9).copy(alpha = 0.58f),
+          canvasMoveFill = Color(0xFF6D28D9).copy(alpha = 0.26f),
+          canvasOutline = Color(0xFFC084FC).copy(alpha = 0.82f),
+          handleFill = palette.ctaBg,
+          spanBg = Color(0xFF6D28D9),
+          spanFg = Color(0xFFFAF5FF),
+        )
+      palette.preset == EditorThemePreset.AMBER_DUSK ->
+        IdeSelectionColors(
+          canvasFill = Color(0xFFB45309).copy(alpha = 0.58f),
+          canvasMoveFill = Color(0xFFB45309).copy(alpha = 0.26f),
+          canvasOutline = Color(0xFFFBBF24).copy(alpha = 0.80f),
+          handleFill = palette.ctaBg,
+          spanBg = Color(0xFFB45309),
+          spanFg = Color(0xFFFFFBEB),
+        )
+      else ->
+        IdeSelectionColors(
+          canvasFill = Color(0xFF1D4ED8).copy(alpha = 0.58f),
+          canvasMoveFill = Color(0xFF1D4ED8).copy(alpha = 0.26f),
+          canvasOutline = Color(0xFF60A5FA).copy(alpha = 0.82f),
+          handleFill = palette.ctaBg,
+          spanBg = Color(0xFF1D4ED8),
+          spanFg = Color(0xFFFFFFFF),
+        )
+    }
+  } else {
+    when {
+      isV2 ->
+        IdeSelectionColors(
+          canvasFill = Color(0xFF93C5FD).copy(alpha = 0.62f),
+          canvasMoveFill = Color(0xFF93C5FD).copy(alpha = 0.28f),
+          canvasOutline = Color(0xFF2563EB).copy(alpha = 0.75f),
+          handleFill = Color(0xFF2563EB),
+          spanBg = Color(0xFF1D4ED8),
+          spanFg = Color(0xFFFFFFFF),
+        )
+      else ->
+        IdeSelectionColors(
+          canvasFill = palette.ctaBg.copy(alpha = 0.26f),
+          canvasMoveFill = palette.ctaBg.copy(alpha = 0.14f),
+          canvasOutline = palette.ctaBg.copy(alpha = 0.72f),
+          handleFill = palette.ctaBg,
+          spanBg = palette.ctaBg,
+          spanFg = palette.ctaFg,
+        )
+    }
+  }
+}

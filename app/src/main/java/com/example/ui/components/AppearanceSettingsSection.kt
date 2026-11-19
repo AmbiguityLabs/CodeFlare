@@ -37,8 +37,9 @@ import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.Palette
-import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.RestartAlt
+import androidx.compose.material.icons.outlined.RocketLaunch
+import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material.icons.outlined.Tune
@@ -551,7 +552,7 @@ fun EditorAppearanceStudioContent(
       previewItems =
         listOf(
           Triple("Code", Icons.Outlined.Code, null),
-          Triple("Test", Icons.Outlined.PlayArrow, null),
+          Triple("Test", Icons.Outlined.Science, null),
           Triple("Config", Icons.Outlined.Tune, null),
           Triple("Console", Icons.AutoMirrored.Outlined.Dvr, "3"),
         ),
@@ -572,7 +573,7 @@ fun EditorAppearanceStudioContent(
       previewHeader = "Project Actions",
       previewRows =
         listOf(
-          Triple("Run in CLI", Icons.Outlined.PlayArrow, "CLI"),
+          Triple("Run in CLI", Icons.Outlined.RocketLaunch, "CLI"),
           Triple("Format Code", Icons.Outlined.Code, null),
           Triple("Git Sync", Icons.Outlined.AccountTree, "GIT"),
         ),

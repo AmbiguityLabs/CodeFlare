@@ -14,6 +14,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,12 +34,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.automirrored.outlined.WrapText
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DataObject
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Dvr
 import androidx.compose.material.icons.outlined.Http
-import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.RocketLaunch
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.HorizontalDivider
@@ -98,10 +102,12 @@ fun LocalScriptRunPane(
   val clipboard = LocalClipboardManager.current
   var showHttpBar by remember { mutableStateOf(false) }
   var showBodyEditor by remember { mutableStateOf(false) }
-  var resultViewTab by remember { mutableIntStateOf(0) } // 0 = Output/Preview, 1 = Console, 2 = Headers
+  var resultViewTab by remember { mutableIntStateOf(0) } // 0 = Output/Preview, 1 = Console, 2 = Headers, 3 = Unified
   var methodMenuOpen by remember { mutableStateOf(false) }
   var cliInput by remember { mutableStateOf("") }
   var wrapOutput by remember { mutableStateOf(true) }
+  var showOutputSearch by remember { mutableStateOf(false) }
+  var outputSearchQuery by remember { mutableStateOf("") }
   var logFilter by remember { mutableStateOf("ALL") } // ALL, LOG, ERR, INFO
 
   val latestWorkspace by rememberUpdatedState(uiState.workspace)
@@ -215,7 +221,7 @@ fun LocalScriptRunPane(
       )
 
       IconRevealButton(
-        icon = Icons.Outlined.PlayArrow,
+        icon = Icons.Outlined.RocketLaunch,
         revealedLabel = if (uiState.isRunningLocalScript) "Running" else "Run",
         onClick = { if (!uiState.isRunningLocalScript) onRunLocally() },
         isBusy = uiState.isRunningLocalScript,
@@ -355,7 +361,7 @@ fun LocalScriptRunPane(
         verticalArrangement = Arrangement.Center,
       ) {
         IconRevealButton(
-          icon = Icons.Outlined.PlayArrow,
+          icon = Icons.Outlined.RocketLaunch,
           revealedLabel = uiState.activeFile?.fileName ?: uiState.workspace?.entryModulePath ?: "Run",
           onClick = onRunLocally,
           isBusy = uiState.isRunningLocalScript,
@@ -396,100 +402,193 @@ fun LocalScriptRunPane(
         else -> EmeraldLive
       }
 
-    Row(
-      modifier =
-        Modifier
-          .fillMaxWidth()
-          .background(palette.chromeSurface)
-          .padding(horizontal = 8.dp, vertical = 5.dp),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-      Surface(
-        color = statusColor.copy(alpha = 0.14f),
-        shape = RoundedCornerShape(6.dp),
-        border = BorderStroke(0.5.dp, statusColor.copy(alpha = 0.35f)),
-      ) {
-        Text(
-          text = "${result.mode} • ${result.statusCode}",
-          fontFamily = JetBrainsMono,
-          fontSize = 10.sp,
-          fontWeight = FontWeight.Bold,
-          color = statusColor,
-          modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-        )
+    val displayOutputBody = remember(result.body, result.errorMessage) {
+      result.errorMessage ?: result.body.ifEmpty { "(empty)" }
+    }
+    val outputSearchMatches =
+      remember(showOutputSearch, outputSearchQuery, displayOutputBody) {
+        if (!showOutputSearch || outputSearchQuery.isBlank()) emptyList()
+        else findTextOccurrences(displayOutputBody, outputSearchQuery)
       }
 
-      Text(
-        text = "${result.durationMs}ms",
-        fontFamily = JetBrainsMono,
-        fontSize = 10.sp,
-        color = palette.textMuted,
-      )
+    Column(
+      modifier = Modifier.fillMaxWidth().background(palette.chromeSurface),
+    ) {
+      Row(
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        Surface(
+          color = statusColor.copy(alpha = 0.14f),
+          shape = RoundedCornerShape(6.dp),
+          border = BorderStroke(0.5.dp, statusColor.copy(alpha = 0.35f)),
+        ) {
+          Text(
+            text = "${result.mode} • ${result.statusCode}",
+            fontFamily = JetBrainsMono,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            color = statusColor,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+          )
+        }
 
-      Spacer(Modifier.weight(1f))
+        Text(
+          text = "${result.durationMs}ms",
+          fontFamily = JetBrainsMono,
+          fontSize = 10.sp,
+          color = palette.textMuted,
+          maxLines = 1,
+          softWrap = false,
+        )
 
-      IconSegmentTab(
-        icon = if (result.isHtmlBody) Icons.Outlined.Visibility else Icons.Outlined.Code,
-        label = if (result.isHtmlBody) "Preview" else "Output",
-        selected = resultViewTab == 0,
-        onClick = { resultViewTab = 0 },
-        tag = "local_run_tab_output",
-      )
-      IconSegmentTab(
-        icon = Icons.Outlined.Terminal,
-        label = "Logs",
-        selected = resultViewTab == 1,
-        badgeText = result.logs.size.takeIf { it > 0 }?.toString(),
-        onClick = { resultViewTab = 1 },
-        tag = "local_run_tab_logs",
-      )
-      IconSegmentTab(
-        icon = Icons.Outlined.DataObject,
-        label = "Headers",
-        selected = resultViewTab == 2,
-        badgeText = result.headers.size.takeIf { it > 0 }?.toString(),
-        onClick = { resultViewTab = 2 },
-        tag = "local_run_tab_headers",
-      )
+        Spacer(Modifier.weight(1f))
 
-      if (resultViewTab == 0 && !result.isHtmlBody) {
         IconButton(
-          onClick = { wrapOutput = !wrapOutput },
+          onClick = { showOutputSearch = !showOutputSearch },
+          modifier = Modifier.size(28.dp).testTag("local_run_search_toggle"),
+        ) {
+          Icon(
+            Icons.Outlined.Search,
+            contentDescription = "Search output",
+            tint = if (showOutputSearch) palette.activePillFg else palette.textSecondary,
+            modifier = Modifier.size(15.dp),
+          )
+        }
+        if ((resultViewTab == 0 || resultViewTab == 3) && !result.isHtmlBody) {
+          IconButton(
+            onClick = { wrapOutput = !wrapOutput },
+            modifier = Modifier.size(28.dp),
+          ) {
+            Icon(
+              Icons.AutoMirrored.Outlined.WrapText,
+              contentDescription = "Toggle wrap",
+              tint = if (wrapOutput) palette.activePillFg else palette.textMuted,
+              modifier = Modifier.size(15.dp),
+            )
+          }
+        }
+        IconButton(
+          onClick = {
+            clipboard.setText(AnnotatedString(result.errorMessage ?: result.body))
+            onNotifyStatus("Copied output")
+          },
           modifier = Modifier.size(28.dp),
         ) {
           Icon(
-            Icons.AutoMirrored.Outlined.WrapText,
-            contentDescription = "Toggle wrap",
-            tint = if (wrapOutput) palette.activePillFg else palette.textMuted,
+            Icons.Outlined.ContentCopy,
+            contentDescription = "Copy output",
+            tint = palette.textSecondary,
+            modifier = Modifier.size(15.dp),
+          )
+        }
+        IconButton(
+          onClick = { onExecuteCliCommand("clear") },
+          modifier = Modifier.size(28.dp),
+        ) {
+          Icon(
+            Icons.Outlined.DeleteSweep,
+            contentDescription = "Clear CLI output",
+            tint = palette.textMuted,
             modifier = Modifier.size(15.dp),
           )
         }
       }
-      IconButton(
-        onClick = {
-          clipboard.setText(AnnotatedString(result.errorMessage ?: result.body))
-          onNotifyStatus("Copied output")
-        },
-        modifier = Modifier.size(28.dp),
+
+      Row(
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(start = 8.dp, end = 8.dp, bottom = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
       ) {
-        Icon(
-          Icons.Outlined.ContentCopy,
-          contentDescription = "Copy output",
-          tint = palette.textSecondary,
-          modifier = Modifier.size(15.dp),
+        IconSegmentTab(
+          icon = if (result.isHtmlBody) Icons.Outlined.Visibility else Icons.Outlined.Code,
+          label = if (result.isHtmlBody) "Preview" else "Output",
+          selected = resultViewTab == 0,
+          onClick = { resultViewTab = 0 },
+          tag = "local_run_tab_output",
+        )
+        IconSegmentTab(
+          icon = Icons.Outlined.Terminal,
+          label = "Logs",
+          selected = resultViewTab == 1,
+          badgeText = result.logs.size.takeIf { it > 0 }?.toString(),
+          onClick = { resultViewTab = 1 },
+          tag = "local_run_tab_logs",
+        )
+        IconSegmentTab(
+          icon = Icons.Outlined.DataObject,
+          label = "Headers",
+          selected = resultViewTab == 2,
+          badgeText = result.headers.size.takeIf { it > 0 }?.toString(),
+          onClick = { resultViewTab = 2 },
+          tag = "local_run_tab_headers",
+        )
+        IconSegmentTab(
+          icon = Icons.Outlined.Dvr,
+          label = "Unified",
+          selected = resultViewTab == 3,
+          onClick = { resultViewTab = 3 },
+          tag = "local_run_tab_unified",
         )
       }
-      IconButton(
-        onClick = { onExecuteCliCommand("clear") },
-        modifier = Modifier.size(28.dp),
-      ) {
-        Icon(
-          Icons.Outlined.DeleteSweep,
-          contentDescription = "Clear CLI output",
-          tint = palette.textMuted,
-          modifier = Modifier.size(15.dp),
-        )
+
+      AnimatedVisibility(visible = showOutputSearch) {
+        Row(
+          modifier =
+            Modifier
+              .fillMaxWidth()
+              .padding(start = 8.dp, end = 8.dp, bottom = 6.dp)
+              .clip(RoundedCornerShape(7.dp))
+              .background(palette.editorBg)
+              .border(0.5.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(7.dp))
+              .padding(horizontal = 8.dp, vertical = 5.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          Icon(Icons.Outlined.Search, contentDescription = null, tint = palette.activePillFg, modifier = Modifier.size(14.dp))
+          Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+            if (outputSearchQuery.isEmpty()) {
+              Text(
+                text = "Filter logs or find in output…",
+                fontFamily = JetBrainsMono,
+                fontSize = 11.sp,
+                color = palette.textMuted,
+                maxLines = 1,
+              )
+            }
+            BasicTextField(
+              value = outputSearchQuery,
+              onValueChange = { outputSearchQuery = it },
+              singleLine = true,
+              textStyle = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, color = palette.textPrimary),
+              cursorBrush = SolidColor(palette.activePillFg),
+              modifier = Modifier.fillMaxWidth().testTag("local_run_search_input"),
+            )
+          }
+          if (outputSearchQuery.isNotEmpty()) {
+            Text(
+              text = "${outputSearchMatches.size} hits",
+              fontFamily = JetBrainsMono,
+              fontSize = 10.sp,
+              color = if (outputSearchMatches.isNotEmpty()) palette.activePillFg else palette.textMuted,
+              maxLines = 1,
+              softWrap = false,
+            )
+            IconButton(onClick = { outputSearchQuery = "" }, modifier = Modifier.size(22.dp)) {
+              Icon(Icons.Outlined.Close, contentDescription = "Clear search", tint = palette.textMuted, modifier = Modifier.size(13.dp))
+            }
+          }
+        }
       }
     }
 
@@ -503,12 +602,26 @@ fun LocalScriptRunPane(
               remember(result.errorMessage, palette) {
                 SyntaxHighlighter.highlightResponse(result.errorMessage, null, palette)
               }
+            val highlightedWithSearch =
+              remember(highlightedErr, result.errorMessage, outputSearchMatches, palette) {
+                applySearchMatchHighlight(
+                  base = highlightedErr,
+                  plainText = result.errorMessage,
+                  matches = outputSearchMatches,
+                  matchBg = palette.searchMatchBg,
+                  matchFg = palette.textPrimary,
+                )
+              }
             Box(
-              modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+              modifier =
+                Modifier
+                  .fillMaxSize()
+                  .verticalScroll(rememberScrollState())
+                  .padding(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 72.dp),
             ) {
               SmartDraggableText(
                 text = result.errorMessage,
-                annotatedText = highlightedErr,
+                annotatedText = highlightedWithSearch,
                 surfaceId = "cli_error_output",
                 domain = SmartTextDomain.TERMINAL_OR_LOG,
                 style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 17.sp),
@@ -565,6 +678,16 @@ fun LocalScriptRunPane(
               remember(displayText, ctype, palette) {
                 SyntaxHighlighter.highlightResponse(displayText, ctype, palette)
               }
+            val highlightedWithSearch =
+              remember(annotatedOutput, displayText, outputSearchMatches, palette) {
+                applySearchMatchHighlight(
+                  base = annotatedOutput,
+                  plainText = displayText,
+                  matches = outputSearchMatches,
+                  matchBg = palette.searchMatchBg,
+                  matchFg = palette.textPrimary,
+                )
+              }
             val trimmedBody = displayText.trimStart()
             val domain =
               if (trimmedBody.startsWith("{") || trimmedBody.startsWith("[")) {
@@ -577,11 +700,11 @@ fun LocalScriptRunPane(
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
                 .let { if (wrapOutput) it else it.horizontalScroll(rememberScrollState()) }
-                .padding(12.dp)
+                .padding(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 72.dp)
             Box(modifier = baseMod) {
               SmartDraggableText(
                 text = displayText,
-                annotatedText = annotatedOutput,
+                annotatedText = highlightedWithSearch,
                 surfaceId = "cli_body_output",
                 domain = domain,
                 style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 17.sp),
@@ -616,6 +739,8 @@ fun LocalScriptRunPane(
                     fontSize = 10.sp,
                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                     color = if (selected) palette.activePillFg else palette.textSecondary,
+                    maxLines = 1,
+                    softWrap = false,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                   )
                 }
@@ -624,8 +749,13 @@ fun LocalScriptRunPane(
             HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.5.dp)
 
             val filteredLogs =
-              remember(result.logs, logFilter) {
-                if (logFilter == "ALL") result.logs else result.logs.filter { it.level == logFilter }
+              remember(result.logs, logFilter, showOutputSearch, outputSearchQuery) {
+                val byLevel = if (logFilter == "ALL") result.logs else result.logs.filter { it.level == logFilter }
+                if (!showOutputSearch || outputSearchQuery.isBlank()) byLevel
+                else byLevel.filter {
+                  it.message.contains(outputSearchQuery, ignoreCase = true) ||
+                    it.level.contains(outputSearchQuery, ignoreCase = true)
+                }
               }
             if (filteredLogs.isEmpty()) {
               Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -633,8 +763,9 @@ fun LocalScriptRunPane(
               }
             } else {
               LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(8.dp),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 8.dp, top = 8.dp, end = 8.dp, bottom = 72.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
               ) {
                 items(filteredLogs) { log ->
                   val tone =
@@ -647,7 +778,18 @@ fun LocalScriptRunPane(
                     remember(log.message, palette) {
                       SyntaxHighlighter.highlightResponse(log.message, null, palette)
                     }
-                  Row(
+                  val logSearchAnnotated =
+                    remember(logAnnotated, log.message, showOutputSearch, outputSearchQuery, palette) {
+                      if (!showOutputSearch || outputSearchQuery.isBlank()) logAnnotated
+                      else applySearchMatchHighlight(
+                        base = logAnnotated,
+                        plainText = log.message,
+                        matches = findTextOccurrences(log.message, outputSearchQuery),
+                        matchBg = palette.searchMatchBg,
+                        matchFg = palette.textPrimary,
+                      )
+                    }
+                  Column(
                     modifier =
                       Modifier
                         .fillMaxWidth()
@@ -655,20 +797,24 @@ fun LocalScriptRunPane(
                         .background(palette.chromeSurface)
                         .border(0.5.dp, palette.border.copy(alpha = 0.35f), RoundedCornerShape(if (isV2) 10.dp else 7.dp))
                         .padding(horizontal = 9.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.Top,
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
                   ) {
-                    Text(log.timestamp, fontFamily = JetBrainsMono, fontSize = 10.sp, color = palette.textMuted)
-                    Text(log.level, fontFamily = JetBrainsMono, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = tone)
+                    Row(
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                      Text(log.level, fontFamily = JetBrainsMono, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = tone)
+                      Text(log.timestamp, fontFamily = JetBrainsMono, fontSize = 9.5.sp, color = palette.textMuted)
+                    }
                     SmartDraggableText(
                       text = log.message,
-                      annotatedText = logAnnotated,
+                      annotatedText = logSearchAnnotated,
                       surfaceId = "cli_log_${log.timestamp}_${log.message.hashCode()}",
                       domain = SmartTextDomain.TERMINAL_OR_LOG,
-                      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
+                      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 16.sp),
                       color = palette.textPrimary,
                       onCopied = { onNotifyStatus("Copied log snippet") },
-                      modifier = Modifier.weight(1f),
+                      modifier = Modifier.fillMaxWidth(),
                     )
                   }
                 }
@@ -677,13 +823,21 @@ fun LocalScriptRunPane(
           }
         }
 
-        else -> {
+        2 -> {
+          val displayedHeaders =
+            remember(result.headers, showOutputSearch, outputSearchQuery) {
+              if (!showOutputSearch || outputSearchQuery.isBlank()) result.headers.entries.toList()
+              else result.headers.entries.filter { (k, v) ->
+                k.contains(outputSearchQuery, ignoreCase = true) || v.contains(outputSearchQuery, ignoreCase = true)
+              }
+            }
           LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 8.dp, top = 8.dp, end = 8.dp, bottom = 72.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
           ) {
-            items(result.headers.entries.toList()) { (k, v) ->
-              Row(
+            items(displayedHeaders) { (k, v) ->
+              Column(
                 modifier =
                   Modifier
                     .fillMaxWidth()
@@ -691,9 +845,9 @@ fun LocalScriptRunPane(
                     .background(palette.chromeSurface)
                     .border(0.5.dp, palette.border.copy(alpha = 0.35f), RoundedCornerShape(7.dp))
                     .padding(horizontal = 9.dp, vertical = 7.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
               ) {
-                Text(k, fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = palette.activePillFg)
+                Text(k, fontFamily = JetBrainsMono, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = palette.activePillFg)
                 SmartDraggableText(
                   text = v,
                   surfaceId = "cli_header_$k",
@@ -701,8 +855,135 @@ fun LocalScriptRunPane(
                   style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
                   color = palette.textSecondary,
                   onCopied = { onNotifyStatus("Copied header value") },
-                  modifier = Modifier.weight(1f),
+                  modifier = Modifier.fillMaxWidth(),
                 )
+              }
+            }
+          }
+        }
+
+        else -> {
+          // 3 = Unified Output + Console Logs + Headers Summary
+          val ctype = result.headers["content-type"]
+          val annotatedBody =
+            remember(displayOutputBody, ctype, palette, result.errorMessage) {
+              SyntaxHighlighter.highlightResponse(displayOutputBody, if (result.errorMessage != null) null else ctype, palette)
+            }
+          val bodyWithSearch =
+            remember(annotatedBody, displayOutputBody, outputSearchMatches, palette) {
+              applySearchMatchHighlight(
+                base = annotatedBody,
+                plainText = displayOutputBody,
+                matches = outputSearchMatches,
+                matchBg = palette.searchMatchBg,
+                matchFg = palette.textPrimary,
+              )
+            }
+          Column(
+            modifier =
+              Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .let { if (wrapOutput) it else it.horizontalScroll(rememberScrollState()) }
+                .padding(start = 10.dp, top = 10.dp, end = 10.dp, bottom = 72.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+          ) {
+            if (result.logs.isNotEmpty()) {
+              Text(
+                text = "CONSOLE LOGS (${result.logs.size})",
+                fontFamily = JetBrainsMono,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = palette.textMuted,
+              )
+              Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                result.logs.forEach { log ->
+                  val tone =
+                    when (log.level) {
+                      "ERR" -> RoseError
+                      "INFO" -> AmberWarn
+                      else -> palette.activePillFg
+                    }
+                  val logAnnotated =
+                    remember(log.message, palette) {
+                      SyntaxHighlighter.highlightResponse(log.message, null, palette)
+                    }
+                  Column(
+                    modifier =
+                      Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(palette.chromeSurface)
+                        .border(0.5.dp, palette.border.copy(alpha = 0.35f), RoundedCornerShape(7.dp))
+                        .padding(horizontal = 9.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                  ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                      Text(log.level, fontFamily = JetBrainsMono, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = tone)
+                      Text(log.timestamp, fontFamily = JetBrainsMono, fontSize = 9.5.sp, color = palette.textMuted)
+                    }
+                    SmartDraggableText(
+                      text = log.message,
+                      annotatedText = logAnnotated,
+                      surfaceId = "cli_unified_log_${log.timestamp}_${log.message.hashCode()}",
+                      domain = SmartTextDomain.TERMINAL_OR_LOG,
+                      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
+                      color = palette.textPrimary,
+                      onCopied = { onNotifyStatus("Copied log snippet") },
+                    )
+                  }
+                }
+              }
+            }
+
+            Text(
+              text = if (result.errorMessage != null) "ERROR OUTPUT" else "RESPONSE OUTPUT",
+              fontFamily = JetBrainsMono,
+              fontSize = 10.sp,
+              fontWeight = FontWeight.Bold,
+              color = if (result.errorMessage != null) RoseError else palette.textMuted,
+            )
+            Surface(
+              color = palette.chromeSurface,
+              shape = RoundedCornerShape(8.dp),
+              border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.45f)),
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Box(modifier = Modifier.padding(10.dp)) {
+                SmartDraggableText(
+                  text = displayOutputBody,
+                  annotatedText = bodyWithSearch,
+                  surfaceId = "cli_unified_body",
+                  domain = if (result.errorMessage == null && (displayOutputBody.trimStart().startsWith("{") || displayOutputBody.trimStart().startsWith("["))) SmartTextDomain.JSON else SmartTextDomain.TERMINAL_OR_LOG,
+                  style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 17.sp),
+                  color = if (result.errorMessage != null) RoseError else palette.textPrimary,
+                  onCopied = { onNotifyStatus("Copied output snippet") },
+                )
+              }
+            }
+
+            if (result.headers.isNotEmpty()) {
+              Text(
+                text = "HEADERS (${result.headers.size})",
+                fontFamily = JetBrainsMono,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = palette.textMuted,
+              )
+              Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                result.headers.forEach { (k, v) ->
+                  Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("$k:", fontFamily = JetBrainsMono, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = palette.activePillFg)
+                    SmartDraggableText(
+                      text = v,
+                      surfaceId = "cli_unified_header_$k",
+                      domain = SmartTextDomain.TERMINAL_OR_LOG,
+                      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 10.5.sp),
+                      color = palette.textSecondary,
+                      onCopied = { onNotifyStatus("Copied header value") },
+                    )
+                  }
+                }
               }
             }
           }

@@ -681,7 +681,7 @@ object CodeAnalyzer {
 
     // Statement / token-level syntax catching on comment/string-stripped code
     val maskedCode = sanitized.toString()
-    analyzeMaskedJsSyntax(file, maskedCode, diagnostics)
+    analyzeMaskedJsSyntax(file, code, maskedCode, diagnostics)
 
     // Cloudflare Workers runtime hints
     maskedCode.lines().forEachIndexed { idx, lineText ->
@@ -747,6 +747,7 @@ object CodeAnalyzer {
 
   private fun analyzeMaskedJsSyntax(
     file: WorkerFile,
+    rawCode: String,
     maskedCode: String,
     diagnostics: MutableList<DiagnosticItem>,
   ) {
@@ -798,8 +799,11 @@ object CodeAnalyzer {
       )
     }
 
-    // 4. Uninitialized const declarations (ignoring declare const, destructuring with =, and for-of/for-in)
-    maskedCode.lines().forEachIndexed { idx, lineText ->
+    // 4. Uninitialized const declarations & missing import specifier strings
+    val maskedLines = maskedCode.lines()
+    val rawLines = rawCode.lines()
+    val importFromPattern = Regex("""^\s*import\b.*\bfrom\b\s*;?\s*$""")
+    maskedLines.forEachIndexed { idx, lineText ->
       val lineNum = idx + 1
       val trimmed = lineText.trim()
       if (trimmed.startsWith("const ") && !trimmed.startsWith("declare ")) {
@@ -818,19 +822,34 @@ object CodeAnalyzer {
           )
         }
       }
-      // Malformed import ... from ; (missing specifier string)
-      if (Regex("""^\s*import\b.*\bfrom\s*;?\s*$""").containsMatchIn(lineText)) {
-        val colIdx = lineText.indexOf("from") + 1
-        diagnostics.add(
-          DiagnosticItem(
-            filePath = file.path,
-            line = lineNum,
-            column = colIdx.coerceAtLeast(1),
-            message = "Expected module specifier string after 'from'",
-            severity = DiagnosticSeverity.ERROR,
-            length = 4,
-          ),
-        )
+      // Malformed import ... from ; (missing specifier string) — verify against unmasked raw source!
+      val fromMatch = if (importFromPattern.containsMatchIn(lineText)) Regex("""\bfrom\b""").find(lineText) else null
+      if (fromMatch != null) {
+        val rawLine = rawLines.getOrElse(idx) { "" }
+        val afterFromRaw =
+          if (fromMatch.range.last + 1 <= rawLine.length) rawLine.substring(fromMatch.range.last + 1).trimStart()
+          else ""
+        val hasSameLineString = afterFromRaw.startsWith("\"") || afterFromRaw.startsWith("'")
+        val hasNextLineString =
+          if (!hasSameLineString && afterFromRaw.isEmpty()) {
+            val nextNonBlank = rawLines.drop(idx + 1).firstOrNull { it.isNotBlank() }?.trimStart().orEmpty()
+            nextNonBlank.startsWith("\"") || nextNonBlank.startsWith("'")
+          } else {
+            false
+          }
+        if (!hasSameLineString && !hasNextLineString) {
+          val colIdx = fromMatch.range.first + 1
+          diagnostics.add(
+            DiagnosticItem(
+              filePath = file.path,
+              line = lineNum,
+              column = colIdx.coerceAtLeast(1),
+              message = "Expected module specifier string after 'from'",
+              severity = DiagnosticSeverity.ERROR,
+              length = 4,
+            ),
+          )
+        }
       }
     }
 

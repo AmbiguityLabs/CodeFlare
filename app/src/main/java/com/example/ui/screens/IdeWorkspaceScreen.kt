@@ -62,10 +62,10 @@ import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.MergeType
 import androidx.compose.material.icons.outlined.MoreVert
-import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Sensors
 import androidx.compose.material.icons.outlined.Settings
@@ -940,7 +940,7 @@ fun IdeWorkspaceScreen(
                 }
 
                 IconRevealButton(
-                  icon = Icons.Outlined.PlayArrow,
+                  icon = Icons.Outlined.Terminal,
                   revealedLabel = "Run CLI",
                   minimal = true,
                   isBusy = uiState.isRunningLocalScript,
@@ -1157,7 +1157,7 @@ fun IdeWorkspaceScreen(
                   ),
                   EdgeBottomDockItem(
                     label = "Test",
-                    icon = Icons.Outlined.PlayArrow,
+                    icon = Icons.Outlined.Science,
                     selected = uiState.projectMode == ProjectMode.TEST,
                     testTag = "project_nav_test",
                     onClick = { viewModel.setProjectMode(ProjectMode.TEST) },
@@ -1542,6 +1542,15 @@ fun IdeWorkspaceScreen(
             !uiState.isBottomDockHidden,
           ).count { it }
 
+        val editorBottomBarsClearance =
+          if (uiState.projectMode == ProjectMode.CODE && !uiState.isEditorBottomBarsHidden && uiState.activeFile != null) {
+            64.dp
+          } else {
+            0.dp
+          }
+        val baseDockPad = if (uiState.isBottomDockHidden) 14.dp else dockClearanceBottom
+        val floatingOverlayBottomPad = baseDockPad + editorBottomBarsClearance
+
         AnimatedVisibility(
           visible = !isFullScreenPreview && anyUiHidden,
           enter = fadeIn(tween(180)) + slideInVertically(tween(180)) { it / 2 },
@@ -1551,7 +1560,7 @@ fun IdeWorkspaceScreen(
               .align(Alignment.BottomEnd)
               .padding(
                 end = 14.dp,
-                bottom = if (uiState.isBottomDockHidden) 14.dp else dockClearanceBottom,
+                bottom = floatingOverlayBottomPad,
               ),
         ) {
           Row(
@@ -1612,7 +1621,7 @@ fun IdeWorkspaceScreen(
           modifier =
             Modifier
               .align(Alignment.BottomCenter)
-              .padding(bottom = if (uiState.isBottomDockHidden) 18.dp else dockClearanceBottom),
+              .padding(bottom = (if (uiState.isBottomDockHidden) 18.dp else dockClearanceBottom) + editorBottomBarsClearance),
         )
       }
     }

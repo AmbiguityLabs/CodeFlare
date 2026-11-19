@@ -278,12 +278,14 @@ class EdgeEditorGeometry(
     styles: IncrementalLineStyles,
     cache: LineRenderCache,
     topClearancePx: Float = 0f,
+    bottomClearancePx: Float = 0f,
   ) {
     if (viewport.width <= 0 || viewport.height <= 0) return
     val caret = caretGeometry(session.selection.end, session.doc, session.foldModel, styles, cache)
-    val padY = lineHeightPx * 1.4f
-    val minY = topClearancePx + padY * 0.5f
-    val maxY = (viewport.height - padY).coerceAtLeast(minY + lineHeightPx)
+    val padY = lineHeightPx * 1.35f
+    val maxMinY = (viewport.height - lineHeightPx * 1.25f).coerceAtLeast(0f)
+    val minY = (topClearancePx + lineHeightPx * 0.45f).coerceAtMost(maxMinY)
+    val maxY = (viewport.height - bottomClearancePx - padY).coerceAtLeast(minY + lineHeightPx)
 
     if (caret.top < minY) {
       vOffset = (vOffset - (minY - caret.top)).coerceIn(0f, maxVerticalScroll(session.foldModel))

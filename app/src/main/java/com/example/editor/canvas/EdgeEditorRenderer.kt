@@ -31,6 +31,7 @@ import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.IdePalette
 import com.example.ui.theme.RoseError
+import com.example.ui.theme.selectionColorsFor
 
 data class EdgeEditorDrawParams(
   val session: EdgeEditorSession,
@@ -179,12 +180,9 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
     }
 
     // 1c. Per-line highlights, text, squiggles, brackets, composing underline
-    val selBg =
-      if (p.isSelfDragMoveActive) {
-        lerp(palette.activePillBg, palette.ctaBg, 0.25f).copy(alpha = 0.18f)
-      } else {
-        lerp(palette.activePillBg, palette.ctaBg, 0.30f).copy(alpha = if (palette.isDark) 0.38f else 0.30f)
-      }
+    val selPalette = selectionColorsFor(palette)
+    val selBg = if (p.isSelfDragMoveActive) selPalette.canvasMoveFill else selPalette.canvasFill
+    val selOutline = if (p.isSelfDragMoveActive) Color.Transparent else selPalette.canvasOutline
     val symBg = palette.activePillFg.copy(alpha = 0.14f)
     val bracketFill = palette.activePillBg.copy(alpha = 0.9f)
     val bracketStroke = palette.activePillFg.copy(alpha = 0.85f)
@@ -250,21 +248,31 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
         }
       }
 
-      // Selection highlight rects (supports wrapped lines + full-line newline tail)
+      // Selection highlight rects (supports wrapped lines + full-line newline tail + crisp outline)
       if (!sel.collapsed && sel.max > lineStart && sel.min <= lineEnd) {
         val cStart = (sel.min - lineStart).coerceIn(0, textLen)
         val cEnd = (sel.max - lineStart).coerceIn(cStart, textLen)
         val includesNewline = sel.max > lineEnd
         if (cEnd > cStart) {
-          drawTextRangeRects(layout, cStart, cEnd, textX, topY, lineH, selBg, cornerRadiusPx = 2.dp.toPx())
+          drawTextRangeRects(
+            layout = layout,
+            startCol = cStart,
+            endCol = cEnd,
+            textX = textX,
+            lineTopY = topY,
+            lineH = lineH,
+            color = selBg,
+            cornerRadiusPx = 3.dp.toPx(),
+            outlineColor = selOutline,
+          )
         }
         if (includesNewline) {
           val lastRowIdx = (layout.lineCount - 1).coerceAtLeast(0)
           val tailX = textX + layout.getLineRight(lastRowIdx)
           drawRect(
             selBg,
-            Offset(tailX, topY + lastRowIdx * lineH),
-            Size(geom.charWidthPx * 0.7f, lineH),
+            Offset(tailX, topY + lastRowIdx * lineH + 1f),
+            Size(geom.charWidthPx * 0.7f, (lineH - 2f).coerceAtLeast(4f)),
           )
         }
       }
@@ -521,12 +529,13 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
   if (p.showTouchHandles && !sel.collapsed && p.dropHoverState == null && !p.isSelfDragMoveActive) {
     val startCaret = geom.caretGeometry(sel.min, doc, fold, p.styles, p.cache)
     val endCaret = geom.caretGeometry(sel.max, doc, fold, p.styles, p.cache)
-    val handleColor = palette.ctaBg
+    val handleColor = selectionColorsFor(palette).handleFill
+    val ringColor = palette.editorBg
     if (startCaret.horizontalPosition >= gutterW - 4f && startCaret.bottom in 0f..(size.height + 24f)) {
-      drawSelectionTeardrop(Offset(startCaret.horizontalPosition, startCaret.bottom), isStart = true, color = handleColor)
+      drawSelectionTeardrop(Offset(startCaret.horizontalPosition, startCaret.bottom), isStart = true, color = handleColor, ringColor = ringColor)
     }
     if (endCaret.horizontalPosition >= gutterW - 4f && endCaret.bottom in 0f..(size.height + 24f)) {
-      drawSelectionTeardrop(Offset(endCaret.horizontalPosition, endCaret.bottom), isStart = false, color = handleColor)
+      drawSelectionTeardrop(Offset(endCaret.horizontalPosition, endCaret.bottom), isStart = false, color = handleColor, ringColor = ringColor)
     }
   }
 
@@ -552,6 +561,7 @@ private fun DrawScope.drawTextRangeRects(
   lineH: Float,
   color: Color,
   cornerRadiusPx: Float,
+  outlineColor: Color = Color.Transparent,
 ) {
   if (endCol <= startCol) return
   val startRow = layout.getLineForOffset(startCol)
@@ -564,13 +574,24 @@ private fun DrawScope.drawTextRangeRects(
     val x1 =
       if (row == endRow) textX + layout.getHorizontalPosition(rowEndOff, true)
       else textX + layout.getLineRight(row)
-    val w = (x1 - x0).coerceAtLeast(2f)
+    val w = (x1 - x0).coerceAtLeast(3f)
+    val rectTop = Offset(x0, lineTopY + row * lineH + 1f)
+    val rectSize = Size(w, (lineH - 2f).coerceAtLeast(4f))
     drawRoundRect(
       color = color,
-      topLeft = Offset(x0, lineTopY + row * lineH + 1f),
-      size = Size(w, (lineH - 2f).coerceAtLeast(4f)),
+      topLeft = rectTop,
+      size = rectSize,
       cornerRadius = cr,
     )
+    if (outlineColor != Color.Transparent) {
+      drawRoundRect(
+        color = outlineColor,
+        topLeft = rectTop,
+        size = rectSize,
+        cornerRadius = cr,
+        style = Stroke(width = 0.9.dp.toPx()),
+      )
+    }
   }
 }
 
@@ -600,10 +621,12 @@ private fun DrawScope.drawSelectionTeardrop(
   tip: Offset,
   isStart: Boolean,
   color: Color,
+  ringColor: Color,
 ) {
-  val r = 7.5.dp.toPx()
+  val r = 8.dp.toPx()
   val cx = if (isStart) tip.x - r * 0.72f else tip.x + r * 0.72f
   val cy = tip.y + r * 1.05f
+  drawCircle(color = ringColor.copy(alpha = 0.85f), radius = r + 1.25.dp.toPx(), center = Offset(cx, cy))
   drawCircle(color = color, radius = r, center = Offset(cx, cy))
   val stem =
     Path().apply {

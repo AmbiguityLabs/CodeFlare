@@ -94,6 +94,31 @@ class CodeAnalyzerAndZoomTest {
   }
 
   @Test
+  fun acceptsValidEsmImportsIncludingNodeBuiltinsWithoutFalsePositive() {
+    val validCode =
+      """
+      import { EventEmitter } from "node:events";
+      import { Socket } from "node:net";
+      import type { Request } from '@cloudflare/workers-types';
+      export default {
+        async fetch() {
+          return new Response("ok");
+        }
+      };
+      """.trimIndent()
+    val validDiags = CodeAnalyzer.analyzeFile(jsFile(validCode))
+    assertTrue("Expected no errors for valid imports, got: $validDiags", validDiags.none { it.severity == DiagnosticSeverity.ERROR })
+
+    val brokenImport =
+      """
+      import { Socket } from ;
+      export default { async fetch() { return new Response("ok"); } };
+      """.trimIndent()
+    val brokenDiags = CodeAnalyzer.analyzeFile(jsFile(brokenImport))
+    assertTrue(brokenDiags.any { it.line == 1 && it.message.contains("Expected module specifier") })
+  }
+
+  @Test
   fun differentiatesStrictJsonFromJsoncAndPinpointsLine() {
     val jsonc =
       """

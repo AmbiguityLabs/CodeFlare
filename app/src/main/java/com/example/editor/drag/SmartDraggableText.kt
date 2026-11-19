@@ -22,6 +22,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DragIndicator
 import androidx.compose.material.icons.outlined.Remove
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -46,8 +47,13 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
@@ -59,6 +65,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
@@ -74,6 +81,7 @@ import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.LocalSelectionDragConfig
 import com.example.ui.theme.UiStyleVersion
+import com.example.ui.theme.selectionColorsFor
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Job
@@ -155,14 +163,18 @@ fun SmartDraggableText(
   val palette = LocalIdePalette.current
   val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   val view = LocalView.current
+  val density = LocalDensity.current
+  val configuration = LocalConfiguration.current
   val haptic = LocalHapticFeedback.current
   val clipboard = LocalClipboardManager.current
   val scope = rememberCoroutineScope()
 
   var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
   var ladderState by remember(text) { mutableStateOf<SelectionLadderState?>(null) }
-  var popupAnchorPx by remember { mutableStateOf(IntOffset.Zero) }
+  var fullTextSelected by remember(text) { mutableStateOf(false) }
   var showSelectionPopup by remember(text) { mutableStateOf(false) }
+  var containerPosInWindow by remember { mutableStateOf(Offset.Zero) }
+  var popupSize by remember { mutableStateOf(IntSize.Zero) }
 
   val latestText by rememberUpdatedState(text)
   val latestDomain by rememberUpdatedState(domain)
@@ -174,13 +186,17 @@ fun SmartDraggableText(
   val latestAllowGlobal by rememberUpdatedState(allowGlobalDrag)
   val latestPalette by rememberUpdatedState(palette)
 
-  fun launchReadOnlyDrag(state: SelectionLadderState): Boolean {
+  fun launchReadOnlyDrag(state: SelectionLadderState, isAll: Boolean = fullTextSelected): Boolean {
     val activeScope = state.currentScope ?: return false
     val snippet =
-      latestText.substring(
-        activeScope.start.coerceIn(0, latestText.length),
-        activeScope.end.coerceIn(0, latestText.length),
-      )
+      if (isAll) {
+        latestText
+      } else {
+        latestText.substring(
+          activeScope.start.coerceIn(0, latestText.length),
+          activeScope.end.coerceIn(0, latestText.length),
+        )
+      }
     if (snippet.isEmpty()) return false
     val payload =
       EdgeDragPayload(
@@ -190,7 +206,7 @@ fun SmartDraggableText(
         sourceRange = null,
         text = snippet,
         preferredMode = DragTransferMode.COPY,
-        scopeLabel = activeScope.label,
+        scopeLabel = if (isAll) "All" else activeScope.label,
         allowCrossPaneMove = false,
       )
     val started =
@@ -208,9 +224,15 @@ fun SmartDraggableText(
     return started
   }
 
-  val activeRange = ladderState?.currentScope?.let { it.start to it.end }
+  val activeRange =
+    if (fullTextSelected && text.isNotEmpty()) {
+      0 to text.length
+    } else {
+      ladderState?.currentScope?.let { it.start to it.end }
+    }
+  val selColors = remember(palette) { selectionColorsFor(palette) }
   val renderedText =
-    remember(text, annotatedText, activeRange, palette.activePillBg, palette.activePillFg) {
+    remember(text, annotatedText, activeRange, selColors) {
       val base = annotatedText ?: AnnotatedString(text)
       if (activeRange == null) {
         base
@@ -223,9 +245,9 @@ fun SmartDraggableText(
             addStyle(
               style =
                 SpanStyle(
-                  background = palette.activePillBg.copy(alpha = 0.72f),
-                  color = palette.activePillFg,
-                  fontWeight = FontWeight.SemiBold,
+                  background = selColors.spanBg,
+                  color = selColors.spanFg,
+                  fontWeight = FontWeight.Bold,
                 ),
               start = safeStart,
               end = safeEnd,
@@ -235,7 +257,12 @@ fun SmartDraggableText(
       }
     }
 
-  Box(modifier = modifier) {
+  Box(
+    modifier =
+      modifier.onGloballyPositioned { coords ->
+        containerPosInWindow = coords.positionInWindow()
+      },
+  ) {
     Text(
       text = renderedText,
       style = style,
@@ -275,8 +302,8 @@ fun SmartDraggableText(
                     rawLadder
                   }
                 val initialState = SelectionLadderState(ladder = ladder, activeIndex = ladder.initialIndex)
+                fullTextSelected = false
                 ladderState = initialState
-                popupAnchorPx = IntOffset(downPos.x.roundToInt(), (downPos.y - 48f).roundToInt())
                 holdTriggered = true
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
 
@@ -301,8 +328,9 @@ fun SmartDraggableText(
                 if (!change.pressed) {
                   if (holdTriggered) {
                     change.consume()
-                  } else if (ladderState != null) {
+                  } else if (ladderState != null || fullTextSelected) {
                     ladderState = null
+                    fullTextSelected = false
                     showSelectionPopup = false
                   }
                   break
@@ -341,17 +369,55 @@ fun SmartDraggableText(
 
     val currentState = ladderState
     val currentScope = currentState?.currentScope
-    if (showSelectionPopup && currentState != null && currentScope != null) {
-      val selectedSnippet =
-        text.substring(
-          currentScope.start.coerceIn(0, text.length),
-          currentScope.end.coerceIn(0, text.length),
-        )
+    val activeLayout = layoutResult
+    if (showSelectionPopup && currentState != null && currentScope != null && activeRange != null && activeLayout != null) {
+      val safeStart = activeRange.first.coerceIn(0, text.length)
+      val safeEnd = activeRange.second.coerceIn(safeStart, text.length)
+      val selectedSnippet = if (fullTextSelected) text else text.substring(safeStart, safeEnd)
+      val startLine = activeLayout.getLineForOffset(safeStart)
+      val endLine = activeLayout.getLineForOffset((safeEnd - 1).coerceAtLeast(safeStart))
+      val selTopY = activeLayout.getLineTop(startLine)
+      val selBottomY = activeLayout.getLineBottom(endLine)
+      val selLeftX = activeLayout.getHorizontalPosition(safeStart, true)
+      val selRightX =
+        if (startLine == endLine) activeLayout.getHorizontalPosition(safeEnd, true)
+        else activeLayout.getLineRight(startLine)
+      val selCenterX = (selLeftX + selRightX) * 0.5f
+
+      val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
+      val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
+      val marginPx = with(density) { 10.dp.toPx() }
+      val gapPx = with(density) { 8.dp.toPx() }
+      val safeTopScreenY = with(density) { 56.dp.toPx() }
+      val estPopW = if (popupSize.width > 0) popupSize.width.toFloat() else with(density) { 256.dp.toPx() }
+      val estPopH = if (popupSize.height > 0) popupSize.height.toFloat() else with(density) { 38.dp.toPx() }
+
+      val maxScreenX = (screenWidthPx - estPopW - marginPx).coerceAtLeast(marginPx)
+      val desiredScreenX = (containerPosInWindow.x + selCenterX - estPopW * 0.5f).coerceIn(marginPx, maxScreenX)
+      val localX = (desiredScreenX - containerPosInWindow.x).roundToInt()
+
+      val aboveLocalY = selTopY - estPopH - gapPx
+      val belowLocalY = selBottomY + gapPx
+      val maxScreenY = (screenHeightPx - estPopH - marginPx).coerceAtLeast(safeTopScreenY)
+      val localY =
+        if (containerPosInWindow.y + aboveLocalY >= safeTopScreenY) {
+          aboveLocalY
+        } else if (containerPosInWindow.y + belowLocalY <= maxScreenY) {
+          belowLocalY
+        } else {
+          // Selection spans full viewport (e.g. Select All): anchor cleanly at top visible band
+          (safeTopScreenY - containerPosInWindow.y).coerceAtLeast(0f)
+        }.roundToInt()
+
+      val canShrinkNow = fullTextSelected || currentState.canShrink
+      val canExpandNow = !fullTextSelected && currentState.canExpand
+
       Popup(
         alignment = Alignment.TopStart,
-        offset = IntOffset(popupAnchorPx.x.coerceAtLeast(0), popupAnchorPx.y.coerceAtLeast(-52)),
+        offset = IntOffset(localX, localY),
         onDismissRequest = {
           showSelectionPopup = false
+          fullTextSelected = false
           ladderState = null
         },
         properties = PopupProperties(focusable = false),
@@ -359,9 +425,12 @@ fun SmartDraggableText(
         Surface(
           shape = RoundedCornerShape(10.dp),
           color = palette.chromeSurface,
-          border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.75f)),
+          border = BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.35f)),
           shadowElevation = 6.dp,
-          modifier = Modifier.testTag("smart_text_popup_$surfaceId"),
+          modifier =
+            Modifier
+              .onSizeChanged { popupSize = it }
+              .testTag("smart_text_popup_$surfaceId"),
         ) {
           Row(
             modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp),
@@ -376,11 +445,11 @@ fun SmartDraggableText(
                     .clip(RoundedCornerShape(7.dp))
                     .background(EmeraldLive.copy(alpha = 0.14f))
                     .border(0.5.dp, EmeraldLive.copy(alpha = 0.35f), RoundedCornerShape(7.dp))
-                    .pointerInput(currentState) {
+                    .pointerInput(currentState, fullTextSelected) {
                       awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         down.consume()
-                        launchReadOnlyDrag(currentState)
+                        launchReadOnlyDrag(currentState, fullTextSelected)
                       }
                     }
                     .padding(horizontal = 7.dp)
@@ -405,7 +474,7 @@ fun SmartDraggableText(
                     .padding(horizontal = 6.dp, vertical = 3.dp),
               ) {
                 Text(
-                  text = currentScope.label,
+                  text = if (fullTextSelected) "All" else currentScope.label,
                   fontFamily = JetBrainsMono,
                   fontSize = 10.sp,
                   fontWeight = FontWeight.SemiBold,
@@ -420,8 +489,12 @@ fun SmartDraggableText(
                   Modifier
                     .size(28.dp)
                     .clip(RoundedCornerShape(7.dp))
-                    .clickable(enabled = currentState.canShrink) {
-                      ladderState = currentState.shrink()
+                    .clickable(enabled = canShrinkNow) {
+                      if (fullTextSelected) {
+                        fullTextSelected = false
+                      } else {
+                        ladderState = currentState.shrink()
+                      }
                       haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     }
                     .testTag("smart_text_shrink_$surfaceId"),
@@ -430,7 +503,7 @@ fun SmartDraggableText(
                 Icon(
                   imageVector = Icons.Outlined.Remove,
                   contentDescription = "Shrink selection",
-                  tint = if (currentState.canShrink) palette.textPrimary else palette.textMuted.copy(alpha = 0.35f),
+                  tint = if (canShrinkNow) palette.textPrimary else palette.textMuted.copy(alpha = 0.35f),
                   modifier = Modifier.size(15.dp),
                 )
               }
@@ -440,7 +513,7 @@ fun SmartDraggableText(
                   Modifier
                     .size(28.dp)
                     .clip(RoundedCornerShape(7.dp))
-                    .clickable(enabled = currentState.canExpand) {
+                    .clickable(enabled = canExpandNow) {
                       ladderState = currentState.expand()
                       haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     }
@@ -450,7 +523,7 @@ fun SmartDraggableText(
                 Icon(
                   imageVector = Icons.Outlined.Add,
                   contentDescription = "Expand selection",
-                  tint = if (currentState.canExpand) palette.textPrimary else palette.textMuted.copy(alpha = 0.35f),
+                  tint = if (canExpandNow) palette.textPrimary else palette.textMuted.copy(alpha = 0.35f),
                   modifier = Modifier.size(15.dp),
                 )
               }
@@ -463,9 +536,30 @@ fun SmartDraggableText(
                     .size(28.dp)
                     .clip(RoundedCornerShape(7.dp))
                     .clickable {
+                      fullTextSelected = !fullTextSelected
+                      haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    }
+                    .testTag("smart_text_select_all_$surfaceId"),
+                contentAlignment = Alignment.Center,
+              ) {
+                Icon(
+                  imageVector = Icons.Outlined.SelectAll,
+                  contentDescription = "Select all",
+                  tint = if (fullTextSelected) palette.activePillFg else palette.textPrimary,
+                  modifier = Modifier.size(14.dp),
+                )
+              }
+
+              Box(
+                modifier =
+                  Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(7.dp))
+                    .clickable {
                       clipboard.setText(AnnotatedString(selectedSnippet))
                       onCopied?.invoke(selectedSnippet)
                       showSelectionPopup = false
+                      fullTextSelected = false
                       ladderState = null
                     }
                     .testTag("smart_text_copy_$surfaceId"),
@@ -487,6 +581,7 @@ fun SmartDraggableText(
                   .clip(RoundedCornerShape(7.dp))
                   .clickable {
                     showSelectionPopup = false
+                    fullTextSelected = false
                     ladderState = null
                   },
               contentAlignment = Alignment.Center,

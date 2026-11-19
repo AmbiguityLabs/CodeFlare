@@ -295,6 +295,7 @@ fun EdgeCodeEditorSurface(
   var showPasteHistory by remember { mutableStateOf(false) }
   var showTouchHandles by remember { mutableStateOf(false) }
   var activeHandleDrag by remember { mutableStateOf<DraggedHandle?>(null) }
+  var prevViewportHeight by remember(filePath) { mutableIntStateOf(0) }
 
   val selectionConfig = editorSettings.selectionDragConfig.normalized()
   val latestSelectionConfig by rememberUpdatedState(selectionConfig)
@@ -540,11 +541,19 @@ fun EdgeCodeEditorSurface(
     }
   }
 
-  // Keep caret scrolled into view on edits/navigation
-  LaunchedEffect(session.editCount, session.selection) {
+  val topClearancePx = if (editorSettings.stickyHeaders) with(density) { 28.dp.toPx() } else 0f
+  val bottomClearancePx = if (!readOnly) with(density) { 38.dp.toPx() } else with(density) { 12.dp.toPx() }
+
+  // Keep caret scrolled into view on edits, tap navigation, focus gain, or IME resize
+  LaunchedEffect(session.editCount, session.selection, isFocused) {
     if (isFocused && activeHandleDrag == null) {
-      val topClearance = if (editorSettings.stickyHeaders) with(density) { 28.dp.toPx() } else 0f
-      geometry.ensureCaretVisible(session, lineStyles, renderCache, topClearancePx = topClearance)
+      geometry.ensureCaretVisible(
+        session = session,
+        styles = lineStyles,
+        cache = renderCache,
+        topClearancePx = topClearancePx,
+        bottomClearancePx = bottomClearancePx,
+      )
     }
   }
 
@@ -856,8 +865,19 @@ fun EdgeCodeEditorSurface(
             surfaceOriginInRoot = coords.positionInRoot()
           }
           .onSizeChanged { newSize ->
+            val shrank = prevViewportHeight > 0 && newSize.height < prevViewportHeight
+            prevViewportHeight = newSize.height
             geometry.viewport = newSize
             geometry.clampScroll(session, renderCache)
+            if (shrank && isFocused && activeHandleDrag == null) {
+              geometry.ensureCaretVisible(
+                session = session,
+                styles = lineStyles,
+                cache = renderCache,
+                topClearancePx = topClearancePx,
+                bottomClearancePx = bottomClearancePx,
+              )
+            }
           }
           .dragAndDropTarget(
             shouldStartDragAndDrop = { event ->
@@ -1314,6 +1334,13 @@ fun EdgeCodeEditorSurface(
                   if (!readOnly) imeHandle.showKeyboard()
                 }
               }
+              geometry.ensureCaretVisible(
+                session = session,
+                styles = lineStyles,
+                cache = renderCache,
+                topClearancePx = topClearancePx,
+                bottomClearancePx = bottomClearancePx,
+              )
             }
           }
           .drawBehind {
@@ -1381,6 +1408,12 @@ fun EdgeCodeEditorSurface(
       } else {
         0f
       }
+    val selBottomY =
+      if (!session.selection.collapsed && activeHandleDrag == null) {
+        geometry.caretGeometry(session.selection.max, session.doc, session.foldModel, lineStyles, renderCache).bottom
+      } else {
+        0f
+      }
     EdgeSmartHoldScopePill(
       scope = activeHoldScope,
       anchorY = selAnchorY,
@@ -1397,6 +1430,8 @@ fun EdgeCodeEditorSurface(
           !showPasteHistory &&
           isFocused,
       anchorY = selAnchorY,
+      anchorBottomY = selBottomY,
+      viewportHeightPx = geometry.viewport.height.toFloat(),
       readOnly = readOnly,
       hasClipboardHistory = ClipboardHistoryStore.entries.isNotEmpty(),
       scopeLabel = selectionLadder?.currentScope?.label,

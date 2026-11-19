@@ -662,6 +662,8 @@ fun BoxScope.EdgeSmartHoldScopePill(
 fun BoxScope.EdgeSelectionToolbar(
   visible: Boolean,
   anchorY: Float,
+  anchorBottomY: Float = anchorY,
+  viewportHeightPx: Float = 0f,
   readOnly: Boolean,
   hasClipboardHistory: Boolean,
   scopeLabel: String? = null,
@@ -692,7 +694,15 @@ fun BoxScope.EdgeSelectionToolbar(
   val topOffsetPx =
     with(density) {
       val desired = anchorY - 46.dp.toPx()
-      if (desired < 8.dp.toPx()) (anchorY + 30.dp.toPx()).roundToInt() else desired.roundToInt()
+      if (desired >= 8.dp.toPx()) {
+        desired.roundToInt()
+      } else {
+        val belowSel = maxOf(anchorY + 30.dp.toPx(), anchorBottomY + 22.dp.toPx())
+        val maxY =
+          if (viewportHeightPx > 0f) (viewportHeightPx - 48.dp.toPx()).coerceAtLeast(8.dp.toPx())
+          else belowSel
+        belowSel.coerceAtMost(maxY).roundToInt()
+      }
     }
 
   val hasAnyControl =

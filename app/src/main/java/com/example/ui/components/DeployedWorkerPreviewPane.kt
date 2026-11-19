@@ -21,6 +21,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -793,8 +794,9 @@ fun DeployedWorkerPreviewPane(
                 }
               }
             LazyColumn(
-              modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp, max = 148.dp).padding(horizontal = 6.dp, vertical = 4.dp),
-              verticalArrangement = Arrangement.spacedBy(2.dp),
+              modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp, max = 160.dp),
+              contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+              verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
               items(keyedConsole, key = { it.first }) { (_, entry) ->
                 PreviewConsoleRow(
@@ -825,72 +827,86 @@ private fun PreviewConsoleRow(
       entry.kind == "DEPLOY" -> EmeraldLive
       else -> palette.activePillFg
     }
-  Row(
+  Column(
     modifier =
       Modifier
         .fillMaxWidth()
-        .clip(RoundedCornerShape(5.dp))
+        .clip(RoundedCornerShape(6.dp))
         .clickable(onClick = onCopy)
-        .padding(horizontal = 6.dp, vertical = 4.dp),
-    verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(6.dp),
+        .padding(horizontal = 6.dp, vertical = 5.dp),
+    verticalArrangement = Arrangement.spacedBy(3.dp),
   ) {
-    Box(
-      modifier =
-        Modifier
-          .width(2.5.dp)
-          .height(14.dp)
-          .clip(RoundedCornerShape(2.dp))
-          .background(accent),
-    )
-    Text(
-      text = entry.timestamp,
-      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 10.5.sp),
-      color = palette.textMuted,
-    )
-    Surface(
-      color = palette.chromeSurface,
-      shape = RoundedCornerShape(4.dp),
-      border = BorderStroke(1.dp, palette.border.copy(alpha = 0.45f)),
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+      Box(
+        modifier =
+          Modifier
+            .width(2.5.dp)
+            .height(12.dp)
+            .clip(RoundedCornerShape(2.dp))
+            .background(accent),
+      )
+      Surface(
+        color = palette.chromeSurface,
+        shape = RoundedCornerShape(4.dp),
+        border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.45f)),
+      ) {
+        Text(
+          text = entry.methodOrLevel,
+          style = TextStyle(fontFamily = JetBrainsMono, fontSize = 9.5.sp, fontWeight = FontWeight.Bold),
+          color = if (entry.kind == "ERR") RoseError else palette.textPrimary,
+          maxLines = 1,
+          softWrap = false,
+          modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+        )
+      }
+      entry.statusCode?.let { code ->
+        Surface(
+          color = accent.copy(alpha = 0.14f),
+          shape = RoundedCornerShape(4.dp),
+          border = BorderStroke(0.75.dp, accent.copy(alpha = 0.35f)),
+        ) {
+          Text(
+            text = "$code",
+            style = TextStyle(fontFamily = JetBrainsMono, fontSize = 9.5.sp, fontWeight = FontWeight.Bold),
+            color = accent,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+          )
+        }
+      }
+      entry.durationMs?.let { ms ->
+        Text(
+          text = "${ms}ms",
+          style = TextStyle(fontFamily = JetBrainsMono, fontSize = 9.5.sp),
+          color = palette.textMuted,
+          maxLines = 1,
+          softWrap = false,
+        )
+      }
+      Spacer(Modifier.weight(1f))
       Text(
-        text = entry.methodOrLevel,
-        style = TextStyle(fontFamily = JetBrainsMono, fontSize = 10.sp, fontWeight = FontWeight.Bold),
-        color = if (entry.kind == "ERR") RoseError else palette.textPrimary,
-        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+        text = entry.timestamp,
+        style = TextStyle(fontFamily = JetBrainsMono, fontSize = 9.5.sp),
+        color = palette.textMuted,
+        maxLines = 1,
+        softWrap = false,
       )
     }
     SmartDraggableText(
       text = entry.message,
       surfaceId = "preview_console_${entry.timestamp}_${entry.message.hashCode()}",
       domain = SmartTextDomain.TERMINAL_OR_LOG,
-      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
+      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, lineHeight = 15.sp),
       color = palette.textSecondary,
-      maxLines = 1,
+      maxLines = 4,
       overflow = TextOverflow.Ellipsis,
-      modifier = Modifier.weight(1f),
+      modifier = Modifier.fillMaxWidth().padding(start = 8.dp),
     )
-    entry.statusCode?.let { code ->
-      Surface(
-        color = accent.copy(alpha = 0.14f),
-        shape = RoundedCornerShape(4.dp),
-        border = BorderStroke(1.dp, accent.copy(alpha = 0.35f)),
-      ) {
-        Text(
-          text = "$code",
-          style = TextStyle(fontFamily = JetBrainsMono, fontSize = 10.sp, fontWeight = FontWeight.Bold),
-          color = accent,
-          modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
-        )
-      }
-    }
-    entry.durationMs?.let { ms ->
-      Text(
-        text = "${ms}ms",
-        style = TextStyle(fontFamily = JetBrainsMono, fontSize = 10.sp),
-        color = palette.textMuted,
-      )
-    }
   }
 }
 

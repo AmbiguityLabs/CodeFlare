@@ -32,11 +32,16 @@ import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.CloseFullscreen
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.OpenInFull
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
@@ -63,7 +68,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -119,6 +126,10 @@ fun WorkerTestWindow(
   var wrapResponse by remember { mutableStateOf(true) }
   var showEmptyHelp by remember { mutableStateOf(false) }
   var showMethodNote by remember { mutableStateOf(false) }
+  var requestCardCollapsed by remember { mutableStateOf(false) }
+  var responseExpanded by remember { mutableStateOf(false) }
+  var showResponseSearch by remember { mutableStateOf(false) }
+  var responseSearchQuery by remember { mutableStateOf("") }
   var htmlWebViewRef by remember { mutableStateOf<WebView?>(null) }
 
   val methods = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
@@ -392,60 +403,87 @@ fun WorkerTestWindow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
           ) {
-            listOf(
-              0 to "Headers (${headerRows.count { it.enabled && it.key.isNotBlank() }})",
-              1 to "Body${if (uiState.previewHttpBody.isNotBlank()) " •" else ""}",
-            ).forEach { (idx, label) ->
-              val active = requestSectionTab == idx
-              Surface(
-                onClick = { requestSectionTab = idx },
-                color = if (active) palette.activePillBg else palette.chromePill,
-                shape = RoundedCornerShape(8.dp),
-              ) {
-                Text(
-                  text = label,
-                  style = MaterialTheme.typography.labelSmall,
-                  fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                  color = if (active) palette.activePillFg else palette.textSecondary,
-                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                )
-              }
-            }
-            Spacer(Modifier.weight(1f))
-            if (requestSectionTab == 0) {
-              Surface(
-                onClick = { rawHeadersMode = !rawHeadersMode },
-                color = palette.chromePill,
-                shape = RoundedCornerShape(8.dp),
-              ) {
-                Text(
-                  text = if (rawHeadersMode) "Key-Value" else "Raw JSON",
-                  style = MaterialTheme.typography.labelSmall,
-                  color = palette.textSecondary,
-                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                )
-              }
-            } else {
-              Surface(
-                onClick = {
-                  val pretty = prettyFormatJsonOrKeep(uiState.previewHttpBody)
-                  onBodyChange(pretty)
-                },
-                color = palette.chromePill,
-                shape = RoundedCornerShape(8.dp),
-              ) {
-                Row(
-                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(3.dp),
+            Row(
+              modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+              listOf(
+                0 to "Headers (${headerRows.count { it.enabled && it.key.isNotBlank() }})",
+                1 to "Body${if (uiState.previewHttpBody.isNotBlank()) " •" else ""}",
+              ).forEach { (idx, label) ->
+                val active = requestSectionTab == idx
+                Surface(
+                  onClick = {
+                    requestSectionTab = idx
+                    if (requestCardCollapsed) requestCardCollapsed = false
+                  },
+                  color = if (active) palette.activePillBg else palette.chromePill,
+                  shape = RoundedCornerShape(8.dp),
                 ) {
-                  Icon(Icons.Outlined.AutoFixHigh, contentDescription = null, tint = palette.activePillFg, modifier = Modifier.size(12.dp))
-                  Text("Format JSON", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                  Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (active) palette.activePillFg else palette.textSecondary,
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                  )
                 }
               }
             }
+            if (!requestCardCollapsed) {
+              if (requestSectionTab == 0) {
+                Surface(
+                  onClick = { rawHeadersMode = !rawHeadersMode },
+                  color = palette.chromePill,
+                  shape = RoundedCornerShape(8.dp),
+                ) {
+                  Text(
+                    text = if (rawHeadersMode) "Key-Value" else "Raw JSON",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.textSecondary,
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                  )
+                }
+              } else {
+                Surface(
+                  onClick = {
+                    val pretty = prettyFormatJsonOrKeep(uiState.previewHttpBody)
+                    onBodyChange(pretty)
+                  },
+                  color = palette.chromePill,
+                  shape = RoundedCornerShape(8.dp),
+                ) {
+                  Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                  ) {
+                    Icon(Icons.Outlined.AutoFixHigh, contentDescription = null, tint = palette.activePillFg, modifier = Modifier.size(12.dp))
+                    Text("Format JSON", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary, maxLines = 1, softWrap = false)
+                  }
+                }
+              }
+            }
+            IconButton(
+              onClick = { requestCardCollapsed = !requestCardCollapsed },
+              modifier = Modifier.size(28.dp).testTag("worker_test_collapse_request"),
+            ) {
+              Icon(
+                imageVector = if (requestCardCollapsed) Icons.Outlined.ExpandMore else Icons.Outlined.ExpandLess,
+                contentDescription = if (requestCardCollapsed) "Expand request section" else "Collapse request section",
+                tint = palette.textSecondary,
+                modifier = Modifier.size(17.dp),
+              )
+            }
           }
 
+          AnimatedVisibility(visible = !requestCardCollapsed) {
+          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
           if (requestSectionTab == 0) {
             if (rawHeadersMode) {
               OutlinedTextField(
@@ -634,6 +672,8 @@ fun WorkerTestWindow(
               }
             }
           }
+          }
+          }
         }
       }
 
@@ -697,6 +737,8 @@ fun WorkerTestWindow(
                   style = MaterialTheme.typography.labelSmall,
                   fontWeight = FontWeight.Bold,
                   color = statusColor,
+                  maxLines = 1,
+                  softWrap = false,
                   modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                 )
               }
@@ -716,11 +758,37 @@ fun WorkerTestWindow(
                     text = "${res.durationMs} ms • $sizeLabel",
                     style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
                     color = palette.textPrimary,
+                    maxLines = 1,
+                    softWrap = false,
                   )
                 }
               }
 
               Spacer(Modifier.weight(1f))
+
+              IconButton(
+                onClick = { showResponseSearch = !showResponseSearch },
+                modifier = Modifier.size(28.dp).testTag("worker_test_res_search_toggle"),
+              ) {
+                Icon(
+                  Icons.Outlined.Search,
+                  contentDescription = "Search response",
+                  tint = if (showResponseSearch) palette.activePillFg else palette.textSecondary,
+                  modifier = Modifier.size(15.dp),
+                )
+              }
+
+              IconButton(
+                onClick = { responseExpanded = !responseExpanded },
+                modifier = Modifier.size(28.dp).testTag("worker_test_res_expand_toggle"),
+              ) {
+                Icon(
+                  imageVector = if (responseExpanded) Icons.Outlined.CloseFullscreen else Icons.Outlined.OpenInFull,
+                  contentDescription = if (responseExpanded) "Restore response height" else "Expand response",
+                  tint = if (responseExpanded) palette.activePillFg else palette.textSecondary,
+                  modifier = Modifier.size(15.dp),
+                )
+              }
 
               Surface(
                 onClick = {
@@ -736,7 +804,7 @@ fun WorkerTestWindow(
                   horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                   Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy response body", tint = palette.textSecondary, modifier = Modifier.size(13.dp))
-                  Text("Copy", style = MaterialTheme.typography.labelSmall, color = palette.textPrimary)
+                  Text("Copy", style = MaterialTheme.typography.labelSmall, color = palette.textPrimary, maxLines = 1, softWrap = false)
                 }
               }
             }
@@ -758,6 +826,65 @@ fun WorkerTestWindow(
               remember(res.body, contentTypeHint, res.errorMessage) {
                 detectWorkerResponseBadge(res.body, contentTypeHint, res.errorMessage)
               }
+            val displayBody =
+              remember(res.body, prettyJson, res.errorMessage) {
+                if (res.errorMessage != null) res.errorMessage
+                else if (res.body.isBlank()) "(empty response body)"
+                else if (prettyJson) prettyFormatJsonOrKeep(res.body)
+                else res.body
+              }
+            val activeSearchMatches =
+              remember(showResponseSearch, responseSearchQuery, displayBody) {
+                if (!showResponseSearch || responseSearchQuery.isBlank()) emptyList()
+                else findTextOccurrences(displayBody, responseSearchQuery)
+              }
+
+            AnimatedVisibility(visible = showResponseSearch) {
+              Row(
+                modifier =
+                  Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(palette.editorBg)
+                    .border(0.5.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                Icon(Icons.Outlined.Search, contentDescription = null, tint = palette.activePillFg, modifier = Modifier.size(14.dp))
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                  if (responseSearchQuery.isEmpty()) {
+                    Text(
+                      text = "Find in response…",
+                      style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
+                      color = palette.textMuted,
+                      maxLines = 1,
+                    )
+                  }
+                  BasicTextField(
+                    value = responseSearchQuery,
+                    onValueChange = { responseSearchQuery = it },
+                    singleLine = true,
+                    textStyle = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, color = palette.textPrimary),
+                    cursorBrush = SolidColor(palette.activePillFg),
+                    modifier = Modifier.fillMaxWidth().testTag("worker_test_res_search_input"),
+                  )
+                }
+                if (responseSearchQuery.isNotEmpty()) {
+                  Text(
+                    text = "${activeSearchMatches.size} hits",
+                    style = TextStyle(fontFamily = JetBrainsMono, fontSize = 10.sp),
+                    color = if (activeSearchMatches.isNotEmpty()) palette.activePillFg else palette.textMuted,
+                    maxLines = 1,
+                    softWrap = false,
+                  )
+                  IconButton(onClick = { responseSearchQuery = "" }, modifier = Modifier.size(22.dp)) {
+                    Icon(Icons.Outlined.Close, contentDescription = "Clear search", tint = palette.textMuted, modifier = Modifier.size(13.dp))
+                  }
+                }
+              }
+            }
+
             val tabs =
               buildList {
                 add(0 to "Body")
@@ -769,23 +896,30 @@ fun WorkerTestWindow(
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-              tabs.forEach { (idx, label) ->
-                val active = responseOutputTab == idx
-                Surface(
-                  onClick = { responseOutputTab = idx },
-                  color = if (active) palette.activePillBg else palette.chromePill,
-                  shape = RoundedCornerShape(8.dp),
-                  border = BorderStroke(0.5.dp, if (active) palette.activePillFg.copy(alpha = 0.4f) else palette.border.copy(alpha = 0.35f)),
-                ) {
-                  Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (active) palette.activePillFg else palette.textSecondary,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                  )
+              Row(
+                modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                tabs.forEach { (idx, label) ->
+                  val active = responseOutputTab == idx
+                  Surface(
+                    onClick = { responseOutputTab = idx },
+                    color = if (active) palette.activePillBg else palette.chromePill,
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(0.5.dp, if (active) palette.activePillFg.copy(alpha = 0.4f) else palette.border.copy(alpha = 0.35f)),
+                  ) {
+                    Text(
+                      text = label,
+                      style = MaterialTheme.typography.labelSmall,
+                      color = if (active) palette.activePillFg else palette.textSecondary,
+                      maxLines = 1,
+                      softWrap = false,
+                      modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    )
+                  }
                 }
               }
-              Spacer(Modifier.weight(1f))
               if (responseOutputTab == 0) {
                 Surface(
                   color = palette.chromePill,
@@ -796,6 +930,8 @@ fun WorkerTestWindow(
                     text = formatBadge,
                     style = TextStyle(fontFamily = JetBrainsMono, fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
                     color = palette.textSecondary,
+                    maxLines = 1,
+                    softWrap = false,
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
                   )
                 }
@@ -809,6 +945,8 @@ fun WorkerTestWindow(
                     text = if (wrapResponse) "Wrap" else "NoWrap",
                     style = MaterialTheme.typography.labelSmall,
                     color = if (wrapResponse) palette.activePillFg else palette.textSecondary,
+                    maxLines = 1,
+                    softWrap = false,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                   )
                 }
@@ -824,6 +962,8 @@ fun WorkerTestWindow(
                     text = if (prettyJson) "Pretty" else "Raw",
                     style = MaterialTheme.typography.labelSmall,
                     color = palette.activePillFg,
+                    maxLines = 1,
+                    softWrap = false,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                   )
                 }
@@ -834,18 +974,29 @@ fun WorkerTestWindow(
               color = palette.editorBg,
               shape = RoundedCornerShape(8.dp),
               border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.55f)),
-              modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 320.dp),
+              modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = if (responseExpanded) 520.dp else 320.dp),
             ) {
               when (responseOutputTab) {
                 1 -> {
+                  val displayedHeaders =
+                    remember(res.headers, showResponseSearch, responseSearchQuery) {
+                      if (!showResponseSearch || responseSearchQuery.isBlank()) {
+                        res.headers.entries.toList()
+                      } else {
+                        res.headers.entries.filter { (k, v) ->
+                          k.contains(responseSearchQuery, ignoreCase = true) ||
+                            v.contains(responseSearchQuery, ignoreCase = true)
+                        }
+                      }
+                    }
                   Column(
                     modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(10.dp),
                     verticalArrangement = Arrangement.spacedBy(3.dp),
                   ) {
-                    if (res.headers.isEmpty()) {
-                      Text("(no response headers)", style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp), color = palette.textMuted)
+                    if (displayedHeaders.isEmpty()) {
+                      Text("(no matching response headers)", style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp), color = palette.textMuted)
                     } else {
-                      res.headers.forEach { (k, v) ->
+                      displayedHeaders.forEach { (k, v) ->
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                           Text("$k:", style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold), color = palette.activePillFg)
                           SmartDraggableText(
@@ -882,30 +1033,33 @@ fun WorkerTestWindow(
                         wv.loadDataWithBaseURL(res.url.ifBlank { "https://localhost/" }, res.body, "text/html", "utf-8", null)
                       }
                     },
-                    modifier = Modifier.fillMaxWidth().height(250.dp),
+                    modifier = Modifier.fillMaxWidth().height(if (responseExpanded) 420.dp else 250.dp),
                   )
                 }
                 else -> {
-                  val displayBody =
-                    remember(res.body, prettyJson, res.errorMessage) {
-                      if (res.errorMessage != null) res.errorMessage
-                      else if (res.body.isBlank()) "(empty response body)"
-                      else if (prettyJson) prettyFormatJsonOrKeep(res.body)
-                      else res.body
-                    }
                   val domain =
                     if (res.errorMessage == null && (formatBadge == "JSON" || formatBadge == "HTML" || formatBadge == "JS")) {
                       SmartTextDomain.JSON
                     } else {
                       SmartTextDomain.TERMINAL_OR_LOG
                     }
-                  val highlighted =
+                  val syntaxHighlighted =
                     remember(displayBody, contentTypeHint, palette, res.errorMessage) {
                       if (res.errorMessage != null || displayBody == "(empty response body)") {
                         null
                       } else {
                         SyntaxHighlighter.highlightResponse(displayBody, contentTypeHint, palette)
                       }
+                    }
+                  val highlightedWithSearch =
+                    remember(syntaxHighlighted, displayBody, activeSearchMatches, palette) {
+                      applySearchMatchHighlight(
+                        base = syntaxHighlighted,
+                        plainText = displayBody,
+                        matches = activeSearchMatches,
+                        matchBg = palette.searchMatchBg,
+                        matchFg = palette.textPrimary,
+                      )
                     }
                   val bodyModifier =
                     if (wrapResponse) {
@@ -916,7 +1070,7 @@ fun WorkerTestWindow(
                   Box(modifier = bodyModifier) {
                     SmartDraggableText(
                       text = displayBody,
-                      annotatedText = highlighted,
+                      annotatedText = highlightedWithSearch,
                       surfaceId = "worker_res_body",
                       domain = domain,
                       style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 16.sp),
@@ -986,6 +1140,45 @@ fun WorkerTestWindow(
             }
           }
         }
+      }
+      Spacer(Modifier.height(72.dp))
+    }
+  }
+}
+
+internal fun findTextOccurrences(text: String, query: String): List<IntRange> {
+  if (query.isEmpty() || text.isEmpty()) return emptyList()
+  val hits = mutableListOf<IntRange>()
+  var start = 0
+  while (start < text.length && hits.size < 250) {
+    val idx = text.indexOf(query, startIndex = start, ignoreCase = true)
+    if (idx < 0) break
+    hits.add(idx until (idx + query.length))
+    start = idx + query.length.coerceAtLeast(1)
+  }
+  return hits
+}
+
+internal fun applySearchMatchHighlight(
+  base: AnnotatedString?,
+  plainText: String,
+  matches: List<IntRange>,
+  matchBg: Color,
+  matchFg: Color,
+): AnnotatedString? {
+  if (matches.isEmpty()) return base
+  val source = base ?: AnnotatedString(plainText)
+  return buildAnnotatedString {
+    append(source)
+    for (range in matches) {
+      val s = range.first.coerceIn(0, length)
+      val e = (range.last + 1).coerceIn(s, length)
+      if (e > s) {
+        addStyle(
+          SpanStyle(background = matchBg, color = matchFg, fontWeight = FontWeight.Bold),
+          s,
+          e,
+        )
       }
     }
   }

@@ -54,9 +54,9 @@ import androidx.compose.material.icons.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.ListAlt
 import androidx.compose.material.icons.outlined.NoteAdd
-import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Restore
+import androidx.compose.material.icons.outlined.RocketLaunch
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.outlined.Sync
@@ -346,6 +346,7 @@ fun CodeEditorPane(
         activeFile.path.equals("wrangler.json", ignoreCase = true) ||
         activeFile.path.equals("wrangler.toml", ignoreCase = true)
     var showSymbolOutlineMenu by remember { mutableStateOf(false) }
+    var isDiagPillDismissed by remember(activeFile.path) { mutableStateOf(false) }
 
     var symbols by remember(activeFile.path, activeFile.language) {
       mutableStateOf<List<CodeSymbol>>(emptyList())
@@ -453,6 +454,9 @@ fun CodeEditorPane(
               )
             }
 
+            val isPreviewableFile =
+              com.example.editor.LocalWorkspacePreviewRenderer.isPreviewableFile(activeFile.path) ||
+                activeFile.language == WorkerLanguage.CSS
             if (isWranglerConfig) {
               IconRevealButton(
                 icon = Icons.Outlined.Sync,
@@ -464,10 +468,10 @@ fun CodeEditorPane(
                 height = 24.dp,
                 iconSize = 15.dp,
               )
-            } else if (!activeFile.isVirtualReadOnly) {
+            } else if (!activeFile.isVirtualReadOnly && !isPreviewableFile) {
               IconRevealButton(
-                icon = Icons.Outlined.PlayArrow,
-                revealedLabel = "Run CLI",
+                icon = Icons.Outlined.RocketLaunch,
+                revealedLabel = "Run",
                 minimal = true,
                 isBusy = uiState.isRunningLocalScript,
                 onClick = { flushThen(onRunLocalScript) },
@@ -558,20 +562,7 @@ fun CodeEditorPane(
               )
             }
 
-            if (activeFile.language in setOf(WorkerLanguage.JAVASCRIPT, WorkerLanguage.TYPESCRIPT)) {
-              IconRevealButton(
-                icon = Icons.Outlined.PlayArrow,
-                revealedLabel = "Run",
-                minimal = true,
-                isBusy = uiState.isRunningLocalScript,
-                onClick = { flushThen(onRunLocalScript) },
-                height = 24.dp,
-                iconSize = 15.dp,
-                tag = "editor_quick_run_button",
-              )
-            } else if (com.example.editor.LocalWorkspacePreviewRenderer.isPreviewableFile(activeFile.path) ||
-              activeFile.language == WorkerLanguage.CSS
-            ) {
+            if (isPreviewableFile) {
               IconRevealButton(
                 icon = Icons.Outlined.Visibility,
                 revealedLabel = "Preview",
@@ -956,6 +947,11 @@ fun CodeEditorPane(
       remember(fileDiagnostics) {
         fileDiagnostics.filter { it.severity != DiagnosticSeverity.INFO }.ifEmpty { fileDiagnostics }
       }
+    LaunchedEffect(actionableDiagnostics.isEmpty()) {
+      if (actionableDiagnostics.isEmpty()) {
+        isDiagPillDismissed = false
+      }
+    }
 
     var committedZoomPercent by remember {
       mutableIntStateOf(uiState.editorSettings.zoomPercent.coerceIn(60, 220))
@@ -1034,13 +1030,14 @@ fun CodeEditorPane(
       )
 
       FloatingSyntaxDiagnosticPill(
-        visible = actionableDiagnostics.isNotEmpty() && !uiState.isEditorTopChromeHidden,
+        visible = actionableDiagnostics.isNotEmpty() && !uiState.isEditorTopChromeHidden && !isDiagPillDismissed,
         filePath = activeFile.path,
         diagnostics = actionableDiagnostics,
         hudHolder = hudHolder,
         onJumpToLocation = { path, line, col ->
           flushThen { onJumpToLocation(path, line, col) }
         },
+        onDismiss = { isDiagPillDismissed = true },
         modifier =
           Modifier
             .align(Alignment.TopEnd)
@@ -1288,6 +1285,7 @@ private fun FloatingSyntaxDiagnosticPill(
   diagnostics: List<DiagnosticItem>,
   hudHolder: EditorLiveHudHolder,
   onJumpToLocation: (String, Int, Int) -> Unit,
+  onDismiss: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
@@ -1328,7 +1326,7 @@ private fun FloatingSyntaxDiagnosticPill(
       shadowElevation = 2.dp,
       modifier =
         Modifier
-          .widthIn(max = 310.dp)
+          .widthIn(max = 296.dp)
           .clip(RoundedCornerShape(10.dp))
           .clickable { onJumpToLocation(currentDiag.filePath, currentDiag.line, currentDiag.column) }
           .testTag("editor_syntax_catcher_bar"),
@@ -1336,7 +1334,7 @@ private fun FloatingSyntaxDiagnosticPill(
       Row(
         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
       ) {
         Icon(
           imageVector = if (isErr) Icons.Outlined.ErrorOutline else Icons.Outlined.WarningAmber,
@@ -1390,6 +1388,17 @@ private fun FloatingSyntaxDiagnosticPill(
           ) {
             Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Next syntax issue", tint = accent, modifier = Modifier.size(14.dp))
           }
+        }
+        IconButton(
+          onClick = onDismiss,
+          modifier = Modifier.size(22.dp).testTag("syntax_dismiss_button"),
+        ) {
+          Icon(
+            Icons.Outlined.Close,
+            contentDescription = "Dismiss syntax issue pill",
+            tint = palette.textMuted,
+            modifier = Modifier.size(13.dp),
+          )
         }
       }
     }
@@ -1520,7 +1529,7 @@ private fun EmptyWorkspaceWelcome(
       )
       Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
         IconRevealButton(
-          icon = Icons.Outlined.PlayArrow,
+          icon = Icons.Outlined.RocketLaunch,
           revealedLabel = "Run CLI",
           onClick = onRunLocalScript,
           height = 46.dp,
@@ -2041,7 +2050,7 @@ private fun AllTabsClosedState(
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           IconRevealButton(
-            icon = Icons.Outlined.PlayArrow,
+            icon = Icons.Outlined.RocketLaunch,
             revealedLabel = "Run CLI",
             accentContainer = true,
             onClick = onRunLocalScript,

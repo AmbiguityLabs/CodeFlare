@@ -8,6 +8,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -379,7 +380,8 @@ fun ProblemsView(
     HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.5.dp)
 
     LazyColumn(
-      modifier = Modifier.fillMaxSize().padding(8.dp),
+      modifier = Modifier.fillMaxSize(),
+      contentPadding = PaddingValues(start = 8.dp, top = 8.dp, end = 8.dp, bottom = 68.dp),
       verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
       items(filtered) { diag ->
@@ -493,8 +495,9 @@ fun ConsoleView(
     HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.5.dp)
 
     LazyColumn(
-      modifier = Modifier.fillMaxSize().padding(8.dp),
-      verticalArrangement = Arrangement.spacedBy(3.dp),
+      modifier = Modifier.fillMaxSize(),
+      contentPadding = PaddingValues(start = 8.dp, top = 8.dp, end = 8.dp, bottom = 68.dp),
+      verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
       items(logs) { log ->
         val isErr = log.level.equals("ERROR", true) || log.level.equals("ERR", true)
@@ -503,35 +506,40 @@ fun ConsoleView(
           remember(log.message, palette) {
             SyntaxHighlighter.highlightResponse(log.message, null, palette)
           }
-        Row(
+        Column(
           modifier =
             Modifier
               .fillMaxWidth()
               .clip(RoundedCornerShape(6.dp))
               .background(palette.chromeSurface)
               .border(0.5.dp, palette.border.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
-              .padding(horizontal = 8.dp, vertical = 6.dp),
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
+              .padding(horizontal = 9.dp, vertical = 6.dp),
+          verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
-          Text(log.timestamp, fontFamily = JetBrainsMono, fontSize = 10.sp, color = palette.textMuted)
-          Text(
-            log.level,
-            fontFamily = JetBrainsMono,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            color = levelColor,
-          )
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+          ) {
+            Text(
+              log.level,
+              fontFamily = JetBrainsMono,
+              fontSize = 9.5.sp,
+              fontWeight = FontWeight.Bold,
+              color = levelColor,
+            )
+            Text(log.timestamp, fontFamily = JetBrainsMono, fontSize = 9.5.sp, color = palette.textMuted)
+          }
           SmartDraggableText(
             text = log.message,
             annotatedText = annotated,
             surfaceId = "ide_console_${log.timestamp}_${log.message.hashCode()}",
             domain = SmartTextDomain.TERMINAL_OR_LOG,
-            style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
+            style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, lineHeight = 16.sp),
             color = palette.textPrimary,
-            maxLines = 3,
+            maxLines = 8,
             overflow = TextOverflow.Ellipsis,
             onCopied = { onNotifyStatus("Copied log snippet") },
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.fillMaxWidth(),
           )
         }
       }
@@ -635,7 +643,8 @@ fun LiveTailView(
       }
     } else {
       LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(8.dp),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 8.dp, top = 8.dp, end = 8.dp, bottom = 68.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
       ) {
         items(uiState.tailLogs.reversed()) { event ->
