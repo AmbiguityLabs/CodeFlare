@@ -7,6 +7,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -77,10 +78,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -96,11 +100,13 @@ import com.example.editor.SyntaxHighlighter
 import com.example.ui.theme.Ca
 import com.example.ui.theme.CaAccent
 import com.example.ui.theme.CaMotion
+import com.example.ui.theme.CodeStylePreset
 import com.example.ui.theme.EditorBackgroundPreset
 import com.example.ui.theme.EditorThemePreset
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.UiStyleVersion
+import com.example.ui.theme.applyCodeStylePreset
 import com.example.ui.theme.paletteFor
 import java.io.File
 import java.util.Locale
@@ -560,7 +566,20 @@ fun EditorAppearanceStudioContent(
       }
     }
 
+  val activeCodeStyle = CodeStylePreset.fromKey(settings.codeStylePreset)
+
   Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    CodeStyleReferencesSection(
+      activeCodeStyle = activeCodeStyle,
+      overrideCanvas = settings.codeStyleOverrideCanvas,
+      onSelectStyle = { picked ->
+        onUpdateSettings { it.copy(codeStylePreset = picked.key) }
+      },
+      onToggleOverrideCanvas = { enabled ->
+        onUpdateSettings { it.copy(codeStyleOverrideCanvas = enabled) }
+      },
+    )
+
     FloatingBarCustomizerSection(
       title = "Editor Bottom Bar",
       tagPrefix = "editor_bar",
@@ -579,7 +598,7 @@ fun EditorAppearanceStudioContent(
       onReset = {
         onUpdateSettings { it.copy(editorBarStyle = FloatingBarStyleConfig.EDITOR_DEFAULT) }
       },
-      initiallyExpanded = true,
+      initiallyExpanded = false,
     )
 
     PopupMenuCustomizerSection(
@@ -890,6 +909,285 @@ fun EditorAppearanceStudioContent(
         }
       }
     }
+    }
+  }
+}
+
+@Composable
+private fun CodeStyleReferencesSection(
+  activeCodeStyle: CodeStylePreset,
+  overrideCanvas: Boolean,
+  onSelectStyle: (CodeStylePreset) -> Unit,
+  onToggleOverrideCanvas: (Boolean) -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  val scheme = MaterialTheme.colorScheme
+  var previewHtml by remember { mutableStateOf(false) }
+
+  val previewPalette =
+    remember(palette, activeCodeStyle, overrideCanvas) {
+      applyCodeStylePreset(
+        palette = paletteFor(palette.isDark, palette.preset, palette.uiStyle),
+        codeStyle = activeCodeStyle,
+        overrideCanvas = overrideCanvas,
+      )
+    }
+
+  val jsSnippet =
+    remember {
+      """let avg = 0;
+query("SELECT * FROM marks", function (sets) {
+  if (sets.length > 0) {
+    sets.forEach((d) => { avg += parseFloat(d.val); });
+  }
+  return avg;
+});"""
+    }
+  val htmlSnippet =
+    remember {
+      """<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width" />
+  <div id="page-header" class="hfeed site">
+    <link rel="profile" href="https://edge.dev" />
+  </div>
+</head>"""
+    }
+
+  val activeSample = if (previewHtml) htmlSnippet else jsSnippet
+  val activeLang = if (previewHtml) WorkerLanguage.HTML else WorkerLanguage.JAVASCRIPT
+  val highlightedSample =
+    remember(activeSample, activeLang, previewPalette) {
+      SyntaxHighlighter.highlight(activeSample, activeLang, previewPalette)
+    }
+
+  SettingsFoldableSection(
+    title = "Code Style References",
+    icon = Icons.Outlined.Palette,
+    summary = activeCodeStyle.label,
+    initiallyExpanded = true,
+    contentPadding = 14.dp,
+    modifier = Modifier.testTag("settings_code_style_section"),
+  ) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+      // Live Code Style Preview
+      Surface(
+        color = previewPalette.editorBg,
+        shape = RoundedCornerShape(Ca.radius.control),
+        border = BorderStroke(0.75.dp, scheme.outlineVariant.copy(alpha = 0.7f)),
+        modifier = Modifier.fillMaxWidth().testTag("settings_code_style_live_preview"),
+      ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+          Row(
+            modifier =
+              Modifier
+                .fillMaxWidth()
+                .background(previewPalette.editorGutterBg)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            Text(
+              text = "${activeCodeStyle.label} · ${if (previewHtml) "index.html" else "query.js"}",
+              fontFamily = JetBrainsMono,
+              fontSize = 10.sp,
+              fontWeight = FontWeight.SemiBold,
+              color = previewPalette.textPrimary,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+              modifier = Modifier.weight(1f),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+              QuickPresetChip(
+                label = "JS",
+                selected = !previewHtml,
+                onClick = { previewHtml = false },
+              )
+              QuickPresetChip(
+                label = "HTML",
+                selected = previewHtml,
+                onClick = { previewHtml = true },
+              )
+            }
+          }
+          HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.35f), thickness = 0.75.dp)
+          Box(
+            modifier =
+              Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 10.dp, vertical = 9.dp),
+          ) {
+            Text(
+              text = highlightedSample,
+              fontFamily = JetBrainsMono,
+              fontSize = 11.sp,
+              lineHeight = 16.sp,
+              color = previewPalette.textPrimary,
+            )
+          }
+        }
+      }
+
+      // Reference Gallery Cards
+      Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        CodeStylePreset.entries.forEach { preset ->
+          val selected = preset == activeCodeStyle
+          Surface(
+            onClick = { onSelectStyle(preset) },
+            shape = RoundedCornerShape(12.dp),
+            color = if (selected) scheme.primaryContainer else scheme.surfaceContainerHigh,
+            border =
+              BorderStroke(
+                width = if (selected) 1.5.dp else 0.75.dp,
+                color = if (selected) scheme.primary else scheme.outlineVariant.copy(alpha = 0.65f),
+              ),
+            modifier =
+              Modifier
+                .width(156.dp)
+                .testTag("settings_code_style_${preset.key.lowercase()}"),
+          ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+              Box(
+                modifier =
+                  Modifier
+                    .fillMaxWidth()
+                    .height(74.dp)
+                    .background(preset.canvasBg),
+              ) {
+                val refRes = preset.referenceImageRes
+                if (refRes != null) {
+                  Image(
+                    painter = painterResource(id = refRes),
+                    contentDescription = preset.label,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                  )
+                  Box(
+                    modifier =
+                      Modifier
+                        .fillMaxSize()
+                        .background(
+                          Brush.verticalGradient(
+                            listOf(Color.Black.copy(alpha = 0.10f), Color.Black.copy(alpha = 0.58f)),
+                          ),
+                        ),
+                  )
+                } else {
+                  Column(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                  ) {
+                    Text(
+                      text = if (preset == CodeStylePreset.THEME_DEFAULT) "auto theme()" else "const fn = () =>",
+                      fontFamily = JetBrainsMono,
+                      fontSize = 9.5.sp,
+                      color = if (preset == CodeStylePreset.THEME_DEFAULT) palette.syntaxKeyword else preset.keyword,
+                      maxLines = 1,
+                    )
+                    Text(
+                      text = "  \"syntax_ref\"",
+                      fontFamily = JetBrainsMono,
+                      fontSize = 9.5.sp,
+                      color = if (preset == CodeStylePreset.THEME_DEFAULT) palette.syntaxString else preset.string,
+                      maxLines = 1,
+                    )
+                    Text(
+                      text = "  return true;",
+                      fontFamily = JetBrainsMono,
+                      fontSize = 9.5.sp,
+                      color = if (preset == CodeStylePreset.THEME_DEFAULT) palette.syntaxFunction else preset.function,
+                      maxLines = 1,
+                    )
+                  }
+                }
+
+                // Token swatch bar in bottom-left
+                Row(
+                  modifier = Modifier.align(Alignment.BottomStart).padding(7.dp),
+                  horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                  val dots =
+                    if (preset == CodeStylePreset.THEME_DEFAULT) {
+                      listOf(palette.syntaxKeyword, palette.syntaxFunction, palette.syntaxString, palette.syntaxProperty)
+                    } else {
+                      preset.swatchTokens()
+                    }
+                  dots.forEach { dot ->
+                    Box(
+                      modifier =
+                        Modifier
+                          .size(9.dp)
+                          .clip(CircleShape)
+                          .background(dot)
+                          .border(0.75.dp, Color.Black.copy(alpha = 0.45f), CircleShape),
+                    )
+                  }
+                }
+
+                if (selected) {
+                  Box(
+                    modifier =
+                      Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp)
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(scheme.primary),
+                    contentAlignment = Alignment.Center,
+                  ) {
+                    Icon(
+                      imageVector = Icons.Outlined.Check,
+                      contentDescription = "Active code style",
+                      tint = scheme.onPrimary,
+                      modifier = Modifier.size(13.dp),
+                    )
+                  }
+                }
+              }
+
+              Column(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+              ) {
+                Text(
+                  text = preset.label,
+                  style = MaterialTheme.typography.labelMedium,
+                  fontWeight = FontWeight.SemiBold,
+                  color = if (selected) scheme.onPrimaryContainer else scheme.onSurface,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                  text = preset.subtitle,
+                  style = MaterialTheme.typography.labelSmall,
+                  fontSize = 10.sp,
+                  color =
+                    if (selected) scheme.onPrimaryContainer.copy(alpha = 0.78f)
+                    else scheme.onSurfaceVariant,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+              }
+            }
+          }
+        }
+      }
+
+      if (activeCodeStyle != CodeStylePreset.THEME_DEFAULT) {
+        SettingsDivider()
+        SettingsToggleRow(
+          title = "Match reference background",
+          description = "Apply reference editor background & gutter tones alongside syntax colors",
+          checked = overrideCanvas,
+          horizontalPadding = 0.dp,
+          modifier = Modifier.testTag("settings_code_style_override_canvas"),
+          onCheckedChange = onToggleOverrideCanvas,
+        )
+      }
     }
   }
 }

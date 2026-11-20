@@ -123,11 +123,33 @@ fun EdgeCodeTheme(
       else -> remember(caAccent, darkTheme) { expressiveColorScheme(caAccent, darkTheme) }
     }
 
-  val basePalette = remember(darkTheme, themePreset, uiStyle) { paletteFor(darkTheme, themePreset, uiStyle) }
+  val codeStyle =
+    remember(editorSettings.codeStylePreset) {
+      CodeStylePreset.fromKey(editorSettings.codeStylePreset)
+    }
+  val codeStyleOverrideCanvas = editorSettings.codeStyleOverrideCanvas
+  val basePalette =
+    remember(darkTheme, themePreset, uiStyle, codeStyle, codeStyleOverrideCanvas) {
+      paletteFor(
+        darkTheme = darkTheme,
+        preset = themePreset,
+        uiStyle = uiStyle,
+        codeStyle = codeStyle,
+        codeStyleOverrideCanvas = codeStyleOverrideCanvas,
+      )
+    }
   val palette =
-    remember(basePalette, resolvedExpressiveScheme, uiStyle) {
-      if (uiStyle == UiStyleVersion.V2_MINIMAL_OLED) basePalette
-      else basePalette.bridgedTo(resolvedExpressiveScheme)
+    remember(basePalette, resolvedExpressiveScheme, uiStyle, codeStyle, codeStyleOverrideCanvas) {
+      if (uiStyle == UiStyleVersion.V2_MINIMAL_OLED) {
+        basePalette
+      } else {
+        val bridged = basePalette.bridgedTo(resolvedExpressiveScheme)
+        if (codeStyle != CodeStylePreset.THEME_DEFAULT && codeStyleOverrideCanvas) {
+          bridged.copy(textPrimary = basePalette.textPrimary)
+        } else {
+          bridged
+        }
+      }
     }
   val colorScheme =
     if (uiStyle == UiStyleVersion.V2_MINIMAL_OLED && seedColor == null && !useDynamic) {

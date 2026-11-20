@@ -212,13 +212,13 @@ data class SelectionDragConfig(
   val immediateSlideToDrag: Boolean = true,
   val holdDelayMs: Int = 320,
   val allowCrossAppDrag: Boolean = true,
-  val showScopeBadge: Boolean = true,
-  val showExpandShrink: Boolean = true,
-  val showDragGrip: Boolean = true,
-  val showModeToggle: Boolean = true,
+  val showScopeBadge: Boolean = false,
+  val showExpandShrink: Boolean = false,
+  val showDragGrip: Boolean = false,
+  val showModeToggle: Boolean = false,
   val showDropTargetLoupe: Boolean = true,
   val showQuickActions: Boolean = true,
-  val showCodeActions: Boolean = true,
+  val showCodeActions: Boolean = false,
 ) {
   fun normalized(): SelectionDragConfig =
     copy(
@@ -258,6 +258,17 @@ data class SelectionDragConfig(
 
   companion object {
     val DEFAULT = SelectionDragConfig()
+    val MINIMAL = DEFAULT
+    val SMART_POWER =
+      SelectionDragConfig(
+        showScopeBadge = true,
+        showExpandShrink = true,
+        showDragGrip = true,
+        showModeToggle = true,
+        showDropTargetLoupe = true,
+        showQuickActions = true,
+        showCodeActions = true,
+      )
 
     fun decode(raw: String?, fallback: SelectionDragConfig = DEFAULT): SelectionDragConfig {
       if (raw.isNullOrBlank()) return fallback
@@ -317,6 +328,8 @@ data class EditorSettings(
   val accent: String = ACCENT_LIME,
   val accentColor: Long = DEFAULT_ACCENT_COLOR,
   val themePreset: String = "OLIVE_OBSIDIAN",
+  val codeStylePreset: String = CODE_STYLE_DEFAULT,
+  val codeStyleOverrideCanvas: Boolean = true,
   val uiStyleVersion: String = "V1",
   val iconLabelBehavior: IconLabelBehavior = IconLabelBehavior.REVEAL_ON_TAP,
   val reopenLastProject: Boolean = true,
@@ -417,7 +430,17 @@ data class EditorSettings(
       else -> if (warnOnCloseDirtyTab) CLOSE_UNSAVED_ASK else CLOSE_UNSAVED_SAVE
     }
 
+  fun normalizedCodeStylePreset(): String =
+    when (codeStylePreset.uppercase()) {
+      "NEON_QUERY",
+      "STUDIO_MONOKAI",
+      "TOKYO_NIGHT",
+      "DRACULA_VIVID" -> codeStylePreset.uppercase()
+      else -> CODE_STYLE_DEFAULT
+    }
+
   companion object {
+    const val CODE_STYLE_DEFAULT = "DEFAULT"
     const val THEME_LIGHT = "light"
     const val THEME_DARK = "dark"
     const val THEME_SYSTEM = "system"
@@ -493,6 +516,8 @@ class AuthPreferencesStore(private val context: Context) {
     val ACCENT = stringPreferencesKey("editor_accent")
     val ACCENT_COLOR = longPreferencesKey("editor_accent_color")
     val THEME_PRESET = stringPreferencesKey("editor_theme_preset")
+    val CODE_STYLE_PRESET = stringPreferencesKey("editor_code_style_preset")
+    val CODE_STYLE_OVERRIDE_CANVAS = booleanPreferencesKey("editor_code_style_override_canvas")
     val UI_STYLE_VERSION = stringPreferencesKey("editor_ui_style_version")
     val ICON_LABEL_BEHAVIOR = stringPreferencesKey("ui_icon_label_behavior")
     val REOPEN_LAST_PROJECT = booleanPreferencesKey("app_reopen_last_project")
@@ -606,6 +631,8 @@ class AuthPreferencesStore(private val context: Context) {
         accent = storedAccent,
         accentColor = storedAccentColor,
         themePreset = preset,
+        codeStylePreset = prefs[Keys.CODE_STYLE_PRESET]?.takeIf { it.isNotBlank() }?.uppercase() ?: EditorSettings.CODE_STYLE_DEFAULT,
+        codeStyleOverrideCanvas = prefs[Keys.CODE_STYLE_OVERRIDE_CANVAS] ?: true,
         uiStyleVersion = prefs[Keys.UI_STYLE_VERSION]?.takeIf { it.isNotBlank() } ?: "V1",
         iconLabelBehavior = IconLabelBehavior.fromKey(prefs[Keys.ICON_LABEL_BEHAVIOR]),
         reopenLastProject = prefs[Keys.REOPEN_LAST_PROJECT] ?: true,
@@ -800,6 +827,7 @@ class AuthPreferencesStore(private val context: Context) {
         accent = resolvedAccent,
         accentColor = rawNext.accentColor or 0xFF000000L,
         themePreset = resolvedPreset,
+        codeStylePreset = rawNext.normalizedCodeStylePreset(),
         codeFont = rawNext.normalizedCodeFont(),
         caretStyle = rawNext.normalizedCaretStyle(),
         closeUnsavedPolicy = resolvedClosePolicy,
@@ -827,6 +855,8 @@ class AuthPreferencesStore(private val context: Context) {
       prefs[Keys.ACCENT] = next.accent
       prefs[Keys.ACCENT_COLOR] = next.accentColor
       prefs[Keys.THEME_PRESET] = next.themePreset
+      prefs[Keys.CODE_STYLE_PRESET] = next.codeStylePreset
+      prefs[Keys.CODE_STYLE_OVERRIDE_CANVAS] = next.codeStyleOverrideCanvas
       prefs[Keys.UI_STYLE_VERSION] = next.uiStyleVersion.ifBlank { "V1" }
       prefs[Keys.ICON_LABEL_BEHAVIOR] = next.iconLabelBehavior.name
       prefs[Keys.REOPEN_LAST_PROJECT] = next.reopenLastProject

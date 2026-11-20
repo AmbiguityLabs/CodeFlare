@@ -85,6 +85,7 @@ import com.example.ui.screens.settings.SettingsHubSidebarItem
 import com.example.ui.screens.settings.SettingsStorageAndSessionPane
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.CaMotion
+import com.example.ui.theme.CodeStylePreset
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.viewmodel.IdeUiState
 
@@ -623,9 +624,14 @@ private fun categoryCompactValue(
           EditorSettings.THEME_SYSTEM -> "System"
           else -> "Dark"
         }
-      val accentLabel =
-        settings.normalizedAccent().replaceFirstChar { it.uppercase() }
-      "$modeLabel · $accentLabel"
+      val codeStyle = CodeStylePreset.fromKey(settings.codeStylePreset)
+      if (codeStyle != CodeStylePreset.THEME_DEFAULT) {
+        "$modeLabel · ${codeStyle.label}"
+      } else {
+        val accentLabel =
+          settings.normalizedAccent().replaceFirstChar { it.uppercase() }
+        "$modeLabel · $accentLabel"
+      }
     }
     SettingsCategory.EDITOR -> "${settings.fontSizeSp}sp · ${settings.tabSize}sp"
     SettingsCategory.COMPLETION ->

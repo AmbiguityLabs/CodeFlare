@@ -16,8 +16,11 @@ import androidx.compose.ui.graphics.Color
 import com.example.editor.selection.SmartSelectionInitialDepth
 import com.example.ui.screens.settings.parseHexColor
 import com.example.ui.theme.CaAccent
+import com.example.ui.theme.CodeStylePreset
+import com.example.ui.theme.EditorThemePreset
 import com.example.ui.theme.expressiveColorScheme
 import com.example.ui.theme.expressiveColorSchemeFromSeed
+import com.example.ui.theme.paletteFor
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -515,5 +518,61 @@ class SettingsAndPreferencesTest {
     val syncedAsk = store.editorSettingsFlow.first()
     assertTrue(syncedAsk.warnOnCloseDirtyTab)
     assertEquals(EditorSettings.CLOSE_UNSAVED_ASK, syncedAsk.closeUnsavedPolicy)
+  }
+
+  @Test
+  fun codeStylePresetAndMinimalSelectionDefaultsWorkAndPersistCleanly() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val store = AuthPreferencesStore(context)
+
+    // Minimal selection defaults keep clutter hidden while keeping quick actions + loupe
+    val minDefault = SelectionDragConfig.DEFAULT
+    assertEquals(2, minDefault.enabledOverlayCount)
+    assertTrue(minDefault.showQuickActions)
+    assertTrue(minDefault.showDropTargetLoupe)
+    assertFalse(minDefault.showScopeBadge)
+    assertFalse(minDefault.showExpandShrink)
+    assertFalse(minDefault.showDragGrip)
+    assertFalse(minDefault.showModeToggle)
+    assertFalse(minDefault.showCodeActions)
+    assertEquals(7, SelectionDragConfig.SMART_POWER.enabledOverlayCount)
+
+    // Reference code style presets apply distinct syntax & canvas tones cleanly
+    val neonPalette =
+      paletteFor(
+        darkTheme = true,
+        preset = EditorThemePreset.OLIVE_OBSIDIAN,
+        codeStyle = CodeStylePreset.NEON_QUERY,
+        codeStyleOverrideCanvas = true,
+      )
+    assertEquals(CodeStylePreset.NEON_QUERY.canvasBg, neonPalette.editorBg)
+    assertEquals(CodeStylePreset.NEON_QUERY.keyword, neonPalette.syntaxKeyword)
+    assertEquals(CodeStylePreset.NEON_QUERY.function, neonPalette.syntaxFunction)
+
+    val monokaiSyntaxOnly =
+      paletteFor(
+        darkTheme = true,
+        preset = EditorThemePreset.OLIVE_OBSIDIAN,
+        codeStyle = CodeStylePreset.STUDIO_MONOKAI,
+        codeStyleOverrideCanvas = false,
+      )
+    assertNotEquals(CodeStylePreset.STUDIO_MONOKAI.canvasBg, monokaiSyntaxOnly.editorBg)
+    assertEquals(CodeStylePreset.STUDIO_MONOKAI.property, monokaiSyntaxOnly.syntaxProperty)
+
+    // Persistence + normalization
+    store.updateEditorSettings {
+      it.copy(
+        codeStylePreset = CodeStylePreset.STUDIO_MONOKAI.key,
+        codeStyleOverrideCanvas = false,
+      )
+    }
+    val loaded = store.editorSettingsFlow.first()
+    assertEquals(CodeStylePreset.STUDIO_MONOKAI.key, loaded.codeStylePreset)
+    assertFalse(loaded.codeStyleOverrideCanvas)
+
+    store.updateEditorSettings { it.copy(codeStylePreset = "NON_EXISTENT") }
+    val normalized = store.editorSettingsFlow.first()
+    assertEquals(EditorSettings.CODE_STYLE_DEFAULT, normalized.normalizedCodeStylePreset())
+    assertEquals(CodeStylePreset.THEME_DEFAULT, CodeStylePreset.fromKey("non_existent"))
   }
 }

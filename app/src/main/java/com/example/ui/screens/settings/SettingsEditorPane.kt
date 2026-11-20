@@ -671,12 +671,12 @@ fun SettingsEditorPane(
 
             val previewBehavior = settings.iconLabelBehavior
             Surface(
-              color = palette.chromeSurface,
-              shape = RoundedCornerShape(10.dp),
-              border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.75f)),
+              color = palette.glassElevated.copy(alpha = 0.96f),
+              shape = RoundedCornerShape(999.dp),
+              border = BorderStroke(1.dp, palette.ctaBg.copy(alpha = 0.42f)),
             ) {
               Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 5.dp, vertical = 4.dp),
+                modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
               ) {
@@ -823,6 +823,52 @@ fun SettingsEditorPane(
             }
           }
         }
+
+        // Quick Overlay Mode Presets (Minimal vs Full Power)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          Text("Selection Toolbar Preset", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, color = scheme.onSurface)
+          Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            val isMinimal = selConfig.enabledOverlayCount <= 2 && !selConfig.showScopeBadge && !selConfig.showExpandShrink && !selConfig.showDragGrip && !selConfig.showModeToggle && !selConfig.showCodeActions
+            SettingsPillChip(
+              label = "Minimal",
+              selected = isMinimal,
+              tag = "sel_preset_minimal",
+              onClick = {
+                updateSelectionConfig {
+                  it.copy(
+                    showScopeBadge = false,
+                    showExpandShrink = false,
+                    showDragGrip = false,
+                    showModeToggle = false,
+                    showDropTargetLoupe = true,
+                    showQuickActions = true,
+                    showCodeActions = false,
+                  )
+                }
+              },
+            )
+            SettingsPillChip(
+              label = "Smart Power (All 7)",
+              selected = selConfig.enabledOverlayCount == 7,
+              tag = "sel_preset_power",
+              onClick = {
+                updateSelectionConfig {
+                  it.copy(
+                    showScopeBadge = true,
+                    showExpandShrink = true,
+                    showDragGrip = true,
+                    showModeToggle = true,
+                    showDropTargetLoupe = true,
+                    showQuickActions = true,
+                    showCodeActions = true,
+                  )
+                }
+              },
+            )
+          }
+        }
+
+        SettingsDivider()
 
         // Hold Behavior
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

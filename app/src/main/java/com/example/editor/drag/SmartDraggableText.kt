@@ -422,17 +422,17 @@ fun SmartDraggableText(
         properties = PopupProperties(focusable = false),
       ) {
         Surface(
-          shape = RoundedCornerShape(10.dp),
-          color = palette.chromeSurface,
-          border = BorderStroke(0.5.dp, palette.border.copy(alpha = if (isV2) 0.55f else 0.70f)),
-          shadowElevation = if (isV2) 2.dp else 4.dp,
+          shape = RoundedCornerShape(999.dp),
+          color = palette.glassElevated.copy(alpha = 0.96f),
+          border = BorderStroke(1.dp, palette.ctaBg.copy(alpha = 0.40f)),
+          shadowElevation = if (isV2) 3.dp else 5.dp,
           modifier =
             Modifier
               .onSizeChanged { popupSize = it }
               .testTag("smart_text_popup_$surfaceId"),
         ) {
           Row(
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 3.dp),
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(2.dp),
           ) {

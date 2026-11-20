@@ -689,20 +689,20 @@ fun BoxScope.EdgeSmartHoldScopePill(
   scope: SelectionScope?,
   anchorY: Float,
   dragHintVisible: Boolean,
-  showScopeBadge: Boolean = true,
+  showScopeBadge: Boolean = false,
 ) {
   if (!showScopeBadge) return
   val palette = LocalIdePalette.current
   val density = LocalDensity.current
   val topOffsetPx =
     with(density) {
-      val desired = anchorY - 46.dp.toPx()
-      if (desired < 8.dp.toPx()) (anchorY + 36.dp.toPx()).roundToInt() else desired.roundToInt()
+      val desired = anchorY - 44.dp.toPx()
+      if (desired < 8.dp.toPx()) (anchorY + 34.dp.toPx()).roundToInt() else desired.roundToInt()
     }
 
   AnimatedVisibility(
     visible = scope != null,
-    enter = fadeIn(tween(90)) + scaleIn(tween(110), initialScale = 0.9f),
+    enter = fadeIn(tween(90)) + scaleIn(tween(110), initialScale = 0.92f),
     exit = fadeOut(tween(80)),
     modifier =
       Modifier
@@ -713,20 +713,20 @@ fun BoxScope.EdgeSmartHoldScopePill(
     Surface(
       color = palette.glassElevated.copy(alpha = 0.96f),
       shape = RoundedCornerShape(999.dp),
-      border = BorderStroke(0.75.dp, palette.ctaBg.copy(alpha = 0.55f)),
-      shadowElevation = 5.dp,
+      border = BorderStroke(1.dp, palette.ctaBg.copy(alpha = 0.45f)),
+      shadowElevation = 4.dp,
       modifier = Modifier.testTag("editor_hold_scope_pill"),
     ) {
       Row(
-        modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp),
+        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
       ) {
         Text(
           text = active.label,
           fontFamily = JetBrainsMono,
-          fontSize = 10.5.sp,
-          fontWeight = FontWeight.Bold,
+          fontSize = 10.sp,
+          fontWeight = FontWeight.SemiBold,
           color = palette.activePillFg,
         )
         Text(
@@ -735,13 +735,6 @@ fun BoxScope.EdgeSmartHoldScopePill(
           fontSize = 9.5.sp,
           color = palette.textMuted,
         )
-        if (dragHintVisible) {
-          Text(
-            text = "· Slide to drag",
-            fontSize = 10.sp,
-            color = palette.textSecondary,
-          )
-        }
       }
     }
   }
@@ -759,12 +752,12 @@ fun BoxScope.EdgeSelectionToolbar(
   canExpandScope: Boolean = false,
   canShrinkScope: Boolean = false,
   dragMode: DragTransferMode = DragTransferMode.MOVE,
-  showScopeBadge: Boolean = true,
-  showExpandShrink: Boolean = true,
-  showDragGrip: Boolean = true,
-  showModeToggle: Boolean = true,
+  showScopeBadge: Boolean = false,
+  showExpandShrink: Boolean = false,
+  showDragGrip: Boolean = false,
+  showModeToggle: Boolean = false,
   showQuickActions: Boolean = true,
-  showCodeActions: Boolean = true,
+  showCodeActions: Boolean = false,
   onExpandScope: () -> Unit = {},
   onShrinkScope: () -> Unit = {},
   onToggleDragMode: () -> Unit = {},
@@ -794,13 +787,13 @@ fun BoxScope.EdgeSelectionToolbar(
       }
     }
 
-  val hasAnyControl =
-    (showScopeBadge && !scopeLabel.isNullOrBlank()) ||
+  val hasSmartTools =
+    showDragGrip ||
+      (showScopeBadge && !scopeLabel.isNullOrBlank()) ||
       (showExpandShrink && (canExpandScope || canShrinkScope)) ||
-      showDragGrip ||
-      (showModeToggle && !readOnly) ||
-      showQuickActions ||
-      (showCodeActions && !readOnly)
+      (showModeToggle && !readOnly)
+  val hasCodeTools = showCodeActions && !readOnly
+  val hasAnyControl = hasSmartTools || showQuickActions || hasCodeTools
 
   AnimatedVisibility(
     visible = visible && hasAnyControl,
@@ -813,25 +806,24 @@ fun BoxScope.EdgeSelectionToolbar(
         .offset { IntOffset(0, topOffsetPx.coerceAtLeast(8)) },
   ) {
     Surface(
-      color = palette.chromeSurface,
-      shape = RoundedCornerShape(10.dp),
-      border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.8f)),
+      color = palette.glassElevated.copy(alpha = 0.96f),
+      shape = RoundedCornerShape(999.dp),
+      border = BorderStroke(1.dp, palette.ctaBg.copy(alpha = 0.42f)),
       shadowElevation = 6.dp,
       modifier = Modifier.testTag("editor_selection_toolbar"),
     ) {
       Row(
-        modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp, vertical = 3.dp),
+        modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp),
       ) {
-        // Instant Drag Grip: touch-drag or press directly starts Android Drag & Drop
         if (showDragGrip) {
           Box(
             modifier =
               Modifier
                 .height(26.dp)
-                .clip(RoundedCornerShape(7.dp))
-                .background(palette.activePillBg.copy(alpha = 0.68f))
+                .clip(RoundedCornerShape(999.dp))
+                .background(palette.activePillBg.copy(alpha = 0.65f))
                 .pointerInput(onStartToolbarDrag) {
                   awaitEachGesture {
                     val down = awaitPointerEvent(PointerEventPass.Main).changes.firstOrNull { it.pressed } ?: return@awaitEachGesture
@@ -867,25 +859,16 @@ fun BoxScope.EdgeSelectionToolbar(
           }
         }
 
-        // Smart Scope Badge + Expand / Shrink ladder steppers
         if (showScopeBadge && !scopeLabel.isNullOrBlank()) {
-          Box(
-            modifier =
-              Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .background(palette.editorBg)
-                .padding(horizontal = 5.dp, vertical = 3.dp)
-                .testTag("sel_scope_badge"),
-          ) {
-            Text(
-              text = scopeLabel,
-              fontFamily = JetBrainsMono,
-              fontSize = 9.5.sp,
-              fontWeight = FontWeight.Bold,
-              color = palette.activePillFg,
-              maxLines = 1,
-            )
-          }
+          Text(
+            text = scopeLabel,
+            fontFamily = JetBrainsMono,
+            fontSize = 9.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = palette.activePillFg,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 5.dp).testTag("sel_scope_badge"),
+          )
         }
 
         if (showExpandShrink && (canExpandScope || canShrinkScope)) {
@@ -898,7 +881,7 @@ fun BoxScope.EdgeSelectionToolbar(
               imageVector = Icons.Outlined.Remove,
               contentDescription = "Shrink selection scope",
               tint = if (canShrinkScope) palette.textPrimary else palette.textMuted.copy(alpha = 0.35f),
-              modifier = Modifier.size(15.dp),
+              modifier = Modifier.size(14.dp),
             )
           }
           IconButton(
@@ -910,12 +893,11 @@ fun BoxScope.EdgeSelectionToolbar(
               imageVector = Icons.Outlined.Add,
               contentDescription = "Expand selection scope",
               tint = if (canExpandScope) palette.activePillFg else palette.textMuted.copy(alpha = 0.35f),
-              modifier = Modifier.size(15.dp),
+              modifier = Modifier.size(14.dp),
             )
           }
         }
 
-        // Move / Copy mode toggle button (honors IconLabelBehavior)
         if (showModeToggle && !readOnly) {
           val isMove = dragMode == DragTransferMode.MOVE
           val modeTint = if (isMove) palette.ctaBg else EmeraldLive
@@ -932,13 +914,24 @@ fun BoxScope.EdgeSelectionToolbar(
           )
         }
 
+        if (hasSmartTools && showQuickActions) {
+          Box(
+            modifier =
+              Modifier
+                .padding(horizontal = 2.dp)
+                .width(1.dp)
+                .height(14.dp)
+                .background(palette.border.copy(alpha = 0.65f)),
+          )
+        }
+
         if (showQuickActions) {
           IconRevealButton(
             icon = Icons.Outlined.ContentCopy,
             revealedLabel = "Copy",
             minimal = true,
             contentTint = palette.textPrimary,
-            height = 26.dp,
+            height = 28.dp,
             iconSize = 15.dp,
             onClick = onCopy,
             tag = "sel_copy",
@@ -949,7 +942,7 @@ fun BoxScope.EdgeSelectionToolbar(
               revealedLabel = "Cut",
               minimal = true,
               contentTint = palette.textPrimary,
-              height = 26.dp,
+              height = 28.dp,
               iconSize = 15.dp,
               onClick = onCut,
               tag = "sel_cut",
@@ -959,7 +952,7 @@ fun BoxScope.EdgeSelectionToolbar(
               revealedLabel = "Paste",
               minimal = true,
               contentTint = palette.textPrimary,
-              height = 26.dp,
+              height = 28.dp,
               iconSize = 15.dp,
               onClick = onPaste,
               tag = "sel_paste",
@@ -970,7 +963,7 @@ fun BoxScope.EdgeSelectionToolbar(
                 revealedLabel = "History",
                 minimal = true,
                 contentTint = palette.activePillFg,
-                height = 26.dp,
+                height = 28.dp,
                 iconSize = 15.dp,
                 onClick = onOpenPasteHistory,
                 tag = "sel_paste_history",
@@ -982,21 +975,31 @@ fun BoxScope.EdgeSelectionToolbar(
             revealedLabel = "All",
             minimal = true,
             contentTint = palette.textPrimary,
-            height = 26.dp,
+            height = 28.dp,
             iconSize = 15.dp,
             onClick = onSelectAll,
             tag = "sel_all",
           )
         }
 
-        if (showCodeActions && !readOnly) {
+        if (hasCodeTools) {
+          if (hasSmartTools || showQuickActions) {
+            Box(
+              modifier =
+                Modifier
+                  .padding(horizontal = 2.dp)
+                  .width(1.dp)
+                  .height(14.dp)
+                  .background(palette.border.copy(alpha = 0.65f)),
+            )
+          }
           ToolbarSlashButton(onClick = onComment, tag = "sel_comment")
           IconRevealButton(
             icon = Icons.Outlined.DriveFileRenameOutline,
             revealedLabel = "Rename",
             minimal = true,
             contentTint = palette.textPrimary,
-            height = 26.dp,
+            height = 28.dp,
             iconSize = 15.dp,
             onClick = onRename,
             tag = "sel_rename",

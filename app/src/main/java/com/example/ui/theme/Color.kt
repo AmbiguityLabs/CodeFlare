@@ -1,7 +1,10 @@
 package com.example.ui.theme
 
+import androidx.annotation.DrawableRes
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import com.example.R
 
 // Curated Editor Theme Presets for the Appearance Studio
 enum class EditorThemePreset(
@@ -73,6 +76,134 @@ enum class EditorBackgroundPreset(
   companion object {
     fun fromKey(raw: String?): EditorBackgroundPreset =
       entries.firstOrNull { it.key.equals(raw, ignoreCase = true) } ?: NONE
+  }
+}
+
+/**
+ * Curated editor syntax & code-style reference themes configurable in Appearance -> Editor.
+ */
+enum class CodeStylePreset(
+  val key: String,
+  val label: String,
+  val subtitle: String,
+  @DrawableRes val referenceImageRes: Int? = null,
+  val canvasBg: Color,
+  val canvasGutterBg: Color,
+  val canvasActiveLineBg: Color,
+  val canvasTextPrimary: Color,
+  val keyword: Color,
+  val control: Color,
+  val string: Color,
+  val number: Color,
+  val comment: Color,
+  val function: Color,
+  val type: Color,
+  val property: Color,
+  val operator: Color,
+) {
+  THEME_DEFAULT(
+    key = "DEFAULT",
+    label = "Theme Auto",
+    subtitle = "Matches your active IDE theme",
+    referenceImageRes = null,
+    canvasBg = SlateEditorBg,
+    canvasGutterBg = SlateEditorGutter,
+    canvasActiveLineBg = SlateActiveLine,
+    canvasTextPrimary = Color(0xFFECEEE6),
+    keyword = Color(0xFFC084FC),
+    control = Color(0xFFD8B4FE),
+    string = Color(0xFFFBBF24),
+    number = Color(0xFF86EFAC),
+    comment = Color(0xFF6B7280),
+    function = Color(0xFF93C5FD),
+    type = Color(0xFF5EEAD4),
+    property = Color(0xFFA5B4FC),
+    operator = Color(0xFFD1D5DB),
+  ),
+  NEON_QUERY(
+    key = "NEON_QUERY",
+    label = "Neon Query",
+    subtitle = "OLED black · amber, cyan & rose",
+    referenceImageRes = R.drawable.code_style_ref_neon_query,
+    canvasBg = Color(0xFF000000),
+    canvasGutterBg = Color(0xFF06070A),
+    canvasActiveLineBg = Color(0xFF10131A),
+    canvasTextPrimary = Color(0xFFE5E7EB),
+    keyword = Color(0xFFF59E0B),
+    control = Color(0xFFFACC15),
+    string = Color(0xFF7DD3FC),
+    number = Color(0xFF38BDF8),
+    comment = Color(0xFF64748B),
+    function = Color(0xFF38BDF8),
+    type = Color(0xFFC084FC),
+    property = Color(0xFFFB923C),
+    operator = Color(0xFFFB7185),
+  ),
+  STUDIO_MONOKAI(
+    key = "STUDIO_MONOKAI",
+    label = "Monokai Web",
+    subtitle = "Charcoal · crimson, lime & gold",
+    referenceImageRes = R.drawable.code_style_ref_monokai_web,
+    canvasBg = Color(0xFF1E2227),
+    canvasGutterBg = Color(0xFF191D22),
+    canvasActiveLineBg = Color(0xFF282D34),
+    canvasTextPrimary = Color(0xFFF3F4F6),
+    keyword = Color(0xFFFF4F6D),
+    control = Color(0xFFFF5E7E),
+    string = Color(0xFFFDE047),
+    number = Color(0xFFC084FC),
+    comment = Color(0xFF6B7280),
+    function = Color(0xFF38BDF8),
+    type = Color(0xFF38BDF8),
+    property = Color(0xFFA3E635),
+    operator = Color(0xFFFF6B81),
+  ),
+  TOKYO_NIGHT(
+    key = "TOKYO_NIGHT",
+    label = "Tokyo Night",
+    subtitle = "Deep indigo · violet, sky & mint",
+    referenceImageRes = null,
+    canvasBg = Color(0xFF16161E),
+    canvasGutterBg = Color(0xFF13131A),
+    canvasActiveLineBg = Color(0xFF1F2335),
+    canvasTextPrimary = Color(0xFFC0CAF5),
+    keyword = Color(0xFFBB9AF7),
+    control = Color(0xFFFF7A93),
+    string = Color(0xFF9ECE6A),
+    number = Color(0xFFFF9E64),
+    comment = Color(0xFF565F89),
+    function = Color(0xFF7AA2F7),
+    type = Color(0xFF2AC3DE),
+    property = Color(0xFF73DACA),
+    operator = Color(0xFF89DDFF),
+  ),
+  DRACULA_VIVID(
+    key = "DRACULA_VIVID",
+    label = "Dracula Vivid",
+    subtitle = "Plum ink · pink, green & cyan",
+    referenceImageRes = null,
+    canvasBg = Color(0xFF1B1C26),
+    canvasGutterBg = Color(0xFF171821),
+    canvasActiveLineBg = Color(0xFF272938),
+    canvasTextPrimary = Color(0xFFF8F8F2),
+    keyword = Color(0xFFFF79C6),
+    control = Color(0xFFFF79C6),
+    string = Color(0xFFF1FA8C),
+    number = Color(0xFFBD93F9),
+    comment = Color(0xFF6272A4),
+    function = Color(0xFF50FA7B),
+    type = Color(0xFF8BE9FD),
+    property = Color(0xFFFFB86C),
+    operator = Color(0xFFFF79C6),
+  ),
+  ;
+
+  fun swatchTokens(): List<Color> = listOf(keyword, function, string, property)
+
+  companion object {
+    fun fromKey(raw: String?): CodeStylePreset =
+      entries.firstOrNull { it.key.equals(raw, ignoreCase = true) || it.name.equals(raw, ignoreCase = true) }
+        ?: THEME_DEFAULT
   }
 }
 
@@ -360,6 +491,8 @@ fun paletteFor(
   darkTheme: Boolean,
   preset: EditorThemePreset,
   uiStyle: UiStyleVersion = UiStyleVersion.V1_DEFAULT,
+  codeStyle: CodeStylePreset = CodeStylePreset.THEME_DEFAULT,
+  codeStyleOverrideCanvas: Boolean = true,
 ): IdePalette {
   val basePalette =
     if (!darkTheme) {
@@ -414,71 +547,113 @@ fun paletteFor(
       }
     }
 
-  if (uiStyle == UiStyleVersion.V1_DEFAULT) {
-    return basePalette.copy(uiStyle = UiStyleVersion.V1_DEFAULT)
-  }
+  val styledPalette =
+    if (uiStyle == UiStyleVersion.V1_DEFAULT) {
+      basePalette.copy(uiStyle = UiStyleVersion.V1_DEFAULT)
+    } else if (darkTheme) {
+      basePalette.copy(
+        uiStyle = UiStyleVersion.V2_MINIMAL_OLED,
+        chromeBg = Color(0xFF000000),
+        chromeSurface = Color(0xFF141416),
+        chromePill = Color(0xFF1C1C1F),
+        glassSurface = Color(0xFF141416),
+        glassElevated = Color(0xFF1B1B1E),
+        glassDockBg = Color(0xFF070708),
+        glassBorderHighlight = Color(0xFF2B2B30),
+        glassBorderSubtle = Color(0xFF1F1F23),
+        activePillBg = Color(0xFF242428),
+        activePillFg = Color(0xFFF4F4F5),
+        ctaBg = Color(0xFFF4F4F5),
+        ctaFg = Color(0xFF09090B),
+        featuredCardBg = Color(0xFF141416),
+        featuredCardFg = Color(0xFFF4F4F5),
+        featuredCardMuted = Color(0xFFA1A1AA),
+        selectedRowBg = Color(0xFF1D1D21),
+        editorBg = Color(0xFF000000),
+        editorGutterBg = Color(0xFF040405),
+        editorActiveLineBg = Color(0xFF141416),
+        tabBarBg = Color(0xFF000000),
+        tabActiveBg = Color(0xFF141416),
+        border = Color(0xFF242428),
+        treeLine = Color(0xFF222226),
+        textPrimary = Color(0xFFF4F4F5),
+        textSecondary = Color(0xFFA1A1AA),
+        textMuted = Color(0xFF71717A),
+      )
+    } else {
+      basePalette.copy(
+        uiStyle = UiStyleVersion.V2_MINIMAL_OLED,
+        chromeBg = Color(0xFFFFFFFF),
+        chromeSurface = Color(0xFFF4F4F6),
+        chromePill = Color(0xFFEBEBEF),
+        glassSurface = Color(0xFFF4F4F6),
+        glassElevated = Color(0xFFEEEEF1),
+        glassDockBg = Color(0xFFFAFAFC),
+        glassBorderHighlight = Color(0xFFDADAE0),
+        glassBorderSubtle = Color(0xFFE5E5EA),
+        activePillBg = Color(0xFFE5E5EA),
+        activePillFg = Color(0xFF111113),
+        ctaBg = Color(0xFF18181B),
+        ctaFg = Color(0xFFFFFFFF),
+        featuredCardBg = Color(0xFFF4F4F6),
+        featuredCardFg = Color(0xFF111113),
+        featuredCardMuted = Color(0xFF6B6B74),
+        selectedRowBg = Color(0xFFE9E9EE),
+        editorBg = Color(0xFFFFFFFF),
+        editorGutterBg = Color(0xFFFAFAFC),
+        editorActiveLineBg = Color(0xFFF4F4F6),
+        tabBarBg = Color(0xFFFFFFFF),
+        tabActiveBg = Color(0xFFF4F4F6),
+        border = Color(0xFFE4E4E9),
+        treeLine = Color(0xFFDCDCE2),
+        textPrimary = Color(0xFF111113),
+        textSecondary = Color(0xFF52525B),
+        textMuted = Color(0xFF8E8E93),
+      )
+    }
 
-  return if (darkTheme) {
-    basePalette.copy(
-      uiStyle = UiStyleVersion.V2_MINIMAL_OLED,
-      chromeBg = Color(0xFF000000),
-      chromeSurface = Color(0xFF141416),
-      chromePill = Color(0xFF1C1C1F),
-      glassSurface = Color(0xFF141416),
-      glassElevated = Color(0xFF1B1B1E),
-      glassDockBg = Color(0xFF070708),
-      glassBorderHighlight = Color(0xFF2B2B30),
-      glassBorderSubtle = Color(0xFF1F1F23),
-      activePillBg = Color(0xFF242428),
-      activePillFg = Color(0xFFF4F4F5),
-      ctaBg = Color(0xFFF4F4F5),
-      ctaFg = Color(0xFF09090B),
-      featuredCardBg = Color(0xFF141416),
-      featuredCardFg = Color(0xFFF4F4F5),
-      featuredCardMuted = Color(0xFFA1A1AA),
-      selectedRowBg = Color(0xFF1D1D21),
-      editorBg = Color(0xFF000000),
-      editorGutterBg = Color(0xFF040405),
-      editorActiveLineBg = Color(0xFF141416),
-      tabBarBg = Color(0xFF000000),
-      tabActiveBg = Color(0xFF141416),
-      border = Color(0xFF242428),
-      treeLine = Color(0xFF222226),
-      textPrimary = Color(0xFFF4F4F5),
-      textSecondary = Color(0xFFA1A1AA),
-      textMuted = Color(0xFF71717A),
+  return applyCodeStylePreset(styledPalette, codeStyle, codeStyleOverrideCanvas)
+}
+
+private fun Color.forLightEditorSurface(): Color {
+  // Deepen luminous neon tokens slightly when rendered over light paper without dark canvas override
+  val lum = luminance()
+  return if (lum > 0.35f) {
+    Color(
+      red = (red * 0.56f).coerceIn(0f, 1f),
+      green = (green * 0.56f).coerceIn(0f, 1f),
+      blue = (blue * 0.58f).coerceIn(0f, 1f),
+      alpha = alpha,
     )
   } else {
-    basePalette.copy(
-      uiStyle = UiStyleVersion.V2_MINIMAL_OLED,
-      chromeBg = Color(0xFFFFFFFF),
-      chromeSurface = Color(0xFFF4F4F6),
-      chromePill = Color(0xFFEBEBEF),
-      glassSurface = Color(0xFFF4F4F6),
-      glassElevated = Color(0xFFEEEEF1),
-      glassDockBg = Color(0xFFFAFAFC),
-      glassBorderHighlight = Color(0xFFDADAE0),
-      glassBorderSubtle = Color(0xFFE5E5EA),
-      activePillBg = Color(0xFFE5E5EA),
-      activePillFg = Color(0xFF111113),
-      ctaBg = Color(0xFF18181B),
-      ctaFg = Color(0xFFFFFFFF),
-      featuredCardBg = Color(0xFFF4F4F6),
-      featuredCardFg = Color(0xFF111113),
-      featuredCardMuted = Color(0xFF6B6B74),
-      selectedRowBg = Color(0xFFE9E9EE),
-      editorBg = Color(0xFFFFFFFF),
-      editorGutterBg = Color(0xFFFAFAFC),
-      editorActiveLineBg = Color(0xFFF4F4F6),
-      tabBarBg = Color(0xFFFFFFFF),
-      tabActiveBg = Color(0xFFF4F4F6),
-      border = Color(0xFFE4E4E9),
-      treeLine = Color(0xFFDCDCE2),
-      textPrimary = Color(0xFF111113),
-      textSecondary = Color(0xFF52525B),
-      textMuted = Color(0xFF8E8E93),
-    )
+    this
   }
+}
+
+fun applyCodeStylePreset(
+  palette: IdePalette,
+  codeStyle: CodeStylePreset,
+  overrideCanvas: Boolean = true,
+): IdePalette {
+  if (codeStyle == CodeStylePreset.THEME_DEFAULT) return palette
+  val useLightSyntaxTones = !palette.isDark && !overrideCanvas
+  fun token(color: Color): Color = if (useLightSyntaxTones) color.forLightEditorSurface() else color
+
+  return palette.copy(
+    editorBg = if (overrideCanvas) codeStyle.canvasBg else palette.editorBg,
+    editorGutterBg = if (overrideCanvas) codeStyle.canvasGutterBg else palette.editorGutterBg,
+    editorActiveLineBg = if (overrideCanvas) codeStyle.canvasActiveLineBg else palette.editorActiveLineBg,
+    textPrimary = if (overrideCanvas) codeStyle.canvasTextPrimary else palette.textPrimary,
+    syntaxKeyword = token(codeStyle.keyword),
+    syntaxControl = token(codeStyle.control),
+    syntaxString = token(codeStyle.string),
+    syntaxNumber = token(codeStyle.number),
+    syntaxComment = codeStyle.comment,
+    syntaxFunction = token(codeStyle.function),
+    syntaxType = token(codeStyle.type),
+    syntaxProperty = token(codeStyle.property),
+    syntaxOperator = token(codeStyle.operator),
+  )
 }
 
 fun IdePalette.bridgedTo(scheme: androidx.compose.material3.ColorScheme): IdePalette {
@@ -520,75 +695,37 @@ data class IdeSelectionColors(
 )
 
 fun selectionColorsFor(palette: IdePalette): IdeSelectionColors {
+  val isDarkCanvas = palette.editorBg.luminance() < 0.35f
   val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
-  return if (palette.isDark) {
-    when {
-      isV2 ->
-        IdeSelectionColors(
-          canvasFill = Color(0xFF2563EB).copy(alpha = 0.56f),
-          canvasMoveFill = Color(0xFF2563EB).copy(alpha = 0.24f),
-          canvasOutline = Color(0xFF60A5FA).copy(alpha = 0.85f),
-          handleFill = Color(0xFF60A5FA),
-          spanBg = Color(0xFF1D4ED8),
-          spanFg = Color(0xFFFFFFFF),
-        )
-      palette.preset == EditorThemePreset.OLIVE_OBSIDIAN ->
-        IdeSelectionColors(
-          canvasFill = Color(0xFF4D7C0F).copy(alpha = 0.62f),
-          canvasMoveFill = Color(0xFF4D7C0F).copy(alpha = 0.26f),
-          canvasOutline = Color(0xFFA3E635).copy(alpha = 0.78f),
-          handleFill = palette.ctaBg,
-          spanBg = Color(0xFF4D7C0F),
-          spanFg = Color(0xFFF7FEE7),
-        )
-      palette.preset == EditorThemePreset.MIDNIGHT_NOIR ->
-        IdeSelectionColors(
-          canvasFill = Color(0xFF6D28D9).copy(alpha = 0.58f),
-          canvasMoveFill = Color(0xFF6D28D9).copy(alpha = 0.26f),
-          canvasOutline = Color(0xFFC084FC).copy(alpha = 0.82f),
-          handleFill = palette.ctaBg,
-          spanBg = Color(0xFF6D28D9),
-          spanFg = Color(0xFFFAF5FF),
-        )
-      palette.preset == EditorThemePreset.AMBER_DUSK ->
-        IdeSelectionColors(
-          canvasFill = Color(0xFFB45309).copy(alpha = 0.58f),
-          canvasMoveFill = Color(0xFFB45309).copy(alpha = 0.26f),
-          canvasOutline = Color(0xFFFBBF24).copy(alpha = 0.80f),
-          handleFill = palette.ctaBg,
-          spanBg = Color(0xFFB45309),
-          spanFg = Color(0xFFFFFBEB),
-        )
-      else ->
-        IdeSelectionColors(
-          canvasFill = Color(0xFF1D4ED8).copy(alpha = 0.58f),
-          canvasMoveFill = Color(0xFF1D4ED8).copy(alpha = 0.26f),
-          canvasOutline = Color(0xFF60A5FA).copy(alpha = 0.82f),
-          handleFill = palette.ctaBg,
-          spanBg = Color(0xFF1D4ED8),
-          spanFg = Color(0xFFFFFFFF),
-        )
-    }
+  return if (isDarkCanvas) {
+    val accentRail =
+      if (isV2) Color(0xFF60A5FA)
+      else palette.ctaBg
+    val tintBase =
+      when {
+        isV2 -> Color(0xFF3B82F6)
+        palette.preset == EditorThemePreset.OLIVE_OBSIDIAN -> Color(0xFF84CC16)
+        palette.preset == EditorThemePreset.MIDNIGHT_NOIR -> Color(0xFFA855F7)
+        palette.preset == EditorThemePreset.AMBER_DUSK -> Color(0xFFF59E0B)
+        else -> Color(0xFF3B82F6)
+      }
+    IdeSelectionColors(
+      canvasFill = tintBase.copy(alpha = 0.32f),
+      canvasMoveFill = tintBase.copy(alpha = 0.16f),
+      canvasOutline = accentRail,
+      handleFill = accentRail,
+      spanBg = tintBase,
+      spanFg = Color(0xFFFFFFFF),
+    )
   } else {
-    when {
-      isV2 ->
-        IdeSelectionColors(
-          canvasFill = Color(0xFF93C5FD).copy(alpha = 0.62f),
-          canvasMoveFill = Color(0xFF93C5FD).copy(alpha = 0.28f),
-          canvasOutline = Color(0xFF2563EB).copy(alpha = 0.75f),
-          handleFill = Color(0xFF2563EB),
-          spanBg = Color(0xFF1D4ED8),
-          spanFg = Color(0xFFFFFFFF),
-        )
-      else ->
-        IdeSelectionColors(
-          canvasFill = palette.ctaBg.copy(alpha = 0.26f),
-          canvasMoveFill = palette.ctaBg.copy(alpha = 0.14f),
-          canvasOutline = palette.ctaBg.copy(alpha = 0.72f),
-          handleFill = palette.ctaBg,
-          spanBg = palette.ctaBg,
-          spanFg = palette.ctaFg,
-        )
-    }
+    val rail = if (isV2) Color(0xFF2563EB) else palette.ctaBg
+    IdeSelectionColors(
+      canvasFill = rail.copy(alpha = 0.24f),
+      canvasMoveFill = rail.copy(alpha = 0.12f),
+      canvasOutline = rail,
+      handleFill = rail,
+      spanBg = rail,
+      spanFg = Color(0xFFFFFFFF),
+    )
   }
 }

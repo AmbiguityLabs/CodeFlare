@@ -186,7 +186,6 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
     // 1c. Per-line highlights, text, squiggles, brackets, composing underline
     val selPalette = selectionColorsFor(palette)
     val selBg = if (p.isSelfDragMoveActive) selPalette.canvasMoveFill else selPalette.canvasFill
-    val selOutline = if (p.isSelfDragMoveActive) Color.Transparent else selPalette.canvasOutline
     val symBg = palette.activePillFg.copy(alpha = 0.14f)
     val bracketFill = palette.activePillBg.copy(alpha = 0.9f)
     val bracketStroke = palette.activePillFg.copy(alpha = 0.85f)
@@ -252,7 +251,7 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
         }
       }
 
-      // Selection highlight rects (supports wrapped lines + full-line newline tail + crisp outline)
+      // Minimal yet noticeable selection highlight rects (no cluttered per-line box borders)
       if (!sel.collapsed && sel.max > lineStart && sel.min <= lineEnd) {
         val cStart = (sel.min - lineStart).coerceIn(0, textLen)
         val cEnd = (sel.max - lineStart).coerceIn(cStart, textLen)
@@ -267,7 +266,7 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
             lineH = lineH,
             color = selBg,
             cornerRadiusPx = 3.dp.toPx(),
-            outlineColor = selOutline,
+            outlineColor = Color.Transparent,
           )
         }
         if (includesNewline) {
@@ -276,7 +275,7 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
           drawRect(
             selBg,
             Offset(tailX, topY + lastRowIdx * lineH + 1f),
-            Size(geom.charWidthPx * 0.7f, (lineH - 2f).coerceAtLeast(4f)),
+            Size(geom.charWidthPx * 0.55f, (lineH - 2f).coerceAtLeast(4f)),
           )
         }
       }
@@ -561,17 +560,36 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
     }
   }
 
-  // ---- Pass 3: Touch selection teardrop handles ----
-  if (p.showTouchHandles && !sel.collapsed && p.dropHoverState == null && !p.isSelfDragMoveActive) {
+  // ---- Pass 3: Minimal crisp selection boundary rails + compact teardrop handles ----
+  if (!sel.collapsed && p.dropHoverState == null && !p.isSelfDragMoveActive) {
     val startCaret = geom.caretGeometry(sel.min, doc, fold, p.styles, p.cache)
     val endCaret = geom.caretGeometry(sel.max, doc, fold, p.styles, p.cache)
     val handleColor = selectionColorsFor(palette).handleFill
-    val ringColor = palette.editorBg
-    if (startCaret.horizontalPosition >= gutterW - 4f && startCaret.bottom in 0f..(size.height + 24f)) {
-      drawSelectionTeardrop(Offset(startCaret.horizontalPosition, startCaret.bottom), isStart = true, color = handleColor, ringColor = ringColor)
+    val railW = 2.dp.toPx()
+    if (startCaret.horizontalPosition >= gutterW - 2f && startCaret.bottom >= 0f && startCaret.top <= size.height) {
+      drawRoundRect(
+        color = handleColor,
+        topLeft = Offset(startCaret.horizontalPosition - railW * 0.5f, startCaret.top + 1f),
+        size = Size(railW, (lineH - 2f).coerceAtLeast(8f)),
+        cornerRadius = CornerRadius(1.dp.toPx()),
+      )
     }
-    if (endCaret.horizontalPosition >= gutterW - 4f && endCaret.bottom in 0f..(size.height + 24f)) {
-      drawSelectionTeardrop(Offset(endCaret.horizontalPosition, endCaret.bottom), isStart = false, color = handleColor, ringColor = ringColor)
+    if (endCaret.horizontalPosition >= gutterW - 2f && endCaret.bottom >= 0f && endCaret.top <= size.height) {
+      drawRoundRect(
+        color = handleColor,
+        topLeft = Offset(endCaret.horizontalPosition - railW * 0.5f, endCaret.top + 1f),
+        size = Size(railW, (lineH - 2f).coerceAtLeast(8f)),
+        cornerRadius = CornerRadius(1.dp.toPx()),
+      )
+    }
+    if (p.showTouchHandles) {
+      val ringColor = palette.editorBg
+      if (startCaret.horizontalPosition >= gutterW - 4f && startCaret.bottom in 0f..(size.height + 24f)) {
+        drawSelectionTeardrop(Offset(startCaret.horizontalPosition, startCaret.bottom), isStart = true, color = handleColor, ringColor = ringColor)
+      }
+      if (endCaret.horizontalPosition >= gutterW - 4f && endCaret.bottom in 0f..(size.height + 24f)) {
+        drawSelectionTeardrop(Offset(endCaret.horizontalPosition, endCaret.bottom), isStart = false, color = handleColor, ringColor = ringColor)
+      }
     }
   }
 
@@ -659,16 +677,16 @@ private fun DrawScope.drawSelectionTeardrop(
   color: Color,
   ringColor: Color,
 ) {
-  val r = 8.dp.toPx()
+  val r = 5.5.dp.toPx()
   val cx = if (isStart) tip.x - r * 0.72f else tip.x + r * 0.72f
-  val cy = tip.y + r * 1.05f
-  drawCircle(color = ringColor.copy(alpha = 0.85f), radius = r + 1.25.dp.toPx(), center = Offset(cx, cy))
+  val cy = tip.y + r * 1.1f
+  drawCircle(color = ringColor.copy(alpha = 0.9f), radius = r + 0.9.dp.toPx(), center = Offset(cx, cy))
   drawCircle(color = color, radius = r, center = Offset(cx, cy))
   val stem =
     Path().apply {
-      moveTo(tip.x, tip.y - 1.dp.toPx())
-      lineTo(if (isStart) tip.x - r * 1.15f else tip.x + r * 1.15f, tip.y + r * 0.9f)
-      lineTo(tip.x, tip.y + r * 0.9f)
+      moveTo(tip.x, tip.y - 0.5.dp.toPx())
+      lineTo(if (isStart) tip.x - r * 1.15f else tip.x + r * 1.15f, tip.y + r * 0.95f)
+      lineTo(tip.x, tip.y + r * 0.95f)
       close()
     }
   drawPath(stem, color = color)
