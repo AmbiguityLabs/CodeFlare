@@ -295,6 +295,7 @@ fun EdgeCodeEditorSurface(
   var loupeSource by remember { mutableStateOf<Offset?>(null) }
   var activeDiffHunk by remember { mutableStateOf<LineChange?>(null) }
   var showPasteHistory by remember { mutableStateOf(false) }
+  var showCollapsedPasteMenu by remember(filePath) { mutableStateOf(false) }
   var showTouchHandles by remember { mutableStateOf(false) }
   var activeHandleDrag by remember { mutableStateOf<DraggedHandle?>(null) }
   var prevViewportHeight by remember(filePath) { mutableIntStateOf(0) }
@@ -416,10 +417,13 @@ fun EdgeCodeEditorSurface(
     }
   }
 
-  // Debounced sync back to IdeViewModel (220ms after last edit — zero per-keystroke VM thrash)
+  // Immediate sync back to IdeViewModel on edits (short coalesce only for very large docs)
   LaunchedEffect(session.editCount) {
     if (session.editCount == 0) return@LaunchedEffect
-    delay(220L)
+    showCollapsedPasteMenu = false
+    if (session.doc.length > 64_000) {
+      delay(60L)
+    }
     flushSyncNow()
   }
 
@@ -555,9 +559,13 @@ fun EdgeCodeEditorSurface(
   val topClearancePx = if (editorSettings.stickyHeaders) with(density) { 28.dp.toPx() } else 0f
   val bottomClearancePx = if (!readOnly) with(density) { 38.dp.toPx() } else with(density) { 12.dp.toPx() }
 
-  // Keep caret scrolled into view on edits, tap navigation, focus gain, or IME resize
+  // Keep caret scrolled into view on edits, collapsed cursor moves, focus gain, or IME resize
+  // Do NOT jump viewport to EOF when non-collapsed multi-line selections (e.g. Select All) occur.
+  var lastEnsureCaretEditCount by remember(filePath) { mutableIntStateOf(session.editCount) }
   LaunchedEffect(session.editCount, session.selection, isFocused) {
-    if (isFocused && activeHandleDrag == null) {
+    val editChanged = session.editCount != lastEnsureCaretEditCount
+    lastEnsureCaretEditCount = session.editCount
+    if (isFocused && activeHandleDrag == null && (editChanged || session.selection.collapsed)) {
       geometry.ensureCaretVisible(
         session = session,
         styles = lineStyles,
@@ -922,6 +930,7 @@ fun EdgeCodeEditorSurface(
             isFocused = st.isFocused
             if (!st.isFocused) {
               showTouchHandles = false
+              showCollapsedPasteMenu = false
               activeDiffHunk = null
             }
           }
@@ -952,6 +961,7 @@ fun EdgeCodeEditorSurface(
                 }
                 Key.A -> {
                   session.selectAll()
+                  showCollapsedPasteMenu = false
                   showTouchHandles = true
                   return@onPreviewKeyEvent true
                 }
@@ -1057,6 +1067,7 @@ fun EdgeCodeEditorSurface(
               val grabbedHandle = hitTestSelectionHandle(downPos)
               if (grabbedHandle != null) {
                 down.consume()
+                showCollapsedPasteMenu = false
                 selectionLadder = null
                 activeHoldScope = null
                 activeHandleDrag = grabbedHandle
@@ -1123,6 +1134,23 @@ fun EdgeCodeEditorSurface(
                 !session.selection.collapsed &&
                   downPos.x >= geometry.effectiveGutterPx &&
                   downOffset in session.selection.min..session.selection.max
+              fun isBlankOrEmptyAreaTap(pos: Offset): Boolean {
+                val doc = session.doc
+                if (doc.length == 0) return true
+                val lastLine = (doc.lineCount - 1).coerceAtLeast(0)
+                val lastRowBottom =
+                  geometry.lineTopViewportY(lastLine, session.foldModel) +
+                    geometry.rowsForLine(lastLine, session.foldModel) * geometry.lineHeightPx
+                if (pos.y > lastRowBottom + geometry.lineHeightPx * 0.25f) return true
+                val docLine = geometry.docLineAtViewportY(pos.y, session.foldModel).coerceIn(0, lastLine)
+                val lineText = doc.lineText(docLine)
+                if (lineText.isEmpty() || lineText.all { it.isWhitespace() }) return true
+                val lineEndOffset = doc.lineEnd(docLine)
+                val lineEndCaret =
+                  geometry.caretGeometry(lineEndOffset, doc, session.foldModel, lineStyles, renderCache)
+                return pos.x > lineEndCaret.horizontalPosition + charW * 1.5f
+              }
+              val downInEmptyArea = !downInExistingSelection && isBlankOrEmptyAreaTap(downPos)
               val configuredHoldMs = latestSelectionConfig.holdDelayMs.toLong().coerceIn(200L, 600L)
               val holdDelayMs = if (downInExistingSelection) minOf(220L, configuredHoldMs) else configuredHoldMs
               var progressiveHoldJob: Job? = null
@@ -1134,10 +1162,20 @@ fun EdgeCodeEditorSurface(
                     longPressFired = true
                     if (downInExistingSelection) {
                       // Priority 2: Hold inside existing selection body starts Drag & Drop directly
+                      showCollapsedPasteMenu = false
                       dragLaunched = launchSelectionDrag()
+                    } else if (downInEmptyArea) {
+                      haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                      selectionLadder = null
+                      activeHoldScope = null
+                      session.setSelection(TextRange(downOffset))
+                      showTouchHandles = false
+                      showCollapsedPasteMenu = !readOnly || session.doc.length > 0
+                      focusRequester.requestFocus()
                     } else {
                       // Priority 3: Smart structural or classic-word selection on hold
                       haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                      showCollapsedPasteMenu = false
                       val cfg = latestSelectionConfig
                       if (cfg.holdMode == SmartSelectionHoldMode.CLASSIC_WORD) {
                         selectionLadder = null
@@ -1178,7 +1216,13 @@ fun EdgeCodeEditorSurface(
                             }
                         }
                       }
-                      showTouchHandles = true
+                      if (session.selection.collapsed) {
+                        showTouchHandles = false
+                        showCollapsedPasteMenu = !readOnly || session.doc.length > 0
+                      } else {
+                        showTouchHandles = true
+                        showCollapsedPasteMenu = false
+                      }
                       focusRequester.requestFocus()
                     }
                   }
@@ -1241,6 +1285,7 @@ fun EdgeCodeEditorSurface(
 
                     if (!draggingScroll && !longPressFired && movedDist > touchSlop) {
                       draggingScroll = true
+                      showCollapsedPasteMenu = false
                       longPressJob.cancel()
                       progressiveHoldJob?.cancel()
                     }
@@ -1351,16 +1396,30 @@ fun EdgeCodeEditorSurface(
               focusRequester.requestFocus()
               when (tapStreak[0]) {
                 2 -> {
-                  session.selectWordAt(offset)
-                  showTouchHandles = true
+                  if (downInEmptyArea) {
+                    session.setSelection(TextRange(offset))
+                    showTouchHandles = false
+                    showCollapsedPasteMenu = !readOnly || session.doc.length > 0
+                  } else {
+                    session.selectWordAt(offset)
+                    if (session.selection.collapsed) {
+                      showTouchHandles = false
+                      showCollapsedPasteMenu = !readOnly || session.doc.length > 0
+                    } else {
+                      showTouchHandles = true
+                      showCollapsedPasteMenu = false
+                    }
+                  }
                 }
                 3 -> {
                   session.selectLineAt(tappedDocLine)
-                  showTouchHandles = true
+                  showCollapsedPasteMenu = false
+                  showTouchHandles = !session.selection.collapsed
                 }
                 else -> {
                   session.setSelection(TextRange(offset))
                   showTouchHandles = false
+                  showCollapsedPasteMenu = false
                   if (!readOnly) imeHandle.showKeyboard()
                 }
               }
@@ -1441,28 +1500,47 @@ fun EdgeCodeEditorSurface(
       )
     }
 
-    // Overlay 3: Live Smart Hold Scope Pill + Floating Selection Toolbar
-    val selAnchorY =
-      if (!session.selection.collapsed && activeHandleDrag == null) {
-        geometry.caretGeometry(session.selection.min, session.doc, session.foldModel, lineStyles, renderCache).top
+    // Overlay 3: Live Smart Hold Scope Pill + Floating Selection / Paste Toolbar
+    val hasSelection = !session.selection.collapsed
+    val isAllSelected =
+      hasSelection &&
+        session.doc.length > 0 &&
+        session.selection.min == 0 &&
+        session.selection.max == session.doc.length
+    val collapsedAnchorRect =
+      if (!hasSelection && showCollapsedPasteMenu && activeHandleDrag == null) {
+        geometry.caretGeometry(session.selection.end, session.doc, session.foldModel, lineStyles, renderCache)
       } else {
-        0f
+        null
+      }
+    val selAnchorY =
+      when {
+        hasSelection && activeHandleDrag == null ->
+          geometry.caretGeometry(session.selection.min, session.doc, session.foldModel, lineStyles, renderCache).top
+        collapsedAnchorRect != null -> collapsedAnchorRect.top
+        else -> 0f
       }
     val selBottomY =
-      if (!session.selection.collapsed && activeHandleDrag == null) {
-        geometry.caretGeometry(session.selection.max, session.doc, session.foldModel, lineStyles, renderCache).bottom
-      } else {
-        0f
+      when {
+        hasSelection && activeHandleDrag == null ->
+          geometry.caretGeometry(session.selection.max, session.doc, session.foldModel, lineStyles, renderCache).bottom
+        collapsedAnchorRect != null -> collapsedAnchorRect.bottom
+        else -> 0f
       }
+    val toolbarTopClearancePx =
+      if (editorSettings.stickyHeaders && stickySymbol != null) with(density) { 26.dp.toPx() }
+      else 0f
+    val toolbarBottomClearancePx = with(density) { 28.dp.toPx() }
+
     EdgeSmartHoldScopePill(
       scope = activeHoldScope,
       anchorY = selAnchorY,
-      dragHintVisible = !session.selection.collapsed && selectionConfig.immediateSlideToDrag,
+      dragHintVisible = hasSelection && selectionConfig.immediateSlideToDrag,
       showScopeBadge = selectionConfig.showScopeBadge,
     )
     EdgeSelectionToolbar(
       visible =
-        !session.selection.collapsed &&
+        (hasSelection || (showCollapsedPasteMenu && (!readOnly || session.doc.length > 0))) &&
           activeHandleDrag == null &&
           activeHoldScope == null &&
           !isSelfDragActive &&
@@ -1473,6 +1551,11 @@ fun EdgeCodeEditorSurface(
       anchorBottomY = selBottomY,
       viewportHeightPx = geometry.viewport.height.toFloat(),
       readOnly = readOnly,
+      hasSelection = hasSelection,
+      canSelectAll = session.doc.length > 0,
+      isAllSelected = isAllSelected,
+      topClearancePx = toolbarTopClearancePx,
+      bottomClearancePx = toolbarBottomClearancePx,
       hasClipboardHistory = ClipboardHistoryStore.entries.isNotEmpty(),
       scopeLabel = selectionLadder?.currentScope?.label,
       canExpandScope = selectionLadder?.canExpand == true,
@@ -1521,13 +1604,19 @@ fun EdgeCodeEditorSurface(
         showTouchHandles = false
       },
       onPaste = {
-        readSystemClipboard()?.let { session.commitText(it) }
+        val clip = readSystemClipboard() ?: ClipboardHistoryStore.entries.firstOrNull()
+        clip?.let { session.commitText(it) }
         showTouchHandles = false
+        showCollapsedPasteMenu = false
       },
-      onOpenPasteHistory = { showPasteHistory = true },
+      onOpenPasteHistory = {
+        showCollapsedPasteMenu = false
+        showPasteHistory = true
+      },
       onSelectAll = {
         session.selectAll()
         selectionLadder = null
+        showCollapsedPasteMenu = false
         showTouchHandles = true
       },
       onComment = {

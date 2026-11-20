@@ -18,9 +18,12 @@ import com.example.ui.screens.settings.parseHexColor
 import com.example.ui.theme.CaAccent
 import com.example.ui.theme.CodeStylePreset
 import com.example.ui.theme.EditorThemePreset
+import com.example.ui.theme.UiStyleVersion
+import com.example.ui.theme.bridgedTo
 import com.example.ui.theme.expressiveColorScheme
 import com.example.ui.theme.expressiveColorSchemeFromSeed
 import com.example.ui.theme.paletteFor
+import com.example.ui.theme.selectionColorsFor
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -574,5 +577,33 @@ class SettingsAndPreferencesTest {
     val normalized = store.editorSettingsFlow.first()
     assertEquals(EditorSettings.CODE_STYLE_DEFAULT, normalized.normalizedCodeStylePreset())
     assertEquals(CodeStylePreset.THEME_DEFAULT, CodeStylePreset.fromKey("non_existent"))
+  }
+
+  @Test
+  fun dynamicAndCustomSchemesBridgeUniversallyAcrossV1AndV2Palettes() {
+    val greenSchemeDark = expressiveColorSchemeFromSeed(Color(0xFF22C55EL), dark = true)
+    val violetSchemeDark = expressiveColorSchemeFromSeed(Color(0xFF8B5CF6L), dark = true)
+
+    val v1Base = paletteFor(darkTheme = true, preset = EditorThemePreset.OLIVE_OBSIDIAN, uiStyle = UiStyleVersion.V1_DEFAULT)
+    val v2Base = paletteFor(darkTheme = true, preset = EditorThemePreset.OLIVE_OBSIDIAN, uiStyle = UiStyleVersion.V2_MINIMAL_OLED)
+
+    val v1Green = v1Base.bridgedTo(greenSchemeDark)
+    val v2Green = v2Base.bridgedTo(greenSchemeDark)
+    val v2Violet = v2Base.bridgedTo(violetSchemeDark)
+
+    assertEquals(greenSchemeDark.primary, v1Green.ctaBg)
+    assertEquals(greenSchemeDark.primary, v2Green.ctaBg)
+    assertEquals(greenSchemeDark.primaryContainer, v2Green.activePillBg)
+    assertEquals(greenSchemeDark.onPrimaryContainer, v2Green.activePillFg)
+    assertEquals(greenSchemeDark.tertiaryContainer, v2Green.featuredCardBg)
+
+    assertNotEquals(v2Base.ctaBg, v2Green.ctaBg)
+    assertNotEquals(v2Green.ctaBg, v2Violet.ctaBg)
+    assertNotEquals(v2Green.chromeSurface, v2Violet.chromeSurface)
+
+    // V2 keeps deep OLED editor canvas untouched while chrome and selection accents adapt universally
+    assertEquals(Color(0xFF000000), v2Green.editorBg)
+    assertEquals(v2Green.ctaBg, selectionColorsFor(v2Green).handleFill)
+    assertEquals(v2Violet.ctaBg, selectionColorsFor(v2Violet).handleFill)
   }
 }

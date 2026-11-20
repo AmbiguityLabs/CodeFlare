@@ -16,6 +16,7 @@ import com.example.data.remote.DiagnosticSeverity
 import com.example.data.remote.WorkerLanguage
 import com.example.editor.EdgeCodeEditorView
 import com.example.editor.SyntaxHighlighter
+import com.example.editor.canvas.computeSelectionToolbarTopPx
 import com.example.ui.theme.DarkIdePalette
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -231,5 +232,84 @@ class EditorEngineTest {
     val canvas = Canvas(bmp)
     view.draw(canvas)
     bmp.recycle()
+  }
+
+  @Test
+  fun selectionToolbarPositioning_selectAllPinsToTopAndNeverDropsToBottom() {
+    val viewportH = 1200f
+    val toolbarH = 96f
+    val minTop = 16f
+    val bottomClear = 72f
+    val gap = 16f
+
+    // Select All spanning full viewport pins to top instead of dropping to viewport bottom
+    val selectAllTop =
+      computeSelectionToolbarTopPx(
+        anchorTopY = 12f,
+        anchorBottomY = 1160f,
+        viewportHeightPx = viewportH,
+        toolbarHeightPx = toolbarH,
+        minTopPx = minTop,
+        bottomClearancePx = bottomClear,
+        gapPx = gap,
+        isAllSelected = true,
+      )
+    assertEquals(16, selectAllTop)
+
+    // Select All with sticky header clearance respects topClearance
+    val selectAllWithSticky =
+      computeSelectionToolbarTopPx(
+        anchorTopY = -300f,
+        anchorBottomY = 2400f,
+        viewportHeightPx = viewportH,
+        toolbarHeightPx = toolbarH,
+        minTopPx = 68f,
+        bottomClearancePx = bottomClear,
+        gapPx = gap,
+        isAllSelected = true,
+      )
+    assertEquals(68, selectAllWithSticky)
+
+    // Short selection at line 0 places cleanly below selection (not at bottom of screen)
+    val topLineBelow =
+      computeSelectionToolbarTopPx(
+        anchorTopY = 12f,
+        anchorBottomY = 52f,
+        viewportHeightPx = viewportH,
+        toolbarHeightPx = toolbarH,
+        minTopPx = minTop,
+        bottomClearancePx = bottomClear,
+        gapPx = gap,
+        isAllSelected = false,
+      )
+    assertEquals(68, topLineBelow)
+
+    // Mid-screen selection places above selection
+    val midAbove =
+      computeSelectionToolbarTopPx(
+        anchorTopY = 500f,
+        anchorBottomY = 540f,
+        viewportHeightPx = viewportH,
+        toolbarHeightPx = toolbarH,
+        minTopPx = minTop,
+        bottomClearancePx = bottomClear,
+        gapPx = gap,
+        isAllSelected = false,
+      )
+    assertEquals((500f - toolbarH - gap).toInt(), midAbove)
+
+    // Collapsed empty-editor paste menu at line 0 places cleanly below caret
+    val emptyPasteBelow =
+      computeSelectionToolbarTopPx(
+        anchorTopY = 12f,
+        anchorBottomY = 48f,
+        viewportHeightPx = viewportH,
+        toolbarHeightPx = toolbarH,
+        minTopPx = minTop,
+        bottomClearancePx = bottomClear,
+        gapPx = gap,
+        isAllSelected = false,
+      )
+    assertEquals(64, emptyPasteBelow)
   }
 }

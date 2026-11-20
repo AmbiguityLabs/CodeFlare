@@ -740,6 +740,41 @@ fun BoxScope.EdgeSmartHoldScopePill(
   }
 }
 
+internal fun computeSelectionToolbarTopPx(
+  anchorTopY: Float,
+  anchorBottomY: Float,
+  viewportHeightPx: Float,
+  toolbarHeightPx: Float,
+  minTopPx: Float,
+  bottomClearancePx: Float,
+  gapPx: Float,
+  isAllSelected: Boolean,
+): Int {
+  val safeMinTop = minTopPx.coerceAtLeast(0f)
+  val maxTop =
+    if (viewportHeightPx > 0f) {
+      (viewportHeightPx - toolbarHeightPx - bottomClearancePx).coerceAtLeast(safeMinTop)
+    } else {
+      Float.MAX_VALUE
+    }
+  if (isAllSelected) {
+    return safeMinTop.roundToInt()
+  }
+  val spansViewport = viewportHeightPx > 0f && anchorTopY < safeMinTop && anchorBottomY > maxTop
+  if (spansViewport) {
+    return safeMinTop.roundToInt()
+  }
+  val above = anchorTopY - toolbarHeightPx - gapPx
+  if (above >= safeMinTop && above <= maxTop) {
+    return above.roundToInt()
+  }
+  val below = anchorBottomY + gapPx
+  if (below >= safeMinTop && below <= maxTop) {
+    return below.roundToInt()
+  }
+  return safeMinTop.roundToInt()
+}
+
 @Composable
 fun BoxScope.EdgeSelectionToolbar(
   visible: Boolean,
@@ -747,6 +782,11 @@ fun BoxScope.EdgeSelectionToolbar(
   anchorBottomY: Float = anchorY,
   viewportHeightPx: Float = 0f,
   readOnly: Boolean,
+  hasSelection: Boolean = true,
+  canSelectAll: Boolean = true,
+  isAllSelected: Boolean = false,
+  topClearancePx: Float = 0f,
+  bottomClearancePx: Float = 0f,
   hasClipboardHistory: Boolean,
   scopeLabel: String? = null,
   canExpandScope: Boolean = false,
@@ -773,27 +813,35 @@ fun BoxScope.EdgeSelectionToolbar(
   val palette = LocalIdePalette.current
   val labelBehavior = LocalIconLabelBehavior.current
   val density = LocalDensity.current
+  var measuredToolbarHeightPx by remember { mutableFloatStateOf(0f) }
   val topOffsetPx =
     with(density) {
-      val desired = anchorY - 46.dp.toPx()
-      if (desired >= 8.dp.toPx()) {
-        desired.roundToInt()
-      } else {
-        val belowSel = maxOf(anchorY + 30.dp.toPx(), anchorBottomY + 22.dp.toPx())
-        val maxY =
-          if (viewportHeightPx > 0f) (viewportHeightPx - 48.dp.toPx()).coerceAtLeast(8.dp.toPx())
-          else belowSel
-        belowSel.coerceAtMost(maxY).roundToInt()
-      }
+      val fallbackHeightPx = 38.dp.toPx()
+      val effectiveHeightPx =
+        if (measuredToolbarHeightPx > 0f) measuredToolbarHeightPx else fallbackHeightPx
+      computeSelectionToolbarTopPx(
+        anchorTopY = anchorY,
+        anchorBottomY = anchorBottomY,
+        viewportHeightPx = viewportHeightPx,
+        toolbarHeightPx = effectiveHeightPx,
+        minTopPx = 8.dp.toPx() + topClearancePx,
+        bottomClearancePx = 8.dp.toPx() + bottomClearancePx,
+        gapPx = 8.dp.toPx(),
+        isAllSelected = isAllSelected,
+      )
     }
 
   val hasSmartTools =
-    showDragGrip ||
-      (showScopeBadge && !scopeLabel.isNullOrBlank()) ||
-      (showExpandShrink && (canExpandScope || canShrinkScope)) ||
-      (showModeToggle && !readOnly)
-  val hasCodeTools = showCodeActions && !readOnly
-  val hasAnyControl = hasSmartTools || showQuickActions || hasCodeTools
+    hasSelection &&
+      (showDragGrip ||
+        (showScopeBadge && !scopeLabel.isNullOrBlank()) ||
+        (showExpandShrink && (canExpandScope || canShrinkScope)) ||
+        (showModeToggle && !readOnly))
+  val hasCollapsedActions = !hasSelection && (!readOnly || canSelectAll)
+  val hasVisibleQuickActions =
+    if (hasSelection) showQuickActions else hasCollapsedActions
+  val hasCodeTools = hasSelection && showCodeActions && !readOnly
+  val hasAnyControl = hasSmartTools || hasVisibleQuickActions || hasCodeTools
 
   AnimatedVisibility(
     visible = visible && hasAnyControl,
@@ -810,14 +858,17 @@ fun BoxScope.EdgeSelectionToolbar(
       shape = RoundedCornerShape(999.dp),
       border = BorderStroke(1.dp, palette.ctaBg.copy(alpha = 0.42f)),
       shadowElevation = 6.dp,
-      modifier = Modifier.testTag("editor_selection_toolbar"),
+      modifier =
+        Modifier
+          .onSizeChanged { measuredToolbarHeightPx = it.height.toFloat() }
+          .testTag("editor_selection_toolbar"),
     ) {
       Row(
         modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp),
       ) {
-        if (showDragGrip) {
+        if (hasSelection && showDragGrip) {
           Box(
             modifier =
               Modifier
@@ -859,7 +910,7 @@ fun BoxScope.EdgeSelectionToolbar(
           }
         }
 
-        if (showScopeBadge && !scopeLabel.isNullOrBlank()) {
+        if (hasSelection && showScopeBadge && !scopeLabel.isNullOrBlank()) {
           Text(
             text = scopeLabel,
             fontFamily = JetBrainsMono,
@@ -871,7 +922,7 @@ fun BoxScope.EdgeSelectionToolbar(
           )
         }
 
-        if (showExpandShrink && (canExpandScope || canShrinkScope)) {
+        if (hasSelection && showExpandShrink && (canExpandScope || canShrinkScope)) {
           IconButton(
             onClick = onShrinkScope,
             enabled = canShrinkScope,
@@ -898,7 +949,7 @@ fun BoxScope.EdgeSelectionToolbar(
           }
         }
 
-        if (showModeToggle && !readOnly) {
+        if (hasSelection && showModeToggle && !readOnly) {
           val isMove = dragMode == DragTransferMode.MOVE
           val modeTint = if (isMove) palette.ctaBg else EmeraldLive
           IconRevealButton(
@@ -914,7 +965,7 @@ fun BoxScope.EdgeSelectionToolbar(
           )
         }
 
-        if (hasSmartTools && showQuickActions) {
+        if (hasSmartTools && hasVisibleQuickActions) {
           Box(
             modifier =
               Modifier
@@ -925,28 +976,32 @@ fun BoxScope.EdgeSelectionToolbar(
           )
         }
 
-        if (showQuickActions) {
-          IconRevealButton(
-            icon = Icons.Outlined.ContentCopy,
-            revealedLabel = "Copy",
-            minimal = true,
-            contentTint = palette.textPrimary,
-            height = 28.dp,
-            iconSize = 15.dp,
-            onClick = onCopy,
-            tag = "sel_copy",
-          )
-          if (!readOnly) {
+        if (hasVisibleQuickActions) {
+          if (hasSelection) {
             IconRevealButton(
-              icon = Icons.Outlined.ContentCut,
-              revealedLabel = "Cut",
+              icon = Icons.Outlined.ContentCopy,
+              revealedLabel = "Copy",
               minimal = true,
               contentTint = palette.textPrimary,
               height = 28.dp,
               iconSize = 15.dp,
-              onClick = onCut,
-              tag = "sel_cut",
+              onClick = onCopy,
+              tag = "sel_copy",
             )
+            if (!readOnly) {
+              IconRevealButton(
+                icon = Icons.Outlined.ContentCut,
+                revealedLabel = "Cut",
+                minimal = true,
+                contentTint = palette.textPrimary,
+                height = 28.dp,
+                iconSize = 15.dp,
+                onClick = onCut,
+                tag = "sel_cut",
+              )
+            }
+          }
+          if (!readOnly) {
             IconRevealButton(
               icon = Icons.Outlined.ContentPaste,
               revealedLabel = "Paste",
@@ -970,20 +1025,22 @@ fun BoxScope.EdgeSelectionToolbar(
               )
             }
           }
-          IconRevealButton(
-            icon = Icons.Outlined.SelectAll,
-            revealedLabel = "All",
-            minimal = true,
-            contentTint = palette.textPrimary,
-            height = 28.dp,
-            iconSize = 15.dp,
-            onClick = onSelectAll,
-            tag = "sel_all",
-          )
+          if (canSelectAll) {
+            IconRevealButton(
+              icon = Icons.Outlined.SelectAll,
+              revealedLabel = "All",
+              minimal = true,
+              contentTint = palette.textPrimary,
+              height = 28.dp,
+              iconSize = 15.dp,
+              onClick = onSelectAll,
+              tag = "sel_all",
+            )
+          }
         }
 
         if (hasCodeTools) {
-          if (hasSmartTools || showQuickActions) {
+          if (hasSmartTools || hasVisibleQuickActions) {
             Box(
               modifier =
                 Modifier

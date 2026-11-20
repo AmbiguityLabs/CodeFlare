@@ -3,6 +3,7 @@ package com.example.ui.theme
 import androidx.annotation.DrawableRes
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import com.example.R
 
@@ -657,7 +658,33 @@ fun applyCodeStylePreset(
 }
 
 fun IdePalette.bridgedTo(scheme: androidx.compose.material3.ColorScheme): IdePalette {
-  if (uiStyle == UiStyleVersion.V2_MINIMAL_OLED) return this
+  if (uiStyle == UiStyleVersion.V2_MINIMAL_OLED) {
+    return copy(
+      chromeBg = lerp(chromeBg, scheme.background, 0.72f),
+      chromeSurface = lerp(chromeSurface, scheme.surfaceContainerLow, 0.85f),
+      chromePill = lerp(chromePill, scheme.surfaceContainer, 0.85f),
+      glassSurface = lerp(glassSurface, scheme.surfaceContainer, 0.85f),
+      glassElevated = lerp(glassElevated, scheme.surfaceContainerHigh, 0.85f),
+      glassDockBg = lerp(glassDockBg, scheme.surfaceContainerLow, 0.85f),
+      glassBorderHighlight = scheme.outline,
+      glassBorderSubtle = scheme.outlineVariant,
+      activePillBg = scheme.primaryContainer,
+      activePillFg = scheme.onPrimaryContainer,
+      ctaBg = scheme.primary,
+      ctaFg = scheme.onPrimary,
+      featuredCardBg = scheme.tertiaryContainer,
+      featuredCardFg = scheme.onTertiaryContainer,
+      featuredCardMuted = scheme.onTertiaryContainer.copy(alpha = 0.74f),
+      selectedRowBg = scheme.surfaceContainerHighest,
+      tabBarBg = lerp(tabBarBg, scheme.background, 0.72f),
+      tabActiveBg = lerp(tabActiveBg, scheme.surfaceContainerLow, 0.85f),
+      border = scheme.outlineVariant,
+      treeLine = scheme.outlineVariant.copy(alpha = 0.7f),
+      textPrimary = scheme.onSurface,
+      textSecondary = scheme.onSurfaceVariant,
+      textMuted = scheme.outline,
+    )
+  }
   return copy(
     chromeBg = scheme.background,
     chromeSurface = scheme.surfaceContainerLow,
@@ -676,6 +703,7 @@ fun IdePalette.bridgedTo(scheme: androidx.compose.material3.ColorScheme): IdePal
     featuredCardMuted = scheme.onTertiaryContainer.copy(alpha = 0.74f),
     selectedRowBg = scheme.surfaceContainerHighest,
     tabBarBg = scheme.background,
+    tabActiveBg = scheme.surfaceContainerLow,
     border = scheme.outlineVariant,
     treeLine = scheme.outlineVariant.copy(alpha = 0.7f),
     textPrimary = scheme.onSurface,
@@ -696,36 +724,26 @@ data class IdeSelectionColors(
 
 fun selectionColorsFor(palette: IdePalette): IdeSelectionColors {
   val isDarkCanvas = palette.editorBg.luminance() < 0.35f
-  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
+  val accentRail = palette.ctaBg
+  val spanContrastFg =
+    if (accentRail.luminance() > 0.52f) Color(0xFF10130C) else Color(0xFFFFFFFF)
   return if (isDarkCanvas) {
-    val accentRail =
-      if (isV2) Color(0xFF60A5FA)
-      else palette.ctaBg
-    val tintBase =
-      when {
-        isV2 -> Color(0xFF3B82F6)
-        palette.preset == EditorThemePreset.OLIVE_OBSIDIAN -> Color(0xFF84CC16)
-        palette.preset == EditorThemePreset.MIDNIGHT_NOIR -> Color(0xFFA855F7)
-        palette.preset == EditorThemePreset.AMBER_DUSK -> Color(0xFFF59E0B)
-        else -> Color(0xFF3B82F6)
-      }
     IdeSelectionColors(
-      canvasFill = tintBase.copy(alpha = 0.32f),
-      canvasMoveFill = tintBase.copy(alpha = 0.16f),
+      canvasFill = accentRail.copy(alpha = 0.28f),
+      canvasMoveFill = accentRail.copy(alpha = 0.15f),
       canvasOutline = accentRail,
       handleFill = accentRail,
-      spanBg = tintBase,
-      spanFg = Color(0xFFFFFFFF),
+      spanBg = accentRail,
+      spanFg = spanContrastFg,
     )
   } else {
-    val rail = if (isV2) Color(0xFF2563EB) else palette.ctaBg
     IdeSelectionColors(
-      canvasFill = rail.copy(alpha = 0.24f),
-      canvasMoveFill = rail.copy(alpha = 0.12f),
-      canvasOutline = rail,
-      handleFill = rail,
-      spanBg = rail,
-      spanFg = Color(0xFFFFFFFF),
+      canvasFill = accentRail.copy(alpha = 0.22f),
+      canvasMoveFill = accentRail.copy(alpha = 0.12f),
+      canvasOutline = accentRail,
+      handleFill = accentRail,
+      spanBg = accentRail,
+      spanFg = spanContrastFg,
     )
   }
 }

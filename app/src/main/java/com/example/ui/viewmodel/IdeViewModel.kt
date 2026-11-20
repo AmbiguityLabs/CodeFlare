@@ -154,6 +154,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 enum class HomeTab {
   PROJECTS,
@@ -507,10 +509,35 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   private val undoStacks = mutableMapOf<String, ArrayDeque<TextFieldValue>>()
   private val redoStacks = mutableMapOf<String, ArrayDeque<TextFieldValue>>()
   private val fileDiagnosticsCache = ConcurrentHashMap<String, List<DiagnosticItem>>()
+  private val autoSaveWriteMutex = Mutex()
   private val lastPersistedDraftDigests = ConcurrentHashMap<String, Int>()
+  private val lastPersistedNonSpacingDigests = ConcurrentHashMap<String, Int>()
+  private val lastLocallyAutoSavedNonSpacing = ConcurrentHashMap<String, String>()
   private val pendingCloudDrafts = ConcurrentHashMap<String, AutoSavedWorkspaceDraft>()
   private var pendingRestoreSessionPointer: AutoSaveSessionPointer? = null
   private var hasAttemptedAutoReopen = false
+
+  private fun clearLocalAutoSaveTrackingForWorkspace(workspaceKey: String) {
+    lastPersistedDraftDigests.remove(workspaceKey)
+    lastPersistedNonSpacingDigests.remove(workspaceKey)
+    val prefix = "$workspaceKey::"
+    lastLocallyAutoSavedNonSpacing.keys.removeAll { it.startsWith(prefix) }
+  }
+
+  private fun seedLocalAutoSaveBaseline(workspaceKey: String, record: RamWorkspaceRecord) {
+    val editable = record.workingWorkspace.files.filterNot { it.isVirtualReadOnly }
+    editable.forEach { file ->
+      val liveText = record.fieldValues[file.path]?.text ?: file.content
+      lastLocallyAutoSavedNonSpacing["$workspaceKey::${file.path}"] = AutoSaveDraftStore.stripSpacing(liveText)
+    }
+    lastPersistedNonSpacingDigests[workspaceKey] =
+      AutoSaveDraftStore.computeNonSpacingContentDigest(
+        files = editable,
+        openTabs = record.openTabPaths,
+        activeFilePath = record.activeFilePath,
+        entryModulePath = record.workingWorkspace.entryModulePath,
+      )
+  }
 
   private fun activeWorkspaceKey(state: IdeUiState = _uiState.value): String? {
     val ws = state.workspace ?: return null
@@ -645,10 +672,18 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
       // Phone directory files on disk are the primary source of truth
       diskWorkspaces.forEach { rec ->
         ramDb.restoreRecord(rec, setActive = false)
+        seedLocalAutoSaveBaseline(rec.key, rec)
       }
       pendingRestoreSessionPointer = lastPointer
       restoredDrafts.forEach { draft ->
         lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
+        lastPersistedNonSpacingDigests[draft.workspaceKey] =
+          AutoSaveDraftStore.computeNonSpacingContentDigest(
+            files = draft.files,
+            openTabs = draft.openTabs,
+            activeFilePath = draft.activeFilePath,
+            entryModulePath = draft.entryModulePath,
+          )
         if (draft.isLocalScratchpad || draft.workspaceKey.startsWith("local_")) {
           // Only materialize from AutoSaveDraftStore if no folder exists on disk yet
           if (!ramDb.hasWorkspace(draft.workspaceKey)) {
@@ -670,7 +705,10 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
               } else {
                 record
               }
-            autoSaveIoScope.launch { projectDirManager.saveWorkspaceRecord(finalRecord) }
+            seedLocalAutoSaveBaseline(draft.workspaceKey, finalRecord)
+            autoSaveIoScope.launch {
+              autoSaveWriteMutex.withLock { projectDirManager.saveWorkspaceRecord(finalRecord) }
+            }
           }
         } else {
           pendingCloudDrafts[draft.workspaceKey] = draft
@@ -928,6 +966,8 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
       autoSaveStore.clearAllDrafts()
       withContext(Dispatchers.IO) { apiCacheStore.clearAll() }
       lastPersistedDraftDigests.clear()
+      lastPersistedNonSpacingDigests.clear()
+      lastLocallyAutoSavedNonSpacing.clear()
       pendingCloudDrafts.clear()
       periodicAutoSaveJob?.cancel()
       undoStacks.clear()
@@ -1328,7 +1368,7 @@ export default {
   fun deleteLocalRamWorkspace(key: String) {
     val activeKey = activeWorkspaceKey()
     ramDb.removeWorkspace(key)
-    lastPersistedDraftDigests.remove(key)
+    clearLocalAutoSaveTrackingForWorkspace(key)
     pendingCloudDrafts.remove(key)
     autoSaveIoScope.launch {
       autoSaveStore.clearWorkspaceDraft(key)
@@ -1721,6 +1761,7 @@ export default {
           gitWorkingBaseline = baselineMap,
         )
       }
+      seedLocalAutoSaveBaseline(ramKey, cachedRecord)
       appendLog("INFO", "Switched to '${ws.scriptName}' from local project directory")
       recordActiveSessionPointer()
       syncPeriodicAutoSaveLoop()
@@ -1839,6 +1880,7 @@ export default {
               gitPushStatusMessage = null,
             )
           }
+          seedLocalAutoSaveBaseline(ramKey, activeRecord)
           appendLog("INFO", "Synced Worker '${ws.scriptName}' (${ws.files.size} files) into project folder")
           recordActiveSessionPointer()
           syncPeriodicAutoSaveLoop()
@@ -1884,8 +1926,9 @@ export default {
     val reverted = ramDb.revertWorkspaceToImportedBaseline(key) ?: return
     val ws = reverted.workingWorkspace
     persistWorkspaceToProjectDirAsync(key)
-    lastPersistedDraftDigests.remove(key)
-    autoSaveIoScope.launch { autoSaveStore.clearWorkspaceDraft(key) }
+    clearLocalAutoSaveTrackingForWorkspace(key)
+    seedLocalAutoSaveBaseline(key, reverted)
+    autoSaveIoScope.launch { autoSaveWriteMutex.withLock { autoSaveStore.clearWorkspaceDraft(key) } }
     val diags = rebuildDiagnosticsFull(ws.files)
     _uiState.update { state ->
       state.copy(
@@ -3066,7 +3109,16 @@ export default {
         )
       }
       workspaceEventBus.publish(WorkspaceEvent.FileSaved(wsKey, path, prevValue.text, newValue.text))
-      scheduleDraftSave(syncRamDb = false)
+      val fileKey = "$wsKey::$path"
+      val prevSavedNonSpacing =
+        lastLocallyAutoSavedNonSpacing[fileKey]
+          ?: AutoSaveDraftStore.stripSpacing(prevValue.text)
+      val currentNonSpacing = AutoSaveDraftStore.stripSpacing(newValue.text)
+      if (currentNonSpacing != prevSavedNonSpacing) {
+        lastLocallyAutoSavedNonSpacing[fileKey] = currentNonSpacing
+        draftSaveJob?.cancel()
+        triggerImmediateLocalAutoSave(_uiState.value, modifiedExternalPath = path)
+      }
     }
   }
 
@@ -3117,7 +3169,10 @@ export default {
   }
 
   private fun applyDirectTextValue(path: String, value: TextFieldValue) {
-    val ramKey = activeWorkspaceKey()
+    val prevState = _uiState.value
+    val prevText = prevState.editorFieldValues[path]?.text
+      ?: prevState.workspace?.files?.firstOrNull { it.path == path }?.content.orEmpty()
+    val ramKey = activeWorkspaceKey(prevState)
     var filesSnapshot: List<WorkerFile>? = null
     _uiState.update { state ->
       val ws = state.workspace ?: return@update state
@@ -3155,7 +3210,17 @@ export default {
           }
         }
     }
-    scheduleDraftSave()
+    val wsKey = ramKey ?: "default"
+    val fileKey = "$wsKey::$path"
+    val prevSavedNonSpacing =
+      lastLocallyAutoSavedNonSpacing[fileKey]
+        ?: AutoSaveDraftStore.stripSpacing(prevText)
+    val currentNonSpacing = AutoSaveDraftStore.stripSpacing(value.text)
+    if (currentNonSpacing != prevSavedNonSpacing) {
+      lastLocallyAutoSavedNonSpacing[fileKey] = currentNonSpacing
+      draftSaveJob?.cancel()
+      triggerImmediateLocalAutoSave(_uiState.value, modifiedExternalPath = path)
+    }
   }
 
   fun formatActiveFile() {
@@ -8522,18 +8587,22 @@ jobs:
     val key = activeWorkspaceKey()
     revertWorkspaceToImportedBaseline()
     if (key != null) {
-      lastPersistedDraftDigests.remove(key)
+      clearLocalAutoSaveTrackingForWorkspace(key)
       pendingCloudDrafts.remove(key)
-      autoSaveIoScope.launch { autoSaveStore.clearWorkspaceDraft(key) }
+      autoSaveIoScope.launch { autoSaveWriteMutex.withLock { autoSaveStore.clearWorkspaceDraft(key) } }
     }
     _uiState.update { it.copy(restoredDraftBanner = null) }
   }
 
   fun clearAllAutoSavedDrafts() {
     lastPersistedDraftDigests.clear()
+    lastPersistedNonSpacingDigests.clear()
+    lastLocallyAutoSavedNonSpacing.clear()
     pendingCloudDrafts.clear()
     autoSaveIoScope.launch {
-      autoSaveStore.clearAllDrafts()
+      autoSaveWriteMutex.withLock {
+        autoSaveStore.clearAllDrafts()
+      }
     }
     _uiState.update {
       it.copy(
@@ -8543,43 +8612,99 @@ jobs:
     }
   }
 
+  private fun triggerImmediateLocalAutoSave(
+    stateSnapshot: IdeUiState,
+    modifiedExternalPath: String? = null,
+  ) {
+    val activeKey = activeWorkspaceKey(stateSnapshot) ?: return
+    val ramRecord = ramDb.getWorkspace(activeKey)
+    val snapshot = buildActiveAutoSaveSnapshot(stateSnapshot)
+    autoSaveIoScope.launch {
+      autoSaveWriteMutex.withLock {
+        if (ramRecord != null) {
+          projectDirManager.saveWorkspaceRecord(ramRecord)
+        }
+        if (snapshot != null) {
+          val (draft, pointer) = snapshot
+          val nonSpacingDigest =
+            AutoSaveDraftStore.computeNonSpacingContentDigest(
+              files = draft.files,
+              openTabs = draft.openTabs,
+              activeFilePath = draft.activeFilePath,
+              entryModulePath = draft.entryModulePath,
+            )
+          autoSaveStore.saveWorkspaceDraft(draft)
+          autoSaveStore.saveLastActiveSession(pointer)
+          lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
+          lastPersistedNonSpacingDigests[draft.workspaceKey] = nonSpacingDigest
+        }
+        if (modifiedExternalPath != null) {
+          val uriStr = stateSnapshot.externalFileUris[modifiedExternalPath]
+          val liveContent =
+            stateSnapshot.editorFieldValues[modifiedExternalPath]?.text
+              ?: stateSnapshot.workspace?.files?.firstOrNull { it.path == modifiedExternalPath }?.content
+          if (uriStr != null && liveContent != null) {
+            runCatching { Uri.parse(uriStr) }.getOrNull()?.let { uri ->
+              DeviceFileHelper.writeTextToUri(getApplication(), uri, liveContent)
+            }
+          }
+        }
+        val savedAt = System.currentTimeMillis()
+        _uiState.update { it.copy(lastAutoSavedEpochMs = savedAt) }
+      }
+    }
+  }
+
   fun flushAutoSaveNow(clearSessionPointer: Boolean = false) {
     flushActiveEditorBuffer()
     val state = _uiState.value
     val activeKey = activeWorkspaceKey(state)
     val snapshot = buildActiveAutoSaveSnapshot(state)
     autoSaveIoScope.launch {
-      if (snapshot != null) {
-        val (draft, pointer) = snapshot
-        val prevDigest = lastPersistedDraftDigests[draft.workspaceKey]
-        if (prevDigest != draft.contentDigest) {
-          autoSaveStore.saveWorkspaceDraft(draft)
-          lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
-        }
-        if (activeKey != null) {
-          ramDb.getWorkspace(activeKey)?.let { projectDirManager.saveWorkspaceRecord(it) }
-          val summary = projectDirManager.computeStorageSummary()
-          _uiState.update {
-            if (it.projectStorageSummary != summary) it.copy(projectStorageSummary = summary) else it
-          }
-        }
-        // Best-effort save-back to opened external file URIs when auto-saving/backgrounding
-        state.externalFileUris.forEach { (path, uriStr) ->
-          val wsFile = state.workspace?.files?.firstOrNull { it.path == path }
-          val liveContent = state.editorFieldValues[path]?.text ?: wsFile?.content
-          if (wsFile != null && liveContent != null && liveContent != wsFile.originalContent) {
-            runCatching { Uri.parse(uriStr) }.getOrNull()?.let { uri ->
-              DeviceFileHelper.writeTextToUri(getApplication(), uri, liveContent)
+      autoSaveWriteMutex.withLock {
+        if (snapshot != null) {
+          val (draft, pointer) = snapshot
+          val prevDigest = lastPersistedDraftDigests[draft.workspaceKey]
+          if (prevDigest != draft.contentDigest) {
+            autoSaveStore.saveWorkspaceDraft(draft)
+            lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
+            lastPersistedNonSpacingDigests[draft.workspaceKey] =
+              AutoSaveDraftStore.computeNonSpacingContentDigest(
+                files = draft.files,
+                openTabs = draft.openTabs,
+                activeFilePath = draft.activeFilePath,
+                entryModulePath = draft.entryModulePath,
+              )
+            draft.files.forEach { f ->
+              lastLocallyAutoSavedNonSpacing["${draft.workspaceKey}::${f.path}"] =
+                AutoSaveDraftStore.stripSpacing(f.content)
             }
           }
-        }
-        if (clearSessionPointer) {
+          if (activeKey != null) {
+            ramDb.getWorkspace(activeKey)?.let { projectDirManager.saveWorkspaceRecord(it) }
+            val summary = projectDirManager.computeStorageSummary()
+            _uiState.update {
+              if (it.projectStorageSummary != summary) it.copy(projectStorageSummary = summary) else it
+            }
+          }
+          // Best-effort save-back to opened external file URIs when auto-saving/backgrounding
+          state.externalFileUris.forEach { (path, uriStr) ->
+            val wsFile = state.workspace?.files?.firstOrNull { it.path == path }
+            val liveContent = state.editorFieldValues[path]?.text ?: wsFile?.content
+            if (wsFile != null && liveContent != null && liveContent != wsFile.originalContent) {
+              runCatching { Uri.parse(uriStr) }.getOrNull()?.let { uri ->
+                DeviceFileHelper.writeTextToUri(getApplication(), uri, liveContent)
+              }
+            }
+          }
+          if (clearSessionPointer) {
+            autoSaveStore.clearLastActiveSession()
+          } else {
+            autoSaveStore.saveLastActiveSession(pointer)
+          }
+        } else if (clearSessionPointer) {
           autoSaveStore.clearLastActiveSession()
-        } else {
-          autoSaveStore.saveLastActiveSession(pointer)
         }
-      } else if (clearSessionPointer) {
-        autoSaveStore.clearLastActiveSession()
       }
     }
   }
@@ -8596,14 +8721,20 @@ jobs:
         val state = _uiState.value
         val activeKey = activeWorkspaceKey(state)
         if (state.workspace == null) return@launch
-        if (activeKey != null) {
-          ramDb.getWorkspace(activeKey)?.let { rec ->
-            withContext(Dispatchers.IO) { projectDirManager.saveWorkspaceRecord(rec) }
+        val ramRecord = activeKey?.let { ramDb.getWorkspace(it) }
+        val snapshot =
+          if (settings.autoSaveEnabled) {
+            withContext(Dispatchers.Default) { buildActiveAutoSaveSnapshot(state) }
+          } else null
+        withContext(Dispatchers.IO) {
+          autoSaveWriteMutex.withLock {
+            if (ramRecord != null) {
+              projectDirManager.saveWorkspaceRecord(ramRecord)
+            }
+            if (snapshot != null) {
+              persistSnapshotIfChangedLocked(snapshot.first, snapshot.second, forceSessionPointer = false)
+            }
           }
-        }
-        if (settings.autoSaveEnabled) {
-          val snapshot = withContext(Dispatchers.Default) { buildActiveAutoSaveSnapshot(state) } ?: return@launch
-          persistSnapshotIfChanged(snapshot.first, snapshot.second, forceSessionPointer = false)
         }
       }
   }
@@ -8621,7 +8752,22 @@ jobs:
           if (!state.editorSettings.autoSaveEnabled) break
           if (state.workspace == null) continue
           val snapshot = withContext(Dispatchers.Default) { buildActiveAutoSaveSnapshot(state) } ?: continue
-          persistSnapshotIfChanged(snapshot.first, snapshot.second, forceSessionPointer = false)
+          val (draft, pointer) = snapshot
+          val nonSpacingDigest =
+            AutoSaveDraftStore.computeNonSpacingContentDigest(
+              files = draft.files,
+              openTabs = draft.openTabs,
+              activeFilePath = draft.activeFilePath,
+              entryModulePath = draft.entryModulePath,
+            )
+          val prevNonSpacingDigest = lastPersistedNonSpacingDigests[draft.workspaceKey]
+          if (prevNonSpacingDigest != nonSpacingDigest) {
+            withContext(Dispatchers.IO) {
+              autoSaveWriteMutex.withLock {
+                persistSnapshotIfChangedLocked(draft, pointer, forceSessionPointer = false)
+              }
+            }
+          }
         }
       }
   }
@@ -8629,31 +8775,43 @@ jobs:
   private fun recordActiveSessionPointer() {
     val snapshot = buildActiveAutoSaveSnapshot(_uiState.value) ?: return
     autoSaveIoScope.launch {
-      autoSaveStore.saveLastActiveSession(snapshot.second)
-      val (draft, _) = snapshot
-      if (lastPersistedDraftDigests[draft.workspaceKey] != draft.contentDigest) {
-        autoSaveStore.saveWorkspaceDraft(draft)
-        lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
+      autoSaveWriteMutex.withLock {
+        autoSaveStore.saveLastActiveSession(snapshot.second)
+        val (draft, _) = snapshot
+        if (lastPersistedDraftDigests[draft.workspaceKey] != draft.contentDigest) {
+          autoSaveStore.saveWorkspaceDraft(draft)
+          lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
+          lastPersistedNonSpacingDigests[draft.workspaceKey] =
+            AutoSaveDraftStore.computeNonSpacingContentDigest(
+              files = draft.files,
+              openTabs = draft.openTabs,
+              activeFilePath = draft.activeFilePath,
+              entryModulePath = draft.entryModulePath,
+            )
+        }
       }
     }
   }
 
-  private suspend fun persistSnapshotIfChanged(
+  private suspend fun persistSnapshotIfChangedLocked(
     draft: AutoSavedWorkspaceDraft,
     pointer: AutoSaveSessionPointer,
     forceSessionPointer: Boolean,
   ) {
     val prevDigest = lastPersistedDraftDigests[draft.workspaceKey]
     if (prevDigest != draft.contentDigest) {
-      withContext(Dispatchers.IO) {
-        autoSaveStore.saveWorkspaceDraft(draft)
-        autoSaveStore.saveLastActiveSession(pointer)
-      }
+      autoSaveStore.saveWorkspaceDraft(draft)
+      autoSaveStore.saveLastActiveSession(pointer)
       lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
+      lastPersistedNonSpacingDigests[draft.workspaceKey] =
+        AutoSaveDraftStore.computeNonSpacingContentDigest(
+          files = draft.files,
+          openTabs = draft.openTabs,
+          activeFilePath = draft.activeFilePath,
+          entryModulePath = draft.entryModulePath,
+        )
     } else if (forceSessionPointer) {
-      withContext(Dispatchers.IO) {
-        autoSaveStore.saveLastActiveSession(pointer)
-      }
+      autoSaveStore.saveLastActiveSession(pointer)
     }
   }
 

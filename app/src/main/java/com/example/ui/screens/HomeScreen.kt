@@ -1121,7 +1121,7 @@ private fun HomeProjectsTabContent(
         val fileCount = ws.files.count { !it.isVirtualReadOnly }
         Surface(
           onClick = { onOpenRamWorkspace(latestProject.key) },
-          color = if (isV2) palette.chromeSurface else palette.featuredCardBg,
+          color = palette.featuredCardBg,
           shape = RoundedCornerShape(if (isV2) 24.dp else 16.dp),
           border = if (isV2) null else BorderStroke(0.75.dp, palette.featuredCardFg.copy(alpha = 0.14f)),
           modifier = Modifier.fillMaxWidth(),
@@ -1134,7 +1134,7 @@ private fun HomeProjectsTabContent(
             Icon(
               imageVector = Icons.Outlined.Bolt,
               contentDescription = null,
-              tint = if (isV2) palette.activePillFg else palette.featuredCardFg,
+              tint = palette.featuredCardFg,
               modifier = Modifier.size(22.dp),
             )
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -1142,14 +1142,14 @@ private fun HomeProjectsTabContent(
                 text = "Pick up where you left off",
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.Medium,
-                color = if (isV2) palette.textSecondary else palette.featuredCardMuted,
+                color = palette.featuredCardMuted,
                 maxLines = 1,
               )
               Text(
                 text = ws.scriptName,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = if (isV2) palette.textPrimary else palette.featuredCardFg,
+                color = palette.featuredCardFg,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
               )
@@ -1157,7 +1157,7 @@ private fun HomeProjectsTabContent(
                 text = "$fileCount files · ${ws.entryModulePath}",
                 fontFamily = JetBrainsMono,
                 fontSize = 11.sp,
-                color = if (isV2) palette.textMuted else palette.featuredCardMuted,
+                color = palette.featuredCardMuted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
               )
@@ -1165,7 +1165,7 @@ private fun HomeProjectsTabContent(
             Icon(
               imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
               contentDescription = "Open",
-              tint = if (isV2) palette.textSecondary else palette.featuredCardFg,
+              tint = palette.featuredCardFg,
               modifier = Modifier.size(20.dp),
             )
           }

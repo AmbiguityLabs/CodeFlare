@@ -210,4 +210,41 @@ class AutoSaveDraftStoreTest {
     assertNotEquals(d1, d3)
     assertNotEquals(d1, d4)
   }
+
+  @Test
+  fun nonSpacingHelpersIgnoreWhitespaceChangesAndDetectRealEdits() {
+    assertEquals("constx=1;", AutoSaveDraftStore.stripSpacing("  const\tx = 1;\r\n"))
+    assertFalse(
+      AutoSaveDraftStore.hasNonSpacingChange(
+        "export default { fetch() { return 1; } };",
+        "export default {\n  fetch() {\n    return 1;\n  }\n};",
+      ),
+    )
+    assertFalse(AutoSaveDraftStore.hasNonSpacingChange("", "   \n\t  "))
+    assertTrue(
+      AutoSaveDraftStore.hasNonSpacingChange(
+        "export default { fetch() { return 1; } };",
+        "export default { fetch() { return 2; } };",
+      ),
+    )
+
+    val tabs = listOf("src/index.js")
+    val baseFile =
+      WorkerFile(
+        path = "src/index.js",
+        content = "const a=1;",
+        originalContent = "const a=1;",
+        contentType = "application/javascript+module",
+        isEntryPoint = true,
+      )
+    val spacingOnlyFile = baseFile.copy(content = "  const  a = 1;\n\n  ")
+    val codeChangedFile = baseFile.copy(content = "  const  a = 2;\n\n  ")
+
+    val digestBase = AutoSaveDraftStore.computeNonSpacingContentDigest(listOf(baseFile), tabs, "src/index.js", "src/index.js")
+    val digestSpacing = AutoSaveDraftStore.computeNonSpacingContentDigest(listOf(spacingOnlyFile), tabs, "src/index.js", "src/index.js")
+    val digestCode = AutoSaveDraftStore.computeNonSpacingContentDigest(listOf(codeChangedFile), tabs, "src/index.js", "src/index.js")
+
+    assertEquals(digestBase, digestSpacing)
+    assertNotEquals(digestBase, digestCode)
+  }
 }

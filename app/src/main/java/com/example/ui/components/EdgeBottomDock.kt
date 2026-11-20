@@ -122,15 +122,15 @@ private fun LiquidGlassFloatingDock(
 
   val topGlassTint =
     if (isDark) {
-      lerp(Color(0xFF2B282A), palette.chromeSurface, 0.25f).copy(alpha = (cfg.opacity * 0.96f).coerceIn(0.12f, 1f))
+      lerp(Color(0xFF2B282A), palette.chromeSurface, 0.85f).copy(alpha = (cfg.opacity * 0.96f).coerceIn(0.12f, 1f))
     } else {
-      lerp(Color(0xFFFAFAFC), palette.chromeSurface, 0.22f).copy(alpha = (cfg.opacity * 0.96f).coerceIn(0.18f, 1f))
+      lerp(Color(0xFFFAFAFC), palette.chromeSurface, 0.85f).copy(alpha = (cfg.opacity * 0.96f).coerceIn(0.18f, 1f))
     }
   val bottomGlassTint =
     if (isDark) {
-      lerp(Color(0xFF151416), palette.chromeBg, 0.22f).copy(alpha = (cfg.opacity * 1.04f).coerceIn(0.15f, 1f))
+      lerp(Color(0xFF151416), palette.chromeBg, 0.85f).copy(alpha = (cfg.opacity * 1.04f).coerceIn(0.15f, 1f))
     } else {
-      lerp(Color(0xFFE7E9EF), palette.chromeSurface, 0.30f).copy(alpha = (cfg.opacity * 1.02f).coerceIn(0.22f, 1f))
+      lerp(Color(0xFFE7E9EF), palette.chromeSurface, 0.85f).copy(alpha = (cfg.opacity * 1.02f).coerceIn(0.22f, 1f))
     }
   val glassBodyBrush = Brush.verticalGradient(listOf(topGlassTint, bottomGlassTint))
 
@@ -227,8 +227,7 @@ private fun LiquidGlassFloatingDock(
               val active = item.selected
               val activeBgTarget =
                 if (active) {
-                  if (isDark) Color.White.copy(alpha = cfg.activePillOpacity)
-                  else palette.activePillBg.copy(alpha = (cfg.activePillOpacity + 0.48f).coerceAtMost(0.95f))
+                  palette.activePillBg.copy(alpha = (cfg.activePillOpacity + 0.62f).coerceIn(0.28f, 0.96f))
                 } else {
                   Color.Transparent
                 }
@@ -238,13 +237,7 @@ private fun LiquidGlassFloatingDock(
                 label = "v2_dock_pill_bg",
               )
               val iconTint by animateColorAsState(
-                targetValue =
-                  when {
-                    active && isDark -> Color.White
-                    active -> palette.activePillFg
-                    isDark -> Color.White.copy(alpha = 0.76f)
-                    else -> palette.textSecondary
-                  },
+                targetValue = if (active) palette.activePillFg else palette.textSecondary,
                 animationSpec = tween(durationMillis = 170),
                 label = "v2_dock_icon_tint",
               )
@@ -280,9 +273,7 @@ private fun LiquidGlassFloatingDock(
                       if (active && cfg.borderOpacity > 0.02f) {
                         Modifier.border(
                           width = 0.75.dp,
-                          color =
-                            if (isDark) Color.White.copy(alpha = (cfg.borderOpacity * 0.45f).coerceIn(0f, 0.36f))
-                            else palette.activePillFg.copy(alpha = 0.25f),
+                          color = palette.activePillFg.copy(alpha = (cfg.borderOpacity * 0.45f).coerceIn(0.14f, 0.36f)),
                           shape = innerShape,
                         )
                       } else {
@@ -376,7 +367,7 @@ private fun LiquidGlassFloatingDock(
           Icon(
             imageVector = Icons.Outlined.KeyboardArrowDown,
             contentDescription = "Hide bottom menu",
-            tint = if (isDark) Color.White.copy(alpha = 0.82f) else palette.textSecondary,
+            tint = palette.textSecondary,
             modifier = Modifier.size(19.dp),
           )
         }
@@ -561,15 +552,15 @@ private fun DockInlineCounterBadge(
   val badgeBg =
     when {
       customColor != null -> customColor
-      isV2Glass && palette.isDark -> Color.White.copy(alpha = if (active) 0.24f else 0.16f)
-      isV2Glass -> palette.activePillFg.copy(alpha = 0.16f)
+      isV2Glass && active -> palette.ctaBg
+      isV2Glass -> palette.activePillBg.copy(alpha = 0.75f)
       active -> palette.ctaBg
       else -> palette.chromePill
     }
   val badgeFg =
     when {
       customColor != null -> Color(0xFF141806)
-      isV2Glass && palette.isDark -> Color.White
+      isV2Glass && active -> palette.ctaFg
       isV2Glass -> palette.activePillFg
       active -> palette.ctaFg
       else -> palette.textSecondary

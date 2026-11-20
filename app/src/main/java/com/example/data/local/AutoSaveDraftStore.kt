@@ -294,6 +294,47 @@ class AutoSaveDraftStore(private val context: Context) {
     private fun sanitizeKey(workspaceKey: String): String =
       workspaceKey.replace(Regex("[^A-Za-z0-9._-]"), "_")
 
+    fun stripSpacing(text: String): String {
+      var hasSpace = false
+      for (i in 0 until text.length) {
+        if (text[i].isWhitespace()) {
+          hasSpace = true
+          break
+        }
+      }
+      if (!hasSpace) return text
+      return buildString(text.length) {
+        for (i in 0 until text.length) {
+          val ch = text[i]
+          if (!ch.isWhitespace()) append(ch)
+        }
+      }
+    }
+
+    fun hasNonSpacingChange(previous: String, current: String): Boolean {
+      if (previous == current) return false
+      return stripSpacing(previous) != stripSpacing(current)
+    }
+
+    fun computeNonSpacingContentDigest(
+      files: List<WorkerFile>,
+      openTabs: List<String>,
+      activeFilePath: String?,
+      entryModulePath: String,
+    ): Int {
+      var hash = 17
+      files.filterNot { it.isVirtualReadOnly }.forEach { f ->
+        hash = 31 * hash + f.path.hashCode()
+        hash = 31 * hash + stripSpacing(f.content).hashCode()
+        hash = 31 * hash + stripSpacing(f.originalContent).hashCode()
+        hash = 31 * hash + if (f.isEntryPoint) 1 else 0
+      }
+      hash = 31 * hash + openTabs.hashCode()
+      hash = 31 * hash + (activeFilePath?.hashCode() ?: 0)
+      hash = 31 * hash + entryModulePath.hashCode()
+      return hash
+    }
+
     fun computeContentDigest(
       files: List<WorkerFile>,
       openTabs: List<String>,

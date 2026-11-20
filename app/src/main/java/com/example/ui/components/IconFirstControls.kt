@@ -453,12 +453,7 @@ fun EdgeLoadingIndicator(
     }
 
     UiStyleVersion.V2_MINIMAL_OLED -> {
-      val secondaryTint =
-        when {
-          color != null -> color
-          palette.isDark -> Color(0xFF93C5FD)
-          else -> Color(0xFF3B82F6)
-        }
+      val secondaryTint = color ?: palette.ctaBg
       ThinkingDotsLoadingIndicator(
         size = size,
         baseColor = color ?: palette.textPrimary,

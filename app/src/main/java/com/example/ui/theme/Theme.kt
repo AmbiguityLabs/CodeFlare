@@ -2,10 +2,8 @@ package com.example.ui.theme
 
 import android.os.Build
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
@@ -33,60 +31,6 @@ val LocalPopupMenuStyle = staticCompositionLocalOf { PopupMenuStyleConfig.DEFAUL
 val LocalSelectionDragConfig = staticCompositionLocalOf { SelectionDragConfig.DEFAULT }
 val LocalIconLabelBehavior = staticCompositionLocalOf { IconLabelBehavior.REVEAL_ON_TAP }
 val LocalEditorSettings = staticCompositionLocalOf { EditorSettings() }
-
-private fun buildDarkColorScheme(palette: IdePalette) =
-  darkColorScheme(
-    primary = palette.ctaBg,
-    onPrimary = palette.ctaFg,
-    primaryContainer = palette.activePillBg,
-    onPrimaryContainer = palette.activePillFg,
-    secondary = palette.textSecondary,
-    onSecondary = palette.chromeBg,
-    secondaryContainer = palette.selectedRowBg,
-    onSecondaryContainer = palette.textPrimary,
-    tertiary = palette.syntaxType,
-    onTertiary = palette.chromeBg,
-    background = palette.chromeBg,
-    onBackground = palette.textPrimary,
-    surface = palette.chromeBg,
-    onSurface = palette.textPrimary,
-    surfaceContainerLowest = palette.editorBg,
-    surfaceContainerLow = palette.chromeSurface,
-    surfaceContainer = palette.chromePill,
-    surfaceContainerHigh = palette.glassElevated,
-    surfaceContainerHighest = palette.selectedRowBg,
-    outline = palette.border,
-    outlineVariant = palette.glassBorderSubtle,
-    error = Color(0xFFFFB4AB),
-    onError = Color(0xFF690005),
-  )
-
-private fun buildLightColorScheme(palette: IdePalette) =
-  lightColorScheme(
-    primary = palette.ctaBg,
-    onPrimary = palette.ctaFg,
-    primaryContainer = palette.activePillBg,
-    onPrimaryContainer = palette.activePillFg,
-    secondary = palette.textSecondary,
-    onSecondary = Color.White,
-    secondaryContainer = palette.selectedRowBg,
-    onSecondaryContainer = palette.textPrimary,
-    tertiary = palette.syntaxType,
-    onTertiary = Color.White,
-    background = palette.chromeBg,
-    onBackground = palette.textPrimary,
-    surface = palette.chromeBg,
-    onSurface = palette.textPrimary,
-    surfaceContainerLowest = Color(0xFFFFFFFF),
-    surfaceContainerLow = palette.chromeSurface,
-    surfaceContainer = palette.chromePill,
-    surfaceContainerHigh = palette.selectedRowBg,
-    surfaceContainerHighest = palette.border,
-    outline = palette.border,
-    outlineVariant = palette.glassBorderSubtle,
-    error = Color(0xFFBA1A1A),
-    onError = Color.White,
-  )
 
 @Composable
 fun EdgeCodeTheme(
@@ -140,24 +84,14 @@ fun EdgeCodeTheme(
     }
   val palette =
     remember(basePalette, resolvedExpressiveScheme, uiStyle, codeStyle, codeStyleOverrideCanvas) {
-      if (uiStyle == UiStyleVersion.V2_MINIMAL_OLED) {
-        basePalette
+      val bridged = basePalette.bridgedTo(resolvedExpressiveScheme)
+      if (codeStyle != CodeStylePreset.THEME_DEFAULT && codeStyleOverrideCanvas) {
+        bridged.copy(textPrimary = basePalette.textPrimary)
       } else {
-        val bridged = basePalette.bridgedTo(resolvedExpressiveScheme)
-        if (codeStyle != CodeStylePreset.THEME_DEFAULT && codeStyleOverrideCanvas) {
-          bridged.copy(textPrimary = basePalette.textPrimary)
-        } else {
-          bridged
-        }
+        bridged
       }
     }
-  val colorScheme =
-    if (uiStyle == UiStyleVersion.V2_MINIMAL_OLED && seedColor == null && !useDynamic) {
-      if (darkTheme) remember(palette) { buildDarkColorScheme(palette) }
-      else remember(palette) { buildLightColorScheme(palette) }
-    } else {
-      resolvedExpressiveScheme
-    }
+  val colorScheme = resolvedExpressiveScheme
 
   CompositionLocalProvider(
     LocalIdePalette provides palette,
