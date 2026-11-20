@@ -1,5 +1,5 @@
 {
-  "name": "EdgeCode",
+  "name": "CodeFlare",
   "description": "Cloudflare Workers mobile IDE featuring native Cloudflare authorization, multi-file VS Code-style code editor, bindings manager, and live HTTP worker tester.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

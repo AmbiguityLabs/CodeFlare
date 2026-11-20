@@ -92,7 +92,7 @@ object CloudflareOAuthManager {
     return Uri.parse("https://dash.cloudflare.com/profile/api-tokens")
       .buildUpon()
       .appendQueryParameter("permissionGroupKeys", permissions)
-      .appendQueryParameter("name", "EdgeCode Mobile IDE")
+      .appendQueryParameter("name", "CodeFlare Mobile IDE")
       .build()
       .toString()
   }

@@ -978,7 +978,8 @@ fun CodeEditorPane(
       }
     }
 
-    val hasCustomBg = rememberHasActiveEditorBackground(uiState.editorSettings)
+    val hasBackdrop = rememberHasActiveEditorBackdrop(uiState.editorSettings)
+    val bubbleController = remember { EditorBubbleController() }
 
     Box(
       modifier =
@@ -987,9 +988,10 @@ fun CodeEditorPane(
           .fillMaxWidth()
           .clipToBounds(),
     ) {
-      if (hasCustomBg) {
+      if (hasBackdrop) {
         EditorBackgroundLayer(
           settings = uiState.editorSettings,
+          bubbleController = bubbleController,
           modifier = Modifier.matchParentSize(),
         )
       }
@@ -1002,13 +1004,14 @@ fun CodeEditorPane(
         language = activeFile.language,
         editorSettings = uiState.editorSettings,
         zoomPercent = committedZoomPercent,
-        hasCustomBg = hasCustomBg,
+        hasCustomBg = hasBackdrop,
         readOnly = activeFile.isVirtualReadOnly,
         diagnostics = fileDiagnostics,
         symbols = symbols,
         findMatches = activeFindMatches,
         activeFindMatchIndex = activeFindMatchIndex,
         controller = editorController,
+        bubbleController = bubbleController,
         onDebouncedSync = { synced -> latestOnCodeChange(synced) },
         onTelemetryUpdate = { telemetry -> hudHolder.telemetry = telemetry },
         onPinchZoomChanged = { zoom, pinching ->
@@ -1546,7 +1549,7 @@ private fun EmptyWorkspaceWelcome(
         modifier = Modifier.size(128.dp).clip(RoundedCornerShape(if (isV2) 30.dp else 28.dp)),
       )
       Text(
-        text = "EdgeCode",
+        text = "CodeFlare",
         style = MaterialTheme.typography.headlineMedium,
         fontWeight = FontWeight.Bold,
         color = palette.textPrimary,

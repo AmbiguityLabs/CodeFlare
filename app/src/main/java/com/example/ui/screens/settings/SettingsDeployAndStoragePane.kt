@@ -32,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
@@ -39,7 +40,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.BuildConfig
 import com.example.data.security.EditorSettings
+import com.example.editor.LocalScriptRunner
 import com.example.ui.components.IconRevealButton
 import com.example.ui.theme.Ca
 import com.example.ui.theme.EmeraldLive
@@ -148,6 +151,10 @@ fun SettingsStorageAndSessionPane(
 ) {
   val scheme = MaterialTheme.colorScheme
   val clipboard = LocalClipboardManager.current
+  val context = LocalContext.current
+  val hasDenoNative = androidx.compose.runtime.remember(context) {
+    LocalScriptRunner.resolveDenoBinary(context).exists()
+  }
   val storage = uiState.projectStorageSummary
   val creds = uiState.credentials
   val settings = uiState.editorSettings
@@ -339,6 +346,55 @@ fun SettingsStorageAndSessionPane(
             onClick = onDirectAuthSetup,
             height = 38.dp,
             tag = "sign_out_button",
+          )
+        }
+      }
+    }
+
+    SettingsCard(
+      title = "CodeFlare Runtime & Info",
+      modifier = Modifier.testTag("settings_runtime_info_card"),
+    ) {
+      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        SettingsMetricTile(
+          label = "Version",
+          value = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+          modifier = Modifier.weight(1f),
+        )
+        SettingsMetricTile(
+          label = "JS Engine",
+          value = if (hasDenoNative) "Deno Native" else "JS Sandbox",
+          modifier = Modifier.weight(1f),
+        )
+      }
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+          Text("Package ID", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+          Text(
+            text = BuildConfig.APPLICATION_ID,
+            fontFamily = JetBrainsMono,
+            fontSize = 11.5.sp,
+            color = scheme.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+        IconButton(
+          onClick = {
+            clipboard.setText(AnnotatedString(BuildConfig.APPLICATION_ID))
+            onNotify("Copied package ID")
+          },
+          modifier = Modifier.size(32.dp),
+        ) {
+          Icon(
+            imageVector = Icons.Outlined.ContentCopy,
+            contentDescription = "Copy package ID",
+            tint = scheme.onSurfaceVariant,
+            modifier = Modifier.size(15.dp),
           )
         }
       }

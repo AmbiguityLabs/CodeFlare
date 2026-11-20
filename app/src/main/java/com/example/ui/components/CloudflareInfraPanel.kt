@@ -1258,7 +1258,7 @@ private fun DeploymentsRollbackSection(
     var primaryVer by remember { mutableStateOf(availableVersionIds[0]) }
     var secondaryVer by remember { mutableStateOf(availableVersionIds[1]) }
     var primaryPct by remember { mutableFloatStateOf(80f) }
-    var splitNote by remember { mutableStateOf("Canary rollout via EdgeCode") }
+    var splitNote by remember { mutableStateOf("Canary rollout via CodeFlare") }
 
     AlertDialog(
       onDismissRequest = { showGradualSplitDialog = false },

@@ -6,6 +6,8 @@ import com.example.data.remote.CloudflareClientFactory
 import com.example.data.repository.CloudflareRepository
 import com.example.data.security.AuthPreferencesStore
 import com.example.data.security.DefaultEditorDragPolicy
+import com.example.data.security.EditorBubbleColorStyle
+import com.example.data.security.EditorBubbleConfig
 import com.example.data.security.EditorSettings
 import com.example.data.security.FloatingBarStyleConfig
 import com.example.data.security.IconLabelBehavior
@@ -605,5 +607,70 @@ class SettingsAndPreferencesTest {
     assertEquals(Color(0xFF000000), v2Green.editorBg)
     assertEquals(v2Green.ctaBg, selectionColorsFor(v2Green).handleFill)
     assertEquals(v2Violet.ctaBg, selectionColorsFor(v2Violet).handleFill)
+  }
+
+  @Test
+  fun editorBubbleConfigPersistsNormalizesAndDecodesCleanly() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val store = AuthPreferencesStore(context)
+
+    val defaults = EditorSettings().editorBubbles
+    assertFalse(defaults.enabled)
+    assertEquals(14, defaults.count)
+    assertEquals(12, defaults.minSizeDp)
+    assertEquals(34, defaults.maxSizeDp)
+    assertEquals(6.0f, defaults.minDurationSec, 0.001f)
+    assertEquals(13.0f, defaults.maxDurationSec, 0.001f)
+    assertEquals(0.30f, defaults.opacity, 0.001f)
+    assertEquals(EditorBubbleColorStyle.FLARE_HEAT, defaults.colorStyle)
+    assertTrue(defaults.tapToPop)
+    assertTrue(defaults.popBurstEnabled)
+
+    val custom =
+      EditorBubbleConfig(
+        enabled = true,
+        count = 24,
+        minSizeDp = 16,
+        maxSizeDp = 48,
+        minDurationSec = 4.5f,
+        maxDurationSec = 15.5f,
+        opacity = 0.45f,
+        colorStyle = EditorBubbleColorStyle.AURORA,
+        tapToPop = true,
+        popBurstEnabled = false,
+      )
+    store.updateEditorSettings { it.copy(editorBubbles = custom) }
+    val loaded = store.editorSettingsFlow.first().editorBubbles
+    assertEquals(custom, loaded)
+
+    val outOfBounds =
+      EditorBubbleConfig(
+        enabled = true,
+        count = 999,
+        minSizeDp = 2,
+        maxSizeDp = 3,
+        minDurationSec = 0.2f,
+        maxDurationSec = 0.5f,
+        opacity = 1.9f,
+        colorStyle = EditorBubbleColorStyle.PASTEL,
+        tapToPop = false,
+        popBurstEnabled = true,
+      ).normalized()
+    assertEquals(32, outOfBounds.count)
+    assertEquals(6, outOfBounds.minSizeDp)
+    assertEquals(10, outOfBounds.maxSizeDp)
+    assertEquals(2.5f, outOfBounds.minDurationSec, 0.001f)
+    assertEquals(3.5f, outOfBounds.maxDurationSec, 0.001f)
+    assertEquals(0.80f, outOfBounds.opacity, 0.001f)
+
+    assertEquals(EditorBubbleConfig.DEFAULT, EditorBubbleConfig.decode("broken|payload"))
+    assertEquals(
+      EditorBubbleColorStyle.FLARE_HEAT,
+      EditorBubbleColorStyle.fromKey("does_not_exist"),
+    )
+    assertEquals(
+      EditorBubbleColorStyle.MONO_GLASS,
+      EditorBubbleColorStyle.fromKey("mono_glass"),
+    )
   }
 }

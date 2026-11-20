@@ -1,12 +1,12 @@
 {
-  "name": "edgecode",
+  "name": "codeflare",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "main": "server.js",
   "scripts": {
     "dev": "node server.js",
-    "build": "node -e \"console.log('EdgeCode server build complete')\"",
+    "build": "node -e \"console.log('CodeFlare server build complete')\"",
     "start": "node server.js",
     "lint": "node --check server.js"
   },

@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">EdgeCode</string>
+    <string name="app_name">CodeFlare</string>
     <string name="tagline">Cloudflare Workers Mobile IDE</string>
     <string name="auth_title">Authorize Cloudflare</string>
     <string name="auth_subtitle">Connect natively via Cloudflare OAuth2 PKCE or scoped API Token. Credentials stay hardware-encrypted in Android Keystore.</string>
@@ -16,7 +16,7 @@
     <string name="auth_email_label">Cloudflare Account Email</string>
     <string name="auth_global_key_label">Global API Key</string>
     <string name="cd_auth_hero">Cloudflare global edge network illustration</string>
-    <string name="cd_empty_workspace">EdgeCode floating code workspace illustration</string>
+    <string name="cd_empty_workspace">CodeFlare floating code workspace illustration</string>
     <string name="cd_toggle_sidebar">Toggle Activity Sidebar</string>
     <string name="cd_deploy_worker">Deploy Worker to Cloudflare Edge</string>
     <string name="cd_command_palette">Open Command Palette</string>

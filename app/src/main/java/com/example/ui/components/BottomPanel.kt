@@ -103,8 +103,8 @@ fun BottomPanel(
   onSelectApiEnvProfile: (String) -> Unit = {},
   onCreateApiEnvProfile: (String) -> Unit = {},
   onDeleteApiEnvProfile: (String) -> Unit = {},
-  onImportApiCollection: (String, Boolean, Boolean) -> Result<ApiImportResult> = { _, _, _ ->
-    Result.failure(UnsupportedOperationException("Collection import not wired"))
+  onImportApiCollection: (String, Boolean, Boolean) -> Result<ApiImportResult> = { rawJson, _, _ ->
+    com.example.data.remote.ApiCollectionImporter.parseImportJson(rawJson)
   },
   onUpdateLocalRunRequest: (method: String, path: String, body: String) -> Unit = { _, _, _ -> },
   onRunWorkspaceLocally: () -> Unit = {},

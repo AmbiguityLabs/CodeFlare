@@ -1389,6 +1389,76 @@ export default {
     }
   }
 
+  fun duplicateRamWorkspace(key: String) {
+    syncActiveStateToRamDb()
+    val source = ramDb.getWorkspace(key) ?: return
+    val isScratchpad = key.startsWith("local_") || _uiState.value.isLocalScratchpad || _uiState.value.selectedAccount == null
+    val accountId = if (isScratchpad) null else _uiState.value.selectedAccount?.id
+    val existingNames = ramDb.listWorkspaces().map { it.workingWorkspace.scriptName.lowercase() }.toSet()
+    val baseName = source.workingWorkspace.scriptName.trim().lowercase().ifBlank { "worker" }
+    var candidate = "$baseName-copy"
+    var suffix = 2
+    while (candidate in existingNames || _uiState.value.workers.any { it.id.equals(candidate, ignoreCase = true) }) {
+      candidate = "$baseName-copy-$suffix"
+      suffix++
+    }
+    val clonedWs =
+      regenerateWranglerFileInWorkspace(
+        source.workingWorkspace.copy(
+          scriptName = candidate,
+          hasModuleSetChanged = !isScratchpad,
+          files = source.workingWorkspace.files.map { it.copy() },
+        ),
+      ).let { built ->
+        built.copy(files = ProjectDirectoryManager.organizeWorkspaceFiles(built.files))
+      }
+    val newKey = ramDb.workspaceKey(accountId, candidate)
+    val record =
+      ramDb.importWorkspace(
+        key = newKey,
+        workspace = clonedWs,
+        defaultTabs = source.openTabPaths.ifEmpty { listOf(clonedWs.entryModulePath) },
+        defaultActivePath = source.activeFilePath ?: clonedWs.entryModulePath,
+        isNewUnexported = !isScratchpad,
+      )
+    _uiState.update { state ->
+      state.copy(
+        ramWorkspaces = ramDb.listWorkspaces(),
+        ramDbStats = ramDb.computeStats(activeWorkspaceKey(state)),
+        statusMessage = "Duplicated '${source.workingWorkspace.scriptName}' as '$candidate'",
+      )
+    }
+    appendLog("INFO", "Duplicated workspace '${source.workingWorkspace.scriptName}' -> '$candidate'")
+    autoSaveIoScope.launch {
+      projectDirManager.saveWorkspaceRecord(record)
+      val summary = projectDirManager.computeStorageSummary()
+      _uiState.update { it.copy(projectStorageSummary = summary) }
+    }
+  }
+
+  fun createQuickStarterFromTemplate(template: WorkerTemplate) {
+    val baseSlug =
+      when (template) {
+        WorkerTemplate.HELLO_FETCH -> "hello-worker"
+        WorkerTemplate.JSON_ROUTER -> "rest-router"
+        WorkerTemplate.CORS_PROXY -> "cors-proxy"
+        WorkerTemplate.CRON_WORKER -> "cron-job"
+        WorkerTemplate.HONO_ROUTER -> "hono-api"
+        WorkerTemplate.BEARER_AUTH_WORKER -> "auth-worker"
+        WorkerTemplate.PAGES_FUNCTIONS_API -> "pages-api"
+      }
+    val existingNames =
+      (ramDb.listWorkspaces().map { it.workingWorkspace.scriptName.lowercase() } +
+        _uiState.value.workers.map { it.id.lowercase() }).toSet()
+    var uniqueName = baseSlug
+    var idx = 2
+    while (uniqueName in existingNames) {
+      uniqueName = "$baseSlug-$idx"
+      idx++
+    }
+    createNewWorker(uniqueName, template)
+  }
+
   fun closeWorkspaceToHome() {
     flushActiveEditorBuffer()
     val state = _uiState.value

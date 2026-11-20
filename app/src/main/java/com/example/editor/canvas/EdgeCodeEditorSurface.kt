@@ -96,6 +96,7 @@ import com.example.editor.selection.SelectionLadderState
 import com.example.editor.selection.SelectionScope
 import com.example.editor.selection.SmartTextDomain
 import com.example.editor.selection.SmartTextSelectionEngine
+import com.example.ui.components.EditorBubbleController
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
@@ -262,6 +263,7 @@ fun EdgeCodeEditorSurface(
   onRequestSmartRename: (String?) -> Unit,
   onToggleFindBar: () -> Unit,
   modifier: Modifier = Modifier,
+  bubbleController: EditorBubbleController? = null,
 ) {
   val palette = LocalIdePalette.current
   val density = LocalDensity.current
@@ -277,6 +279,8 @@ fun EdgeCodeEditorSurface(
   val latestOnZoomCommitted by rememberUpdatedState(onPinchZoomCommitted)
   val latestOnRename by rememberUpdatedState(onRequestSmartRename)
   val latestOnFind by rememberUpdatedState(onToggleFindBar)
+  val latestBubbleController by rememberUpdatedState(bubbleController)
+  val latestBubblesConfig by rememberUpdatedState(editorSettings.editorBubbles)
 
   // Session & rendering caches scoped per open file path
   val session = remember(filePath) { EdgeEditorSession(externalTfv.text, externalTfv.selection) }
@@ -1392,6 +1396,17 @@ fun EdgeCodeEditorSurface(
               lastTapTime[0] = downTime
               lastTapPos[0] = downPos
 
+              val activeBubbles = latestBubblesConfig
+              val poppedBubble =
+                if (activeBubbles.enabled && activeBubbles.tapToPop) {
+                  latestBubbleController?.tryPopAt(downPos.x, downPos.y) == true
+                } else {
+                  false
+                }
+              if (poppedBubble) {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+              }
+
               val offset = geometry.offsetAt(downPos, session.doc, session.foldModel, lineStyles, renderCache)
               focusRequester.requestFocus()
               when (tapStreak[0]) {
@@ -1420,7 +1435,9 @@ fun EdgeCodeEditorSurface(
                   session.setSelection(TextRange(offset))
                   showTouchHandles = false
                   showCollapsedPasteMenu = false
-                  if (!readOnly) imeHandle.showKeyboard()
+                  if (!readOnly && !(downInEmptyArea && poppedBubble)) {
+                    imeHandle.showKeyboard()
+                  }
                 }
               }
               geometry.ensureCaretVisible(

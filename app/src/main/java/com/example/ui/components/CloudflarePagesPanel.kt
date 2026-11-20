@@ -527,7 +527,7 @@ private fun PagesProjectDetailView(
             value = commitMessage,
             onValueChange = { commitMessage = it },
             label = { Text("Deploy note (optional)") },
-            placeholder = { Text("Direct upload via EdgeCode") },
+            placeholder = { Text("Direct upload via CodeFlare") },
             singleLine = true,
             enabled = !uiState.isPagesDirectUploading,
             shape = RoundedCornerShape(10.dp),
@@ -556,7 +556,7 @@ private fun PagesProjectDetailView(
               val targetBranch =
                 if (directTargetEnv == "production") project.productionBranch
                 else previewBranchName.trim().ifBlank { "preview" }
-              onDeployDirectPages(targetBranch, commitMessage.ifBlank { "Direct upload via EdgeCode" })
+              onDeployDirectPages(targetBranch, commitMessage.ifBlank { "Direct upload via CodeFlare" })
             },
             enabled = !uiState.isPagesDirectUploading,
             modifier = Modifier.fillMaxWidth().testTag("pages_direct_deploy_button"),

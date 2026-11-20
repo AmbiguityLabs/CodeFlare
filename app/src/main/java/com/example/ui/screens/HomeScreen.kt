@@ -14,6 +14,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -50,6 +51,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.CloudQueue
 import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.Edit
@@ -89,15 +91,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.data.local.RamWorkspaceRecord
 import com.example.data.local.ZipImportTargetMode
 import com.example.data.remote.CfWorkerScript
+import com.example.data.repository.WorkerTemplate
 import com.example.ui.components.ChangeSubdomainDialog
 import com.example.ui.components.CodeflareEmblemDialog
 import com.example.ui.components.EdgeMenu
@@ -310,7 +316,7 @@ fun HomeScreen(
     AlertDialog(
       onDismissRequest = { pendingDeleteLocalKey = null },
       title = { Text("Delete Project?") },
-      text = { Text("Delete '$title' from your EdgeCode project directory? Any unpushed edits will be removed.") },
+      text = { Text("Delete '$title' from your CodeFlare project directory? Any unpushed edits will be removed.") },
       confirmButton = {
         TextButton(
           onClick = {
@@ -583,29 +589,42 @@ fun HomeScreen(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-          Text(
-            text =
-              when (uiState.homeTab) {
-                HomeTab.PROJECTS -> "EdgeCode"
-                HomeTab.PAGES -> "Pages"
-                HomeTab.INFRA -> "Infra"
-              },
-            fontSize = if (isV2) 22.sp else 24.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = (-0.3).sp,
-            color = palette.textPrimary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier =
               Modifier
                 .widthIn(min = 84.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .clip(RoundedCornerShape(10.dp))
                 .clickable(enabled = uiState.homeTab == HomeTab.PROJECTS) {
                   showCodeflareEmblemDialog = true
                 }
                 .padding(horizontal = 4.dp, vertical = 2.dp)
                 .testTag("home_emblem_trigger"),
-          )
+          ) {
+            if (uiState.homeTab == HomeTab.PROJECTS) {
+              Image(
+                painter = painterResource(id = R.drawable.codeflare_boot_emblem),
+                contentDescription = "CodeFlare emblem",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.size(26.dp).clip(RoundedCornerShape(7.dp)),
+              )
+            }
+            Text(
+              text =
+                when (uiState.homeTab) {
+                  HomeTab.PROJECTS -> "CodeFlare"
+                  HomeTab.PAGES -> "Pages"
+                  HomeTab.INFRA -> "Infra"
+                },
+              fontSize = if (isV2) 21.sp else 23.sp,
+              fontWeight = FontWeight.Bold,
+              letterSpacing = (-0.3).sp,
+              color = palette.textPrimary,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
 
           Row(
             modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
@@ -760,6 +779,8 @@ fun HomeScreen(
               onOpenSettings = { viewModel.setShowHomeSettings(true) },
               onOpenGitHubHub = { viewModel.setShowHomeGitHubHub(true) },
               onOpenRamWorkspace = viewModel::openRamWorkspace,
+              onQuickCreateTemplate = viewModel::createQuickStarterFromTemplate,
+              onDuplicateRamWorkspace = { rec -> viewModel.duplicateRamWorkspace(rec.key) },
               onRequestRenameRamWorkspace = { rec ->
                 val isRemote = !rec.key.startsWith("local_") && !rec.isNewUnexportedWorker && !uiState.isLocalScratchpad
                 pendingRenameTarget =
@@ -924,6 +945,18 @@ fun HomeScreen(
   }
 }
 
+private enum class HomeProjectFilter(val label: String) {
+  ALL("All"),
+  MODIFIED("Modified"),
+  LOCAL("Local"),
+  CLOUD("Cloud"),
+}
+
+private enum class HomeProjectSort(val label: String) {
+  RECENT("Recent"),
+  NAME("A–Z"),
+}
+
 @Composable
 private fun HomeProjectsTabContent(
   uiState: IdeUiState,
@@ -936,6 +969,8 @@ private fun HomeProjectsTabContent(
   onOpenSettings: () -> Unit,
   onOpenGitHubHub: () -> Unit,
   onOpenRamWorkspace: (String) -> Unit,
+  onQuickCreateTemplate: (WorkerTemplate) -> Unit,
+  onDuplicateRamWorkspace: (RamWorkspaceRecord) -> Unit,
   onRequestRenameRamWorkspace: (RamWorkspaceRecord) -> Unit,
   onRequestDeleteRamWorkspace: (RamWorkspaceRecord) -> Unit,
   onRequestStorageAccess: () -> Unit,
@@ -948,20 +983,48 @@ private fun HomeProjectsTabContent(
   val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   val q = searchQuery.trim()
   var showSearchBar by remember { mutableStateOf(false) }
+  var projectFilter by remember { mutableStateOf(HomeProjectFilter.ALL) }
+  var projectSort by remember { mutableStateOf(HomeProjectSort.RECENT) }
+  val isCloudConnected = !uiState.isLocalScratchpad && uiState.credentials != null
+
   val ramWorkspaces =
-    remember(uiState.ramWorkspaces, q) {
-      val list =
+    remember(uiState.ramWorkspaces, q, projectFilter, projectSort) {
+      val searched =
         if (q.isEmpty()) uiState.ramWorkspaces
         else uiState.ramWorkspaces.filter { it.workingWorkspace.scriptName.contains(q, ignoreCase = true) }
-      list.sortedByDescending { it.importedAtEpochMs }
+      val filtered =
+        when (projectFilter) {
+          HomeProjectFilter.ALL -> searched
+          HomeProjectFilter.MODIFIED -> searched.filter { it.hasPendingChanges }
+          HomeProjectFilter.LOCAL -> searched.filter { it.key.startsWith("local_") }
+          HomeProjectFilter.CLOUD -> emptyList()
+        }
+      when (projectSort) {
+        HomeProjectSort.RECENT -> filtered.sortedByDescending { it.importedAtEpochMs }
+        HomeProjectSort.NAME -> filtered.sortedBy { it.workingWorkspace.scriptName.lowercase() }
+      }
     }
   val cloudWorkers =
-    remember(uiState.workers, q) {
-      if (q.isEmpty()) uiState.workers
-      else uiState.workers.filter { it.id.contains(q, ignoreCase = true) }
+    remember(uiState.workers, q, projectFilter, projectSort, uiState.ramWorkspaces) {
+      val searched =
+        if (q.isEmpty()) uiState.workers
+        else uiState.workers.filter { it.id.contains(q, ignoreCase = true) }
+      val byName = uiState.ramWorkspaces.associateBy { it.workingWorkspace.scriptName }
+      val filtered =
+        when (projectFilter) {
+          HomeProjectFilter.ALL, HomeProjectFilter.CLOUD -> searched
+          HomeProjectFilter.MODIFIED -> searched.filter { byName[it.id]?.hasPendingChanges == true }
+          HomeProjectFilter.LOCAL -> emptyList()
+        }
+      when (projectSort) {
+        HomeProjectSort.RECENT -> filtered
+        HomeProjectSort.NAME -> filtered.sortedBy { it.id.lowercase() }
+      }
     }
   val ramByName = remember(uiState.ramWorkspaces) { uiState.ramWorkspaces.associateBy { it.workingWorkspace.scriptName } }
-  val latestProject = remember(ramWorkspaces) { ramWorkspaces.firstOrNull() }
+  val latestProject = remember(uiState.ramWorkspaces) {
+    uiState.ramWorkspaces.maxByOrNull { it.importedAtEpochMs }
+  }
 
   LazyColumn(
     modifier = Modifier.fillMaxSize(),
@@ -1087,6 +1150,49 @@ private fun HomeProjectsTabContent(
             )
           }
         }
+
+        // Quick-start template pills for instant workspace launch
+        Row(
+          modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          listOf(
+            WorkerTemplate.HELLO_FETCH to "Fetch Worker",
+            WorkerTemplate.JSON_ROUTER to "REST Router",
+            WorkerTemplate.HONO_ROUTER to "Hono API",
+            WorkerTemplate.CORS_PROXY to "CORS Proxy",
+            WorkerTemplate.CRON_WORKER to "Cron Job",
+          ).forEach { (tpl, label) ->
+            Surface(
+              onClick = { onQuickCreateTemplate(tpl) },
+              color = palette.chromeSurface,
+              shape = RoundedCornerShape(999.dp),
+              border = if (isV2) null else rememberGlassBorderStroke(0.65.dp),
+              modifier = Modifier.testTag("home_quick_template_${tpl.id}"),
+            ) {
+              Row(
+                modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+              ) {
+                Icon(
+                  imageVector = Icons.Outlined.Bolt,
+                  contentDescription = null,
+                  tint = palette.activePillFg,
+                  modifier = Modifier.size(13.dp),
+                )
+                Text(
+                  text = label,
+                  fontSize = 11.5.sp,
+                  fontWeight = FontWeight.Medium,
+                  color = palette.textPrimary,
+                  maxLines = 1,
+                )
+              }
+            }
+          }
+        }
       }
     }
 
@@ -1173,6 +1279,64 @@ private fun HomeProjectsTabContent(
       }
     }
 
+    if (uiState.ramWorkspaces.isNotEmpty() || uiState.workers.isNotEmpty()) {
+      item(key = "home_filter_sort_row") {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Row(
+            modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+          ) {
+            val filters =
+              if (isCloudConnected) HomeProjectFilter.entries
+              else listOf(HomeProjectFilter.ALL, HomeProjectFilter.MODIFIED, HomeProjectFilter.LOCAL)
+            filters.forEach { f ->
+              val selected = projectFilter == f
+              Surface(
+                onClick = { projectFilter = f },
+                shape = RoundedCornerShape(999.dp),
+                color = if (selected) palette.activePillBg else palette.chromeSurface,
+                border =
+                  if (isV2 && !selected) null
+                  else BorderStroke(0.65.dp, if (selected) palette.activePillFg.copy(alpha = 0.45f) else palette.border.copy(alpha = 0.45f)),
+                modifier = Modifier.testTag("home_filter_${f.name.lowercase()}"),
+              ) {
+                Text(
+                  text = f.label,
+                  fontSize = 11.sp,
+                  fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                  color = if (selected) palette.activePillFg else palette.textSecondary,
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                )
+              }
+            }
+          }
+          Spacer(Modifier.width(6.dp))
+          Surface(
+            onClick = {
+              projectSort = if (projectSort == HomeProjectSort.RECENT) HomeProjectSort.NAME else HomeProjectSort.RECENT
+            },
+            shape = RoundedCornerShape(999.dp),
+            color = palette.chromeSurface,
+            border = if (isV2) null else rememberGlassBorderStroke(0.65.dp),
+            modifier = Modifier.testTag("home_sort_toggle"),
+          ) {
+            Text(
+              text = projectSort.label,
+              fontFamily = JetBrainsMono,
+              fontSize = 10.5.sp,
+              fontWeight = FontWeight.Medium,
+              color = palette.textSecondary,
+              modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+            )
+          }
+        }
+      }
+    }
+
     item(key = "ram_header") {
       Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
@@ -1239,6 +1403,7 @@ private fun HomeProjectsTabContent(
                 record = rec,
                 isV2 = true,
                 onOpen = { onOpenRamWorkspace(rec.key) },
+                onDuplicate = { onDuplicateRamWorkspace(rec) },
                 onRename = { onRequestRenameRamWorkspace(rec) },
                 onDelete = { onRequestDeleteRamWorkspace(rec) },
                 modifier = Modifier.testTag("home_ram_card_${rec.workingWorkspace.scriptName}"),
@@ -1262,6 +1427,7 @@ private fun HomeProjectsTabContent(
             record = rec,
             isV2 = false,
             onOpen = { onOpenRamWorkspace(rec.key) },
+            onDuplicate = { onDuplicateRamWorkspace(rec) },
             onRename = { onRequestRenameRamWorkspace(rec) },
             onDelete = { onRequestDeleteRamWorkspace(rec) },
           )
@@ -1402,11 +1568,37 @@ private data class HomeRenameTarget(
   val hasEncryptedSecrets: Boolean = false,
 )
 
+private fun formatRelativeTimestamp(epochMs: Long): String {
+  val diffMs = (System.currentTimeMillis() - epochMs).coerceAtLeast(0L)
+  val mins = diffMs / 60_000L
+  val hrs = mins / 60L
+  val days = hrs / 24L
+  return when {
+    mins < 1 -> "Just now"
+    mins < 60 -> "${mins}m ago"
+    hrs < 24 -> "${hrs}h ago"
+    else -> "${days}d ago"
+  }
+}
+
+private fun entryLangTag(entryPath: String): String {
+  val ext = entryPath.substringAfterLast('.', "").lowercase()
+  return when (ext) {
+    "ts", "mts", "cts", "tsx" -> "TS"
+    "html", "htm" -> "HTML"
+    "json", "jsonc" -> "JSON"
+    "md", "markdown" -> "MD"
+    "css" -> "CSS"
+    else -> "JS"
+  }
+}
+
 @Composable
 private fun RamProjectRowContent(
   record: RamWorkspaceRecord,
   isV2: Boolean,
   onOpen: () -> Unit,
+  onDuplicate: () -> Unit,
   onRename: () -> Unit,
   onDelete: () -> Unit,
   modifier: Modifier = Modifier,
@@ -1415,6 +1607,8 @@ private fun RamProjectRowContent(
   val ws = record.workingWorkspace
   val fileCount = ws.files.count { !it.isVirtualReadOnly }
   val dirty = record.hasPendingChanges
+  val langBadge = remember(ws.entryModulePath) { entryLangTag(ws.entryModulePath) }
+  val relativeTime = remember(record.importedAtEpochMs) { formatRelativeTimestamp(record.importedAtEpochMs) }
 
   Row(
     modifier =
@@ -1450,22 +1644,62 @@ private fun RamProjectRowContent(
       }
     }
 
-    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        Text(
+          text = ws.scriptName,
+          fontSize = 15.5.sp,
+          fontWeight = if (isV2) FontWeight.Normal else FontWeight.SemiBold,
+          color = palette.textPrimary,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+          modifier = Modifier.weight(1f, fill = false),
+        )
+        Surface(
+          color = palette.activePillBg,
+          shape = RoundedCornerShape(5.dp),
+        ) {
+          Text(
+            text = langBadge,
+            fontFamily = JetBrainsMono,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = palette.activePillFg,
+            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+          )
+        }
+        if (dirty) {
+          Box(
+            modifier =
+              Modifier
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(AmberWarn),
+          )
+        }
+      }
       Text(
-        text = ws.scriptName,
-        fontSize = 15.5.sp,
-        fontWeight = if (isV2) FontWeight.Normal else FontWeight.SemiBold,
-        color = palette.textPrimary,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-      )
-      Text(
-        text = "$fileCount files · ${ws.entryModulePath}",
+        text = "$fileCount files · ${ws.entryModulePath} · $relativeTime",
         fontFamily = JetBrainsMono,
         fontSize = 11.sp,
         color = palette.textSecondary,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
+      )
+    }
+
+    IconButton(
+      onClick = onDuplicate,
+      modifier = Modifier.size(30.dp).testTag("duplicate_ram_project_${ws.scriptName}"),
+    ) {
+      Icon(
+        imageVector = Icons.Outlined.ContentCopy,
+        contentDescription = "Duplicate ${ws.scriptName}",
+        tint = palette.textSecondary,
+        modifier = Modifier.size(16.dp),
       )
     }
 

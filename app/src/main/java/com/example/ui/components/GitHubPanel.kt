@@ -1492,7 +1492,7 @@ private fun GitCloneAndReposTab(
 
   if (showCreateRepoDialog) {
     var repoName by remember { mutableStateOf(uiState.workspace?.scriptName ?: "my-cloudflare-worker") }
-    var repoDesc by remember { mutableStateOf("Cloudflare Worker managed in EdgeCode") }
+    var repoDesc by remember { mutableStateOf("Cloudflare Worker managed in CodeFlare") }
     var isPrivate by remember { mutableStateOf(true) }
     AlertDialog(
       onDismissRequest = { showCreateRepoDialog = false },

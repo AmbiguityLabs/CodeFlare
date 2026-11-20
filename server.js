@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 const cwd = process.cwd();
-const pidFilePath = path.join(os.tmpdir(), "edgecode-dev-server.pid");
+const pidFilePath = path.join(os.tmpdir(), "codeflare-dev-server.pid");
 
 function resolvePort() {
   const args = process.argv.slice(2);
@@ -40,6 +40,7 @@ function findApkPath() {
   const candidates = [
     path.join(cwd, ".build-outputs", "app-debug.apk"),
     path.join(cwd, "app", "build", "outputs", "apk", "debug", "app-debug.apk"),
+    path.join(cwd, "CodeFlare.apk"),
     path.join(cwd, "EdgeCode.apk"),
   ];
   for (const candidate of candidates) {
@@ -54,7 +55,7 @@ function renderHtml(apkPath) {
   const hasApk = Boolean(apkPath);
   const sizeMb = hasApk ? (fs.statSync(apkPath).size / (1024 * 1024)).toFixed(1) : null;
   const apkChip = hasApk
-    ? `<a class="btn primary" href="/app-debug.apk" download="EdgeCode.apk">Download APK (${sizeMb} MB)</a>`
+    ? `<a class="btn primary" href="/app-debug.apk" download="CodeFlare.apk">Download APK (${sizeMb} MB)</a>`
     : `<a class="btn ghost" href="https://github.com/AmbiguityLabs/CodeFlare/releases" target="_blank" rel="noreferrer">GitHub Releases</a>`;
 
   return `<!doctype html>
@@ -62,9 +63,9 @@ function renderHtml(apkPath) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>EdgeCode</title>
+  <title>CodeFlare</title>
   <meta name="description" content="Cloudflare Workers mobile IDE featuring native Cloudflare authorization, multi-file VS Code-style code editor, bindings manager, and live HTTP worker tester." />
-  <meta property="og:title" content="EdgeCode" />
+  <meta property="og:title" content="CodeFlare" />
   <meta property="og:description" content="Cloudflare Workers mobile IDE featuring native Cloudflare authorization, multi-file VS Code-style code editor, bindings manager, and live HTTP worker tester." />
   <style>
     :root {
@@ -249,7 +250,7 @@ function renderHtml(apkPath) {
     <div class="header">
       <div class="brand">
         <svg class="svg" style="color:#fff" viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-        <span>EdgeCode</span>
+        <span>CodeFlare</span>
       </div>
       <div class="status" id="envStatus">
         <span class="dot" id="envDot"></span>
@@ -265,7 +266,7 @@ function renderHtml(apkPath) {
         </div>
         <span class="row-val">Android arm64</span>
       </div>
-      <div class="row-detail" id="d-pkg">com.aistudio.edgecode.wqznxm · Native APK</div>
+      <div class="row-detail" id="d-pkg">com.ambiguitylabs.codeflare · Native APK</div>
 
       <div class="row" data-detail="d-deno">
         <div class="row-left">
@@ -364,7 +365,7 @@ const server = http.createServer((req, res) => {
     const payload = JSON.stringify({
       status: "ok",
       mode: isEnvironmentStopped ? "stopped-idle" : "static-demo",
-      app: "EdgeCode",
+      app: "CodeFlare",
     });
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
@@ -421,7 +422,7 @@ const server = http.createServer((req, res) => {
     const stat = fs.statSync(apkPath);
     res.writeHead(200, {
       "Content-Type": "application/vnd.android.package-archive",
-      "Content-Disposition": 'attachment; filename="EdgeCode.apk"',
+      "Content-Disposition": 'attachment; filename="CodeFlare.apk"',
       "Content-Length": stat.size,
       "Cache-Control": "no-store",
     });
@@ -511,5 +512,5 @@ process.on("exit", removePidFile);
 
 server.listen(port, "0.0.0.0", () => {
   writePidFile();
-  console.log(`EdgeCode static demo server listening on http://0.0.0.0:${port}`);
+  console.log(`CodeFlare static demo server listening on http://0.0.0.0:${port}`);
 });

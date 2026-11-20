@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "EdgeCode"
+rootProject.name = "CodeFlare"
 
 include(":app")

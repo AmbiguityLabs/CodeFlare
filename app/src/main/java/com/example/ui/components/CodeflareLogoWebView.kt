@@ -259,7 +259,7 @@ fun CodeflareEmblemDialog(
           horizontalArrangement = Arrangement.SpaceBetween,
         ) {
           Text(
-            text = "EdgeCode",
+            text = "CodeFlare",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
             color = if (palette.isDark) Color(0xFFEEF0FF) else Color(0xFF10122E),

@@ -123,8 +123,8 @@ fun ApiTesterPane(
   onSelectEnvProfile: (String) -> Unit = {},
   onCreateEnvProfile: (String) -> Unit = {},
   onDeleteEnvProfile: (String) -> Unit = {},
-  onImportCollection: (rawJson: String, importEnvVars: Boolean, loadFirst: Boolean) -> Result<ApiImportResult> = { _, _, _ ->
-    Result.failure(UnsupportedOperationException("Collection import not wired"))
+  onImportCollection: (rawJson: String, importEnvVars: Boolean, loadFirst: Boolean) -> Result<ApiImportResult> = { rawJson, _, _ ->
+    ApiCollectionImporter.parseImportJson(rawJson)
   },
   modifier: Modifier = Modifier,
 ) {
@@ -603,7 +603,7 @@ fun ApiTesterPane(
             method = "POST",
             url = "$activeBase/echo",
             bodyType = ApiBodyType.JSON,
-            rawBody = "{\n  \"ok\": true,\n  \"source\": \"edgecode\"\n}",
+            rawBody = "{\n  \"ok\": true,\n  \"source\": \"codeflare\"\n}",
           )
         }
       }

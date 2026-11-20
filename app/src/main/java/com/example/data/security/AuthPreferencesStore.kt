@@ -321,6 +321,87 @@ enum class IconLabelBehavior(
   }
 }
 
+enum class EditorBubbleColorStyle(val key: String, val label: String) {
+  FLARE_HEAT("FLARE_HEAT", "CodeFlare Heat"),
+  THEME_ACCENT("THEME_ACCENT", "Theme Accent"),
+  AURORA("AURORA", "Aurora"),
+  MONO_GLASS("MONO_GLASS", "Crystal Glass"),
+  PASTEL("PASTEL", "Pastel"),
+  ;
+
+  companion object {
+    fun fromKey(raw: String?): EditorBubbleColorStyle =
+      entries.firstOrNull { it.key.equals(raw, ignoreCase = true) || it.name.equals(raw, ignoreCase = true) }
+        ?: FLARE_HEAT
+  }
+}
+
+data class EditorBubbleConfig(
+  val enabled: Boolean = false,
+  val count: Int = 14,
+  val minSizeDp: Int = 12,
+  val maxSizeDp: Int = 34,
+  val minDurationSec: Float = 6.0f,
+  val maxDurationSec: Float = 13.0f,
+  val opacity: Float = 0.30f,
+  val colorStyle: EditorBubbleColorStyle = EditorBubbleColorStyle.FLARE_HEAT,
+  val tapToPop: Boolean = true,
+  val popBurstEnabled: Boolean = true,
+) {
+  fun normalized(): EditorBubbleConfig {
+    val safeMinSize = minSizeDp.coerceIn(6, 40)
+    val safeMaxSize = maxSizeDp.coerceIn((safeMinSize + 4).coerceAtMost(64), 64)
+    val safeMinDur = minDurationSec.coerceIn(2.5f, 18.0f)
+    val safeMaxDur = maxDurationSec.coerceIn((safeMinDur + 1.0f).coerceAtMost(26.0f), 26.0f)
+    return copy(
+      count = count.coerceIn(4, 32),
+      minSizeDp = safeMinSize,
+      maxSizeDp = safeMaxSize,
+      minDurationSec = safeMinDur,
+      maxDurationSec = safeMaxDur,
+      opacity = opacity.coerceIn(0.08f, 0.80f),
+    )
+  }
+
+  fun encode(): String {
+    val n = normalized()
+    return listOf(
+      if (n.enabled) 1 else 0,
+      n.count,
+      n.minSizeDp,
+      n.maxSizeDp,
+      n.minDurationSec,
+      n.maxDurationSec,
+      n.opacity,
+      n.colorStyle.key,
+      if (n.tapToPop) 1 else 0,
+      if (n.popBurstEnabled) 1 else 0,
+    ).joinToString("|")
+  }
+
+  companion object {
+    val DEFAULT = EditorBubbleConfig()
+
+    fun decode(raw: String?, fallback: EditorBubbleConfig = DEFAULT): EditorBubbleConfig {
+      if (raw.isNullOrBlank()) return fallback
+      val parts = raw.split("|")
+      if (parts.size < 10) return fallback
+      return EditorBubbleConfig(
+        enabled = parts[0] == "1",
+        count = parts[1].toIntOrNull() ?: fallback.count,
+        minSizeDp = parts[2].toIntOrNull() ?: fallback.minSizeDp,
+        maxSizeDp = parts[3].toIntOrNull() ?: fallback.maxSizeDp,
+        minDurationSec = parts[4].toFloatOrNull() ?: fallback.minDurationSec,
+        maxDurationSec = parts[5].toFloatOrNull() ?: fallback.maxDurationSec,
+        opacity = parts[6].toFloatOrNull() ?: fallback.opacity,
+        colorStyle = EditorBubbleColorStyle.fromKey(parts[7]),
+        tapToPop = parts[8] != "0",
+        popBurstEnabled = parts[9] != "0",
+      ).normalized()
+    }
+  }
+}
+
 data class EditorSettings(
   val darkTheme: Boolean = true,
   val themeMode: String = THEME_DARK,
@@ -340,6 +421,7 @@ data class EditorSettings(
   val editorBgScrim: Float = 0.35f,
   val editorBgOffsetX: Float = 0f,
   val editorBgOffsetY: Float = 0f,
+  val editorBubbles: EditorBubbleConfig = EditorBubbleConfig.DEFAULT,
   val fontSizeSp: Int = 13,
   val zoomPercent: Int = 100,
   val tabSize: Int = 2,
@@ -528,6 +610,7 @@ class AuthPreferencesStore(private val context: Context) {
     val EDITOR_BG_SCRIM = floatPreferencesKey("editor_bg_scrim")
     val EDITOR_BG_OFFSET_X = floatPreferencesKey("editor_bg_offset_x")
     val EDITOR_BG_OFFSET_Y = floatPreferencesKey("editor_bg_offset_y")
+    val EDITOR_BUBBLES = stringPreferencesKey("editor_bubbles_config")
     val FONT_SIZE_SP = intPreferencesKey("editor_font_size_sp")
     val ZOOM_PERCENT = intPreferencesKey("editor_zoom_percent")
     val TAB_SIZE = intPreferencesKey("editor_tab_size")
@@ -643,6 +726,7 @@ class AuthPreferencesStore(private val context: Context) {
         editorBgScrim = (prefs[Keys.EDITOR_BG_SCRIM] ?: 0.35f).coerceIn(0.0f, 0.85f),
         editorBgOffsetX = (prefs[Keys.EDITOR_BG_OFFSET_X] ?: 0f).coerceIn(-0.5f, 0.5f),
         editorBgOffsetY = (prefs[Keys.EDITOR_BG_OFFSET_Y] ?: 0f).coerceIn(-0.5f, 0.5f),
+        editorBubbles = EditorBubbleConfig.decode(prefs[Keys.EDITOR_BUBBLES], EditorBubbleConfig.DEFAULT),
         fontSizeSp = (prefs[Keys.FONT_SIZE_SP] ?: 13).coerceIn(10, 20),
         zoomPercent = (prefs[Keys.ZOOM_PERCENT] ?: 100).coerceIn(60, 220),
         tabSize = if ((prefs[Keys.TAB_SIZE] ?: 2) == 4) 4 else 2,
@@ -830,6 +914,7 @@ class AuthPreferencesStore(private val context: Context) {
         codeStylePreset = rawNext.normalizedCodeStylePreset(),
         codeFont = rawNext.normalizedCodeFont(),
         caretStyle = rawNext.normalizedCaretStyle(),
+        editorBubbles = rawNext.editorBubbles.normalized(),
         closeUnsavedPolicy = resolvedClosePolicy,
         warnOnCloseDirtyTab = resolvedWarnClose,
         completionDelayMs =
@@ -867,6 +952,7 @@ class AuthPreferencesStore(private val context: Context) {
       prefs[Keys.EDITOR_BG_SCRIM] = next.editorBgScrim.coerceIn(0.0f, 0.85f)
       prefs[Keys.EDITOR_BG_OFFSET_X] = next.editorBgOffsetX.coerceIn(-0.5f, 0.5f)
       prefs[Keys.EDITOR_BG_OFFSET_Y] = next.editorBgOffsetY.coerceIn(-0.5f, 0.5f)
+      prefs[Keys.EDITOR_BUBBLES] = next.editorBubbles.encode()
       prefs[Keys.FONT_SIZE_SP] = next.fontSizeSp.coerceIn(10, 20)
       prefs[Keys.ZOOM_PERCENT] = next.zoomPercent.coerceIn(60, 220)
       prefs[Keys.TAB_SIZE] = next.tabSize

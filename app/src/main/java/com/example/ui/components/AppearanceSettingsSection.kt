@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.automirrored.outlined.Dvr
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.BubbleChart
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.CloudQueue
@@ -92,6 +94,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.remote.WorkerLanguage
+import com.example.data.security.EditorBubbleColorStyle
+import com.example.data.security.EditorBubbleConfig
 import com.example.data.security.EditorSettings
 import com.example.data.security.FloatingBarStyleConfig
 import com.example.data.security.IconLabelBehavior
@@ -622,6 +626,7 @@ fun EditorAppearanceStudioContent(
       initiallyExpanded = false,
     )
 
+    val previewBubbleController = remember { EditorBubbleController() }
     val bgSummary =
       if (activeBgPreset == EditorBackgroundPreset.CUSTOM && hasCustomPhotoFile) "Custom"
       else activeBgPreset.label
@@ -636,6 +641,7 @@ fun EditorAppearanceStudioContent(
         InteractiveEditorBackgroundPreview(
         settings = settings,
         hasActiveBg = hasActiveBg,
+        bubbleController = previewBubbleController,
         onPanDelta = { dxNorm, dyNorm ->
           onUpdateSettings { cur ->
             val maxShift = ((cur.editorBgZoom - 1f) * 0.45f).coerceIn(0f, 0.5f)
@@ -910,6 +916,13 @@ fun EditorAppearanceStudioContent(
       }
     }
     }
+
+    EditorBubblesCustomizationSection(
+      settings = settings,
+      hasActiveBg = hasActiveBg,
+      previewBubbleController = previewBubbleController,
+      onUpdateSettings = onUpdateSettings,
+    )
   }
 }
 
@@ -1196,10 +1209,13 @@ query("SELECT * FROM marks", function (sets) {
 private fun InteractiveEditorBackgroundPreview(
   settings: EditorSettings,
   hasActiveBg: Boolean,
+  bubbleController: EditorBubbleController? = null,
   onPanDelta: (dxNorm: Float, dyNorm: Float) -> Unit,
 ) {
   val palette = LocalIdePalette.current
   val canPan = hasActiveBg && settings.editorBgZoom > 1.01f
+  val bubblesEnabled = settings.editorBubbles.enabled
+  val bubblesTapToPop = bubblesEnabled && settings.editorBubbles.tapToPop
   val latestOnPanDelta by rememberUpdatedState(onPanDelta)
   var previewSize by remember { mutableStateOf(IntSize(1, 1)) }
 
@@ -1228,6 +1244,17 @@ ${indent}},
         .border(0.75.dp, palette.border.copy(alpha = 0.7f), RoundedCornerShape(12.dp))
         .onSizeChanged { previewSize = it }
         .then(
+          if (bubblesTapToPop && bubbleController != null) {
+            Modifier.pointerInput(bubblesTapToPop, bubbleController) {
+              detectTapGestures { pos ->
+                bubbleController.tryPopAt(pos.x, pos.y)
+              }
+            }
+          } else {
+            Modifier
+          },
+        )
+        .then(
           if (canPan) {
             Modifier.pointerInput(canPan) {
               detectDragGestures { change, dragAmount ->
@@ -1245,6 +1272,7 @@ ${indent}},
   ) {
     EditorBackgroundLayer(
       settings = settings,
+      bubbleController = bubbleController,
       modifier = Modifier.fillMaxSize(),
     )
 
@@ -1253,7 +1281,10 @@ ${indent}},
         Column(
           modifier =
             Modifier
-              .background(if (hasActiveBg) palette.editorGutterBg.copy(alpha = 0.62f) else palette.editorGutterBg)
+              .background(
+                if (hasActiveBg || bubblesEnabled) palette.editorGutterBg.copy(alpha = 0.62f)
+                else palette.editorGutterBg,
+              )
               .padding(horizontal = 8.dp, vertical = 10.dp),
           horizontalAlignment = Alignment.End,
         ) {
@@ -1335,5 +1366,366 @@ private fun QuickPresetChip(
       color = if (selected) palette.activePillFg else palette.textSecondary,
       modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
     )
+  }
+}
+
+@Composable
+private fun EditorBubblesCustomizationSection(
+  settings: EditorSettings,
+  hasActiveBg: Boolean,
+  previewBubbleController: EditorBubbleController,
+  onUpdateSettings: ((EditorSettings) -> EditorSettings) -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  val cfg = settings.editorBubbles.normalized()
+  val summaryText =
+    if (cfg.enabled) "${cfg.count} · ${cfg.colorStyle.label}"
+    else "Off"
+
+  SettingsFoldableSection(
+    title = "Floating Bubbles",
+    icon = Icons.Outlined.BubbleChart,
+    summary = summaryText,
+    initiallyExpanded = false,
+    contentPadding = 12.dp,
+    modifier = Modifier.testTag("settings_editor_bubbles_section"),
+  ) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+      InteractiveEditorBackgroundPreview(
+        settings = settings,
+        hasActiveBg = hasActiveBg,
+        bubbleController = previewBubbleController,
+        onPanDelta = { _, _ -> },
+      )
+
+      if (cfg.enabled && cfg.tapToPop) {
+        Text(
+          text = "Tap any rising bubble in the preview above to pop it live.",
+          style = MaterialTheme.typography.labelSmall,
+          color = palette.textSecondary,
+        )
+      }
+
+      SettingsToggleRow(
+        title = "Enable Editor Bubbles",
+        description = "Animated bottom-to-top bubbles with random size, duration, and tap-to-pop",
+        checked = cfg.enabled,
+        horizontalPadding = 0.dp,
+        modifier = Modifier.testTag("settings_bubbles_enabled_switch"),
+        onCheckedChange = { enabled ->
+          onUpdateSettings { it.copy(editorBubbles = it.editorBubbles.copy(enabled = enabled).normalized()) }
+        },
+      )
+
+      if (cfg.enabled) {
+        Surface(
+          color = palette.editorBg,
+          shape = RoundedCornerShape(10.dp),
+          border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.55f)),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+          ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+              Text("Bubble Style", style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
+              Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                EditorBubbleColorStyle.entries.forEach { style ->
+                  val selected = cfg.colorStyle == style
+                  SettingsPillChip(
+                    label = style.label,
+                    selected = selected,
+                    tag = "settings_bubble_style_${style.key.lowercase()}",
+                    onClick = {
+                      onUpdateSettings {
+                        it.copy(editorBubbles = it.editorBubbles.copy(colorStyle = style).normalized())
+                      }
+                    },
+                  )
+                }
+              }
+            }
+
+            HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.75.dp)
+
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Text("Bubble Count", style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
+                Text(
+                  text = "${cfg.count}",
+                  fontFamily = JetBrainsMono,
+                  fontSize = 11.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = palette.activePillFg,
+                )
+              }
+              Slider(
+                value = cfg.count.toFloat(),
+                onValueChange = { v ->
+                  onUpdateSettings {
+                    it.copy(editorBubbles = it.editorBubbles.copy(count = v.roundToInt()).normalized())
+                  }
+                },
+                valueRange = 4f..32f,
+                modifier = Modifier.testTag("settings_bubbles_count_slider"),
+              )
+            }
+
+            HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.75.dp)
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Text("Random Size Range", style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
+                Text(
+                  text = "${cfg.minSizeDp}–${cfg.maxSizeDp} dp",
+                  fontFamily = JetBrainsMono,
+                  fontSize = 11.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = palette.activePillFg,
+                )
+              }
+              Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                listOf(
+                  Triple("Tiny", 8, 20),
+                  Triple("Classic", 12, 34),
+                  Triple("Mixed", 10, 48),
+                  Triple("Large", 20, 58),
+                ).forEach { (label, minD, maxD) ->
+                  val close = cfg.minSizeDp == minD && cfg.maxSizeDp == maxD
+                  QuickPresetChip(
+                    label = label,
+                    selected = close,
+                    onClick = {
+                      onUpdateSettings {
+                        it.copy(
+                          editorBubbles = it.editorBubbles.copy(minSizeDp = minD, maxSizeDp = maxD).normalized(),
+                        )
+                      }
+                    },
+                  )
+                }
+              }
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+              ) {
+                Column(modifier = Modifier.weight(1f)) {
+                  Text("Min (${cfg.minSizeDp}dp)", fontSize = 10.sp, color = palette.textSecondary)
+                  Slider(
+                    value = cfg.minSizeDp.toFloat(),
+                    onValueChange = { v ->
+                      val newMin = v.roundToInt()
+                      onUpdateSettings {
+                        val nextMax = maxOf(it.editorBubbles.maxSizeDp, newMin + 4)
+                        it.copy(
+                          editorBubbles = it.editorBubbles.copy(minSizeDp = newMin, maxSizeDp = nextMax).normalized(),
+                        )
+                      }
+                    },
+                    valueRange = 6f..36f,
+                  )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                  Text("Max (${cfg.maxSizeDp}dp)", fontSize = 10.sp, color = palette.textSecondary)
+                  Slider(
+                    value = cfg.maxSizeDp.toFloat(),
+                    onValueChange = { v ->
+                      val newMax = v.roundToInt()
+                      onUpdateSettings {
+                        val nextMin = minOf(it.editorBubbles.minSizeDp, newMax - 4)
+                        it.copy(
+                          editorBubbles = it.editorBubbles.copy(minSizeDp = nextMin, maxSizeDp = newMax).normalized(),
+                        )
+                      }
+                    },
+                    valueRange = 14f..64f,
+                  )
+                }
+              }
+            }
+
+            HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.75.dp)
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Text("Rise Duration Range", style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
+                Text(
+                  text = String.format(Locale.US, "%.1f–%.1fs", cfg.minDurationSec, cfg.maxDurationSec),
+                  fontFamily = JetBrainsMono,
+                  fontSize = 11.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = palette.activePillFg,
+                )
+              }
+              Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                listOf(
+                  Triple("Swift", 3.5f, 7.5f),
+                  Triple("Balanced", 6.0f, 13.0f),
+                  Triple("Dreamy", 9.0f, 20.0f),
+                ).forEach { (label, minS, maxS) ->
+                  val close =
+                    kotlin.math.abs(cfg.minDurationSec - minS) < 0.3f &&
+                      kotlin.math.abs(cfg.maxDurationSec - maxS) < 0.3f
+                  QuickPresetChip(
+                    label = label,
+                    selected = close,
+                    onClick = {
+                      onUpdateSettings {
+                        it.copy(
+                          editorBubbles =
+                            it.editorBubbles.copy(minDurationSec = minS, maxDurationSec = maxS).normalized(),
+                        )
+                      }
+                    },
+                  )
+                }
+              }
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+              ) {
+                Column(modifier = Modifier.weight(1f)) {
+                  Text(
+                    text = String.format(Locale.US, "Fastest (%.1fs)", cfg.minDurationSec),
+                    fontSize = 10.sp,
+                    color = palette.textSecondary,
+                  )
+                  Slider(
+                    value = cfg.minDurationSec,
+                    onValueChange = { v ->
+                      onUpdateSettings {
+                        val nextMax = maxOf(it.editorBubbles.maxDurationSec, v + 1f)
+                        it.copy(
+                          editorBubbles =
+                            it.editorBubbles.copy(minDurationSec = v, maxDurationSec = nextMax).normalized(),
+                        )
+                      }
+                    },
+                    valueRange = 2.5f..16.0f,
+                  )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                  Text(
+                    text = String.format(Locale.US, "Slowest (%.1fs)", cfg.maxDurationSec),
+                    fontSize = 10.sp,
+                    color = palette.textSecondary,
+                  )
+                  Slider(
+                    value = cfg.maxDurationSec,
+                    onValueChange = { v ->
+                      onUpdateSettings {
+                        val nextMin = minOf(it.editorBubbles.minDurationSec, v - 1f)
+                        it.copy(
+                          editorBubbles =
+                            it.editorBubbles.copy(minDurationSec = nextMin, maxDurationSec = v).normalized(),
+                        )
+                      }
+                    },
+                    valueRange = 4.5f..26.0f,
+                  )
+                }
+              }
+            }
+
+            HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.75.dp)
+
+            val bubbleOpacityPct = (cfg.opacity * 100f).roundToInt()
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Text("Bubble Opacity", style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
+                Text(
+                  text = "$bubbleOpacityPct%",
+                  fontFamily = JetBrainsMono,
+                  fontSize = 11.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = palette.activePillFg,
+                )
+              }
+              Slider(
+                value = cfg.opacity,
+                onValueChange = { o ->
+                  onUpdateSettings {
+                    it.copy(editorBubbles = it.editorBubbles.copy(opacity = o).normalized())
+                  }
+                },
+                valueRange = 0.08f..0.80f,
+                modifier = Modifier.testTag("settings_bubbles_opacity_slider"),
+              )
+            }
+
+            HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.75.dp)
+
+            SettingsToggleRow(
+              title = "Tap to Pop Right Away",
+              description = "Clicking any bubble inside the editor pops it instantly",
+              checked = cfg.tapToPop,
+              horizontalPadding = 0.dp,
+              modifier = Modifier.testTag("settings_bubbles_tap_pop_switch"),
+              onCheckedChange = { enabled ->
+                onUpdateSettings {
+                  it.copy(editorBubbles = it.editorBubbles.copy(tapToPop = enabled).normalized())
+                }
+              },
+            )
+
+            SettingsToggleRow(
+              title = "Pop Burst Ripples",
+              description = "Show a crisp shockwave ring & droplets when a bubble pops",
+              checked = cfg.popBurstEnabled,
+              horizontalPadding = 0.dp,
+              modifier = Modifier.testTag("settings_bubbles_burst_switch"),
+              onCheckedChange = { enabled ->
+                onUpdateSettings {
+                  it.copy(editorBubbles = it.editorBubbles.copy(popBurstEnabled = enabled).normalized())
+                }
+              },
+            )
+
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.End,
+            ) {
+              TextButton(
+                onClick = {
+                  onUpdateSettings {
+                    it.copy(editorBubbles = EditorBubbleConfig.DEFAULT.copy(enabled = true))
+                  }
+                },
+              ) {
+                Icon(Icons.Outlined.RestartAlt, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Reset Bubbles", fontSize = 11.5.sp)
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }
