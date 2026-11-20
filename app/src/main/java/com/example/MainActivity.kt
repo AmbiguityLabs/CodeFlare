@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -57,8 +58,15 @@ internal fun isExternalFileLaunchIntent(intent: Intent?): Boolean {
     action == Intent.ACTION_SEND_MULTIPLE
 }
 
+internal fun isLauncherClickIntent(intent: Intent?): Boolean {
+  if (intent == null) return false
+  return intent.action == Intent.ACTION_MAIN &&
+    intent.hasCategory(Intent.CATEGORY_LAUNCHER)
+}
+
 class MainActivity : ComponentActivity() {
   private val incomingIntentState = mutableStateOf<Intent?>(null)
+  private val launchReplayTriggerState = mutableIntStateOf(0)
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -91,9 +99,26 @@ class MainActivity : ComponentActivity() {
         }
       }
 
-      LaunchedEffect(showLaunchShowcase, hardwareSpeed) {
+      var minDurationElapsed by rememberSaveable { mutableStateOf(false) }
+
+      val replayNonce = launchReplayTriggerState.intValue
+      LaunchedEffect(replayNonce, reducedMotion) {
+        if (replayNonce > 0 && !reducedMotion) {
+          minDurationElapsed = false
+          showLaunchShowcase = true
+        }
+      }
+
+      LaunchedEffect(showLaunchShowcase, replayNonce, hardwareSpeed) {
         if (showLaunchShowcase) {
+          minDurationElapsed = false
           delay(HardwareSpeedProfiler.computeSequenceDurationMs(hardwareSpeed) + 320L)
+          minDurationElapsed = true
+        }
+      }
+
+      LaunchedEffect(minDurationElapsed, uiState.isBootstrapping) {
+        if (minDurationElapsed && !uiState.isBootstrapping) {
           showLaunchShowcase = false
         }
       }
@@ -198,6 +223,7 @@ class MainActivity : ComponentActivity() {
             ) {
               CodeflareAnimatedLogoView(
                 embedOnly = true,
+                replayTrigger = replayNonce,
                 speedMultiplier = hardwareSpeed,
                 modifier =
                   Modifier
@@ -217,6 +243,9 @@ class MainActivity : ComponentActivity() {
     super.onNewIntent(intent)
     setIntent(intent)
     incomingIntentState.value = intent
+    if (isLauncherClickIntent(intent)) {
+      launchReplayTriggerState.intValue += 1
+    }
   }
 
   private fun openExternalUrl(url: String) {

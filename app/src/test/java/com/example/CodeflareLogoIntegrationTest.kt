@@ -110,6 +110,30 @@ class CodeflareLogoIntegrationTest {
   }
 
   @Test
+  fun `isLauncherClickIntent detects launcher clicks only`() {
+    val launcherIntent =
+      Intent(Intent.ACTION_MAIN).apply {
+        addCategory(Intent.CATEGORY_LAUNCHER)
+      }
+    assertTrue(isLauncherClickIntent(launcherIntent))
+    assertFalse(isLauncherClickIntent(Intent(Intent.ACTION_VIEW)))
+    assertFalse(isLauncherClickIntent(Intent(Intent.ACTION_MAIN)))
+    assertFalse(isLauncherClickIntent(null))
+  }
+
+  @Test
+  fun `compressed static codeflare icons and boot emblem resources exist`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val res = context.resources
+    assertTrue(res.getIdentifier("ic_launcher_foreground", "drawable", context.packageName) != 0)
+    assertTrue(res.getIdentifier("ic_launcher_monochrome", "drawable", context.packageName) != 0)
+    assertTrue(res.getIdentifier("codeflare_boot_emblem", "drawable", context.packageName) != 0)
+    assertTrue(res.getIdentifier("img_empty_workspace", "drawable", context.packageName) != 0)
+    assertTrue(res.getIdentifier("app_icon_foreground", "drawable", context.packageName) != 0)
+    assertEquals(0xFF0B0D1E.toInt(), context.getColor(R.color.codeflare_boot_bg))
+  }
+
+  @Test
   fun `packaged html logo asset has single html root intact artwork and speed hooks`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val html =
