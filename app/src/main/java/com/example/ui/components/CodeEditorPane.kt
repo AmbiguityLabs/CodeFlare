@@ -111,6 +111,7 @@ import com.example.data.remote.DiagnosticItem
 import com.example.data.remote.DiagnosticSeverity
 import com.example.data.remote.WorkerLanguage
 import com.example.data.remote.WorkerWorkspace
+import com.example.data.security.EditorSettings
 import com.example.editor.CodeSymbol
 import com.example.editor.EditorCursorTelemetry
 import com.example.editor.MergeConflictResolver
@@ -1064,6 +1065,7 @@ fun CodeEditorPane(
           filePath = activeFile.path,
           workspace = uiState.workspace,
           language = activeFile.language,
+          editorSettings = uiState.editorSettings,
           hudHolder = hudHolder,
           editorController = editorController,
           onComputeCompletions = onComputeCompletions,
@@ -1164,7 +1166,7 @@ fun CodeEditorPane(
           }
         }
 
-        if (!activeFile.isVirtualReadOnly) {
+        if (!activeFile.isVirtualReadOnly && uiState.editorSettings.showSymbolBar) {
           HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.5.dp)
           Row(
             modifier =
@@ -1410,6 +1412,7 @@ private fun FloatingAutocompleteOverlay(
   filePath: String,
   workspace: WorkerWorkspace?,
   language: WorkerLanguage,
+  editorSettings: EditorSettings,
   hudHolder: EditorLiveHudHolder,
   editorController: EdgeEditorController,
   onComputeCompletions: (filePath: String, text: CharSequence, cursor: Int, language: WorkerLanguage) -> List<EdgeCompletionItem>,
@@ -1419,26 +1422,47 @@ private fun FloatingAutocompleteOverlay(
   val telemetry = hudHolder.telemetry
   val word = telemetry.wordBeforeCursor
   val cursorOffset = telemetry.cursorOffset
-  val completions =
-    remember(filePath, workspace?.bindings, language, word, cursorOffset) {
-      if (word.isEmpty()) {
-        emptyList()
-      } else {
-        val docText = editorController.currentCharSequence()
-        val engineItems = onComputeCompletions(filePath, docText, cursorOffset, language)
-        engineItems.ifEmpty {
-          WranglerSyncParser.buildWorkersCompletions(workspace, language, word).map { s ->
-            EdgeCompletionItem(
-              label = s.label,
-              insertText = s.insertText,
-              kind = if (s.label.startsWith("env.")) EdgeCompletionKind.BINDING else EdgeCompletionKind.API,
-              detail = s.detail,
-              cursorBackOffset = s.cursorBackOffset,
-            )
-          }
+  var completions by remember(filePath) { mutableStateOf<List<EdgeCompletionItem>>(emptyList()) }
+  val maxItems =
+    editorSettings.completionMaxItems.coerceIn(
+      EditorSettings.MIN_COMPLETION_MAX_ITEMS,
+      EditorSettings.MAX_COMPLETION_MAX_ITEMS,
+    )
+
+  LaunchedEffect(
+    filePath,
+    workspace?.bindings,
+    language,
+    word,
+    cursorOffset,
+    editorSettings.autoPopupCompletion,
+    editorSettings.completionDelayMs,
+    maxItems,
+  ) {
+    if (!editorSettings.autoPopupCompletion || word.isEmpty()) {
+      completions = emptyList()
+      return@LaunchedEffect
+    }
+    val delayMs = editorSettings.completionDelayMs.coerceIn(0, EditorSettings.MAX_COMPLETION_DELAY_MS).toLong()
+    if (delayMs > 0L) {
+      delay(delayMs)
+    }
+    val docText = editorController.currentCharSequence()
+    val engineItems = onComputeCompletions(filePath, docText, cursorOffset, language)
+    val resolved =
+      engineItems.ifEmpty {
+        WranglerSyncParser.buildWorkersCompletions(workspace, language, word).map { s ->
+          EdgeCompletionItem(
+            label = s.label,
+            insertText = s.insertText,
+            kind = if (s.label.startsWith("env.")) EdgeCompletionKind.BINDING else EdgeCompletionKind.API,
+            detail = s.detail,
+            cursorBackOffset = s.cursorBackOffset,
+          )
         }
       }
-    }
+    completions = resolved.take(maxItems)
+  }
 
   AnimatedVisibility(
     visible = completions.isNotEmpty(),

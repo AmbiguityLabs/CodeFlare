@@ -13,6 +13,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -136,9 +137,13 @@ class MainActivity : ComponentActivity() {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
       }
 
+      val systemDark = isSystemInDarkTheme()
+      val effectiveDarkTheme = uiState.editorSettings.resolveDarkTheme(systemDark)
       EdgeCodeTheme(
-        darkTheme = uiState.editorSettings.darkTheme,
+        darkTheme = effectiveDarkTheme,
         dynamicColor = uiState.editorSettings.dynamicColor,
+        accent = uiState.editorSettings.accent,
+        accentColor = uiState.editorSettings.accentColor,
         themePreset = com.example.ui.theme.EditorThemePreset.fromKey(uiState.editorSettings.themePreset),
         uiStyle = com.example.ui.theme.UiStyleVersion.fromKey(uiState.editorSettings.uiStyleVersion),
         barPreferences =

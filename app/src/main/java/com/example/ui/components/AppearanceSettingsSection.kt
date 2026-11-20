@@ -4,11 +4,15 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,14 +32,11 @@ import androidx.compose.material.icons.automirrored.outlined.Dvr
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.Archive
-import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.CloudQueue
 import androidx.compose.material.icons.outlined.Code
-import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.RocketLaunch
@@ -47,6 +48,8 @@ import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.outlined.Wallpaper
 import androidx.compose.material.icons.outlined.Web
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -56,10 +59,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import com.example.ui.screens.settings.AppearanceSubPage
+import com.example.ui.screens.settings.SettingsCard
+import com.example.ui.screens.settings.SettingsChoiceRow
+import com.example.ui.screens.settings.SettingsColorRow
+import com.example.ui.screens.settings.SettingsDivider
 import com.example.ui.screens.settings.SettingsFoldableSection
-import com.example.ui.screens.settings.SettingsGroup
-import com.example.ui.screens.settings.SettingsHairlineDivider
-import com.example.ui.screens.settings.SettingsMenuRow
+import com.example.ui.screens.settings.SettingsHubRow
+import com.example.ui.screens.settings.SettingsHubSectionHeader
+import com.example.ui.screens.settings.SettingsPillChip
 import com.example.ui.screens.settings.SettingsToggleRow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -86,6 +93,9 @@ import com.example.data.security.FloatingBarStyleConfig
 import com.example.data.security.IconLabelBehavior
 import com.example.data.security.PopupMenuStyleConfig
 import com.example.editor.SyntaxHighlighter
+import com.example.ui.theme.Ca
+import com.example.ui.theme.CaAccent
+import com.example.ui.theme.CaMotion
 import com.example.ui.theme.EditorBackgroundPreset
 import com.example.ui.theme.EditorThemePreset
 import com.example.ui.theme.JetBrainsMono
@@ -103,175 +113,191 @@ fun AppearanceHubContent(
   onOpenSubPage: (AppearanceSubPage) -> Unit,
 ) {
   val palette = LocalIdePalette.current
+  val scheme = MaterialTheme.colorScheme
+  val effectiveDark = settings.resolveDarkTheme(isSystemInDarkTheme())
+  val activeMode = settings.normalizedThemeMode()
+  val activeAccent = settings.normalizedAccent()
   val activeStyle = UiStyleVersion.fromKey(settings.uiStyleVersion)
-  val isV2 = activeStyle == UiStyleVersion.V2_MINIMAL_OLED
   val activePreset = EditorThemePreset.fromKey(settings.themePreset)
-  val dividerIndent = if (isV2) 18.dp else 56.dp
-  val blockPadding = if (isV2) 16.dp else 14.dp
 
-  Column(verticalArrangement = Arrangement.spacedBy(if (isV2) 16.dp else 12.dp)) {
-    SettingsGroup(label = "Theme & Style") {
-      Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = blockPadding, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-      ) {
+  val modeDescription =
+    when (activeMode) {
+      EditorSettings.THEME_LIGHT -> "Bright daylight surfaces and high-contrast ink"
+      EditorSettings.THEME_SYSTEM -> "Automatically follow device light/dark mode"
+      else -> "Low-glare dark surfaces tuned for long coding sessions"
+    }
+
+  val accentDescription =
+    when (activeAccent) {
+      EditorSettings.ACCENT_DYNAMIC -> "Adapts to wallpaper colors on Android 12+ devices"
+      EditorSettings.ACCENT_CUSTOM -> "Using custom Expressive seed color"
+      else -> "Expressive Material 3 tonal palette"
+    }
+
+  Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    SettingsCard(title = "Appearance") {
+      SettingsChoiceRow(
+        title = "Theme",
+        description = modeDescription,
+        selected = activeMode,
+        options =
+          listOf(
+            EditorSettings.THEME_LIGHT to "Light",
+            EditorSettings.THEME_DARK to "Dark",
+            EditorSettings.THEME_SYSTEM to "System",
+          ),
+        chipTestTagPrefix = "settings_mode",
+        onSelect = { mode ->
+          onUpdateSettings { cur -> cur.copy(themeMode = mode) }
+        },
+      )
+
+      SettingsDivider()
+
+      SettingsChoiceRow(
+        title = "Accent",
+        description = accentDescription,
+        selected = activeAccent,
+        options =
+          listOf(
+            EditorSettings.ACCENT_DYNAMIC to "Dynamic",
+            CaAccent.Lime.key to CaAccent.Lime.label,
+            CaAccent.Violet.key to CaAccent.Violet.label,
+            CaAccent.Teal.key to CaAccent.Teal.label,
+            CaAccent.Orange.key to CaAccent.Orange.label,
+            CaAccent.Pumpkin.key to CaAccent.Pumpkin.label,
+            EditorSettings.ACCENT_CUSTOM to "Custom",
+          ),
+        chipTestTagPrefix = "settings_accent",
+        chipDotColor = { key ->
+          when (key) {
+            EditorSettings.ACCENT_DYNAMIC -> scheme.primary
+            EditorSettings.ACCENT_CUSTOM -> Color(settings.accentColor or 0xFF000000L)
+            else -> CaAccent.entries.firstOrNull { it.key == key }?.swatchColor
+          }
+        },
+        onSelect = { choice ->
+          onUpdateSettings { cur ->
+            cur.copy(
+              accent = choice,
+              dynamicColor = choice == EditorSettings.ACCENT_DYNAMIC,
+            )
+          }
+        },
+      )
+
+      SettingsDivider()
+
+      SettingsColorRow(
+        title = "Custom color",
+        description =
+          if (activeAccent == EditorSettings.ACCENT_CUSTOM) {
+            "Active Expressive seed color — tap swatch to edit"
+          } else {
+            "Pick any seed color to generate a custom Expressive scheme"
+          },
+        value = settings.accentColor,
+        swatchTag = "settings_custom_accent_color",
+        onChange = { picked ->
+          onUpdateSettings { cur ->
+            cur.copy(
+              accentColor = picked,
+              accent = EditorSettings.ACCENT_CUSTOM,
+              dynamicColor = false,
+            )
+          }
+        },
+      )
+    }
+
+    SettingsCard(title = "Interface") {
+      Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
           modifier = Modifier.fillMaxWidth(),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-          Text(
-            text = "Interface Style",
-            style = MaterialTheme.typography.bodyMedium,
-            fontSize = if (isV2) 15.sp else 14.sp,
-            fontWeight = if (isV2) FontWeight.Normal else FontWeight.Medium,
-            color = palette.textPrimary,
-          )
-          Text(
-            text = activeStyle.label,
-            fontFamily = JetBrainsMono,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = palette.activePillFg,
-          )
+          Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+              text = "Interface Style",
+              color = scheme.onSurface,
+              style = MaterialTheme.typography.bodyLarge,
+              fontWeight = FontWeight.Medium,
+            )
+            Text(
+              text =
+                if (activeStyle == UiStyleVersion.V2_MINIMAL_OLED) {
+                  "High-contrast minimal OLED chrome with pill controls"
+                } else {
+                  "Expressive Material 3 surfaces matched to active accent"
+                },
+              color = scheme.onSurfaceVariant,
+              style = MaterialTheme.typography.bodySmall,
+            )
+          }
+          Box(
+            modifier =
+              Modifier
+                .background(scheme.primaryContainer, RoundedCornerShape(Ca.radius.pill))
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+          ) {
+            Text(
+              text = activeStyle.label,
+              fontFamily = JetBrainsMono,
+              fontSize = 11.sp,
+              fontWeight = FontWeight.SemiBold,
+              color = scheme.primary,
+            )
+          }
         }
+
         Row(
-          modifier =
-            Modifier
-              .fillMaxWidth()
-              .clip(RoundedCornerShape(if (isV2) 20.dp else 10.dp))
-              .background(palette.editorBg)
-              .then(
-                if (isV2) Modifier
-                else Modifier.border(0.75.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(10.dp)),
-              )
-              .padding(4.dp),
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
           UiStyleVersion.entries.forEach { styleChoice ->
             val selectedChoice = activeStyle == styleChoice
-            val pillBg =
-              when {
-                selectedChoice -> palette.activePillBg
-                isV2 -> palette.chromeSurface
-                else -> palette.glassSurface
-              }
-            val pillFg = if (selectedChoice) palette.activePillFg else palette.textSecondary
-            Surface(
-              onClick = { onUpdateSettings { it.copy(uiStyleVersion = styleChoice.key) } },
-              shape = RoundedCornerShape(if (isV2) 999.dp else 8.dp),
-              color = pillBg,
-              border =
-                when {
-                  isV2 -> null
-                  selectedChoice -> BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.35f))
-                  else -> BorderStroke(0.75.dp, palette.glassBorderSubtle)
-                },
+            val pillBg by animateColorAsState(
+              targetValue = if (selectedChoice) scheme.primary else scheme.surfaceContainerHigh,
+              animationSpec = tween(CaMotion.FAST),
+              label = "style_pill_${styleChoice.key}",
+            )
+            val pillFg = if (selectedChoice) scheme.onPrimary else scheme.onSurfaceVariant
+            Row(
               modifier =
                 Modifier
                   .weight(1f)
                   .height(38.dp)
-                  .testTag("settings_style_${styleChoice.key.lowercase()}"),
+                  .clip(RoundedCornerShape(Ca.radius.pill))
+                  .background(pillBg)
+                  .clickable { onUpdateSettings { it.copy(uiStyleVersion = styleChoice.key) } }
+                  .testTag("settings_style_${styleChoice.key.lowercase()}")
+                  .padding(horizontal = 12.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.Center,
             ) {
-              Row(
-                modifier = Modifier.padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
-              ) {
-                EdgeLoadingIndicator(
-                  size = 17.dp,
-                  color = pillFg,
-                  styleOverride = styleChoice,
-                )
-                Spacer(Modifier.width(7.dp))
-                Text(
-                  text = styleChoice.label,
-                  fontSize = 12.sp,
-                  fontWeight = FontWeight.SemiBold,
-                  color = pillFg,
-                  maxLines = 1,
-                )
-              }
+              EdgeLoadingIndicator(
+                size = 16.dp,
+                color = pillFg,
+                styleOverride = styleChoice,
+              )
+              Spacer(Modifier.width(7.dp))
+              Text(
+                text = styleChoice.label,
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium,
+                color = pillFg,
+                maxLines = 1,
+              )
             }
           }
         }
       }
 
-      SettingsHairlineDivider()
+      SettingsDivider()
 
-      Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = blockPadding, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-      ) {
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-          Text(
-            text = "Color Mode",
-            style = MaterialTheme.typography.bodyMedium,
-            fontSize = if (isV2) 15.sp else 14.sp,
-            fontWeight = if (isV2) FontWeight.Normal else FontWeight.Medium,
-            color = palette.textPrimary,
-          )
-          Text(
-            text = if (settings.darkTheme) "Dark" else "Light",
-            fontFamily = JetBrainsMono,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = palette.activePillFg,
-          )
-        }
-        Row(
-          modifier =
-            Modifier
-              .fillMaxWidth()
-              .clip(RoundedCornerShape(if (isV2) 20.dp else 10.dp))
-              .background(palette.editorBg)
-              .then(
-                if (isV2) Modifier
-                else Modifier.border(0.75.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(10.dp)),
-              )
-              .padding(4.dp),
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-          IconSegmentTab(
-            icon = Icons.Outlined.DarkMode,
-            label = "Dark",
-            selected = settings.darkTheme,
-            onClick = { onUpdateSettings { it.copy(darkTheme = true) } },
-            tag = "settings_mode_dark",
-            modifier = Modifier.weight(1f),
-          )
-          IconSegmentTab(
-            icon = Icons.Outlined.LightMode,
-            label = "Light",
-            selected = !settings.darkTheme,
-            onClick = { onUpdateSettings { it.copy(darkTheme = false) } },
-            tag = "settings_mode_light",
-            modifier = Modifier.weight(1f),
-          )
-        }
-      }
-
-      SettingsHairlineDivider()
-
-      SettingsToggleRow(
-        title = "Material You",
-        leadingIcon = Icons.Outlined.AutoAwesome,
-        checked = settings.dynamicColor,
-        onCheckedChange = { dyn -> onUpdateSettings { it.copy(dynamicColor = dyn) } },
-        modifier = Modifier.testTag("settings_material_you_toggle"),
-      )
-
-      SettingsHairlineDivider()
-
-      Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = blockPadding, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-      ) {
-        val activeBehavior = settings.iconLabelBehavior
+      val activeBehavior = settings.iconLabelBehavior
+      Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
           modifier = Modifier.fillMaxWidth(),
           verticalAlignment = Alignment.CenterVertically,
@@ -280,16 +306,14 @@ fun AppearanceHubContent(
           Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
               text = "Button Labels",
-              style = MaterialTheme.typography.bodyMedium,
-              fontSize = if (isV2) 15.sp else 14.sp,
-              fontWeight = if (isV2) FontWeight.Normal else FontWeight.Medium,
-              color = palette.textPrimary,
+              color = scheme.onSurface,
+              style = MaterialTheme.typography.bodyLarge,
+              fontWeight = FontWeight.Medium,
             )
             Text(
               text = activeBehavior.description,
+              color = scheme.onSurfaceVariant,
               style = MaterialTheme.typography.bodySmall,
-              fontSize = 11.sp,
-              color = palette.textMuted,
               maxLines = 2,
               overflow = TextOverflow.Ellipsis,
             )
@@ -311,68 +335,27 @@ fun AppearanceHubContent(
           )
         }
         Row(
-          modifier =
-            Modifier
-              .fillMaxWidth()
-              .clip(RoundedCornerShape(if (isV2) 20.dp else 10.dp))
-              .background(palette.editorBg)
-              .then(
-                if (isV2) Modifier
-                else Modifier.border(0.75.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(10.dp)),
-              )
-              .padding(4.dp),
+          modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
           horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
           IconLabelBehavior.entries.forEach { behaviorChoice ->
-            val selectedChoice = activeBehavior == behaviorChoice
-            val pillBg =
-              when {
-                selectedChoice -> palette.activePillBg
-                isV2 -> palette.chromeSurface
-                else -> palette.glassSurface
-              }
-            val pillFg = if (selectedChoice) palette.activePillFg else palette.textSecondary
-            Surface(
+            SettingsPillChip(
+              label = behaviorChoice.shortLabel,
+              selected = activeBehavior == behaviorChoice,
+              tag = "settings_label_behavior_${behaviorChoice.name.lowercase()}",
               onClick = { onUpdateSettings { it.copy(iconLabelBehavior = behaviorChoice) } },
-              shape = RoundedCornerShape(if (isV2) 999.dp else 8.dp),
-              color = pillBg,
-              border =
-                when {
-                  isV2 -> null
-                  selectedChoice -> BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.35f))
-                  else -> BorderStroke(0.75.dp, palette.glassBorderSubtle)
-                },
-              modifier =
-                Modifier
-                  .weight(1f)
-                  .height(34.dp)
-                  .testTag("settings_label_behavior_${behaviorChoice.name.lowercase()}"),
-            ) {
-              Box(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp),
-                contentAlignment = Alignment.Center,
-              ) {
-                Text(
-                  text = behaviorChoice.shortLabel,
-                  fontSize = 11.5.sp,
-                  fontWeight = FontWeight.SemiBold,
-                  color = pillFg,
-                  maxLines = 1,
-                  overflow = TextOverflow.Ellipsis,
-                )
-              }
-            }
+            )
           }
         }
       }
     }
 
     SettingsFoldableSection(
-      title = "Color Palette",
+      title = "Editor Color Palette",
       icon = Icons.Outlined.Palette,
       summary = activePreset.label,
       initiallyExpanded = false,
-      contentPadding = 12.dp,
+      contentPadding = 14.dp,
     ) {
       Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         val presets = EditorThemePreset.entries
@@ -383,20 +366,28 @@ fun AppearanceHubContent(
           ) {
             rowPresets.forEach { preset ->
               val selected = preset == activePreset
-              val previewPalette = remember(settings.darkTheme, preset) { paletteFor(settings.darkTheme, preset) }
+              val previewPalette = remember(effectiveDark, preset) { paletteFor(effectiveDark, preset) }
               Surface(
-                onClick = { onUpdateSettings { it.copy(themePreset = preset.name) } },
-                shape = RoundedCornerShape(10.dp),
-                color = if (selected) palette.activePillBg.copy(alpha = 0.55f) else palette.editorBg,
+                onClick = {
+                  onUpdateSettings { cur ->
+                    cur.copy(
+                      themePreset = preset.name,
+                      accent = EditorSettings.accentForPreset(preset.name),
+                      dynamicColor = false,
+                    )
+                  }
+                },
+                shape = RoundedCornerShape(Ca.radius.control),
+                color = if (selected) scheme.primaryContainer else scheme.surfaceContainerHigh,
                 border =
                   BorderStroke(
                     width = if (selected) 1.dp else 0.75.dp,
-                    color = if (selected) palette.activePillFg.copy(alpha = 0.65f) else palette.border.copy(alpha = 0.55f),
+                    color = if (selected) scheme.primary.copy(alpha = 0.65f) else scheme.outlineVariant.copy(alpha = 0.6f),
                   ),
                 modifier = Modifier.weight(1f).testTag("settings_theme_preset_${preset.name.lowercase()}"),
               ) {
                 Row(
-                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
                   verticalAlignment = Alignment.CenterVertically,
                   horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
@@ -429,7 +420,7 @@ fun AppearanceHubContent(
                     text = preset.label,
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                    color = palette.textPrimary,
+                    color = if (selected) scheme.onPrimaryContainer else scheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
@@ -438,7 +429,7 @@ fun AppearanceHubContent(
                     Icon(
                       imageVector = Icons.Outlined.Check,
                       contentDescription = "Selected theme",
-                      tint = palette.activePillFg,
+                      tint = scheme.primary,
                       modifier = Modifier.size(14.dp),
                     )
                   }
@@ -450,23 +441,49 @@ fun AppearanceHubContent(
       }
     }
 
-    SettingsGroup(label = "Screen Customization") {
-      SettingsMenuRow(
-        title = AppearanceSubPage.HOME_PAGE.title,
-        icon = AppearanceSubPage.HOME_PAGE.icon,
-        value = "Bar · Menus",
-        showChevron = true,
-        tag = "settings_jump_${AppearanceSubPage.HOME_PAGE.tag}",
-        onClick = { onOpenSubPage(AppearanceSubPage.HOME_PAGE) },
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      SettingsHubSectionHeader(
+        title = "Screen Customization",
+        modifier = Modifier.padding(horizontal = 4.dp),
       )
-      SettingsHairlineDivider(startIndent = dividerIndent)
-      SettingsMenuRow(
-        title = AppearanceSubPage.EDITOR.title,
-        icon = AppearanceSubPage.EDITOR.icon,
-        value = "Bar · Menus · BG",
-        showChevron = true,
-        tag = "settings_jump_${AppearanceSubPage.EDITOR.tag}",
-        onClick = { onOpenSubPage(AppearanceSubPage.EDITOR) },
+      Card(
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = scheme.surfaceContainer),
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+          SettingsHubRow(
+            title = AppearanceSubPage.HOME_PAGE.title,
+            subtitle = AppearanceSubPage.HOME_PAGE.subtitle,
+            icon = AppearanceSubPage.HOME_PAGE.icon,
+            tag = "settings_jump_${AppearanceSubPage.HOME_PAGE.tag}",
+            onClick = { onOpenSubPage(AppearanceSubPage.HOME_PAGE) },
+          )
+          HorizontalDivider(
+            modifier = Modifier.padding(start = 72.dp),
+            color = scheme.outlineVariant.copy(alpha = 0.65f),
+          )
+          SettingsHubRow(
+            title = AppearanceSubPage.EDITOR.title,
+            subtitle = AppearanceSubPage.EDITOR.subtitle,
+            icon = AppearanceSubPage.EDITOR.icon,
+            tag = "settings_jump_${AppearanceSubPage.EDITOR.tag}",
+            onClick = { onOpenSubPage(AppearanceSubPage.EDITOR) },
+          )
+        }
+      }
+    }
+
+    SettingsCard(title = "Startup") {
+      SettingsToggleRow(
+        title = "Reopen last project",
+        description = "Reopen the project you were editing when the IDE starts",
+        checked = settings.reopenLastProject,
+        horizontalPadding = 0.dp,
+        modifier = Modifier.testTag("settings_reopen_last_project"),
+        onCheckedChange = { enabled ->
+          onUpdateSettings { it.copy(reopenLastProject = enabled) }
+        },
       )
     }
   }

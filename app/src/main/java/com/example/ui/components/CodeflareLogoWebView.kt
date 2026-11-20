@@ -164,7 +164,6 @@ fun CodeflareAnimatedLogoView(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                   )
                 setBackgroundColor(AndroidColor.TRANSPARENT)
-                setLayerType(View.LAYER_TYPE_HARDWARE, null)
                 isVerticalScrollBarEnabled = false
                 isHorizontalScrollBarEnabled = false
                 overScrollMode = View.OVER_SCROLL_NEVER
@@ -176,8 +175,8 @@ fun CodeflareAnimatedLogoView(
                   allowFileAccess = true
                   domStorageEnabled = false
                   cacheMode = WebSettings.LOAD_NO_CACHE
-                  useWideViewPort = true
-                  loadWithOverviewMode = true
+                  useWideViewPort = false
+                  loadWithOverviewMode = false
                   setSupportZoom(false)
                   builtInZoomControls = false
                   displayZoomControls = false

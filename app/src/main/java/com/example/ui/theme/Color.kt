@@ -481,6 +481,34 @@ fun paletteFor(
   }
 }
 
+fun IdePalette.bridgedTo(scheme: androidx.compose.material3.ColorScheme): IdePalette {
+  if (uiStyle == UiStyleVersion.V2_MINIMAL_OLED) return this
+  return copy(
+    chromeBg = scheme.background,
+    chromeSurface = scheme.surfaceContainerLow,
+    chromePill = scheme.surfaceContainer,
+    glassSurface = scheme.surfaceContainer,
+    glassElevated = scheme.surfaceContainerHigh,
+    glassDockBg = scheme.surfaceContainerLow,
+    glassBorderHighlight = scheme.outline,
+    glassBorderSubtle = scheme.outlineVariant,
+    activePillBg = scheme.primaryContainer,
+    activePillFg = scheme.onPrimaryContainer,
+    ctaBg = scheme.primary,
+    ctaFg = scheme.onPrimary,
+    featuredCardBg = scheme.tertiaryContainer,
+    featuredCardFg = scheme.onTertiaryContainer,
+    featuredCardMuted = scheme.onTertiaryContainer.copy(alpha = 0.74f),
+    selectedRowBg = scheme.surfaceContainerHighest,
+    tabBarBg = scheme.background,
+    border = scheme.outlineVariant,
+    treeLine = scheme.outlineVariant.copy(alpha = 0.7f),
+    textPrimary = scheme.onSurface,
+    textSecondary = scheme.onSurfaceVariant,
+    textMuted = scheme.outline,
+  )
+}
+
 @Immutable
 data class IdeSelectionColors(
   val canvasFill: Color,

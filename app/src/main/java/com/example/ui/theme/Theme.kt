@@ -92,6 +92,8 @@ private fun buildLightColorScheme(palette: IdePalette) =
 fun EdgeCodeTheme(
   darkTheme: Boolean = true,
   dynamicColor: Boolean = false,
+  accent: String = EditorSettings.ACCENT_LIME,
+  accentColor: Long = EditorSettings.DEFAULT_ACCENT_COLOR,
   themePreset: EditorThemePreset = EditorThemePreset.OLIVE_OBSIDIAN,
   uiStyle: UiStyleVersion = UiStyleVersion.V1_DEFAULT,
   barPreferences: BarStylePreferences = BarStylePreferences(),
@@ -101,14 +103,38 @@ fun EdgeCodeTheme(
   content: @Composable () -> Unit,
 ) {
   val context = LocalContext.current
-  val palette = remember(darkTheme, themePreset, uiStyle) { paletteFor(darkTheme, themePreset, uiStyle) }
-  val colorScheme =
+  val normalizedAccent = accent.lowercase()
+  val caAccent = remember(normalizedAccent, themePreset) { CaAccent.fromKey(normalizedAccent, themePreset) }
+  val useDynamic = normalizedAccent == EditorSettings.ACCENT_DYNAMIC || dynamicColor
+  val seedColor =
+    if (normalizedAccent == EditorSettings.ACCENT_CUSTOM) Color(accentColor or 0xFF000000L)
+    else null
+
+  val wallpaperScheme =
+    if (useDynamic && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+    } else {
+      null
+    }
+  val resolvedExpressiveScheme =
     when {
-      dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-        if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-      }
-      darkTheme -> remember(palette) { buildDarkColorScheme(palette) }
-      else -> remember(palette) { buildLightColorScheme(palette) }
+      seedColor != null -> remember(seedColor, darkTheme) { expressiveColorSchemeFromSeed(seedColor, darkTheme) }
+      wallpaperScheme != null -> wallpaperScheme
+      else -> remember(caAccent, darkTheme) { expressiveColorScheme(caAccent, darkTheme) }
+    }
+
+  val basePalette = remember(darkTheme, themePreset, uiStyle) { paletteFor(darkTheme, themePreset, uiStyle) }
+  val palette =
+    remember(basePalette, resolvedExpressiveScheme, uiStyle) {
+      if (uiStyle == UiStyleVersion.V2_MINIMAL_OLED) basePalette
+      else basePalette.bridgedTo(resolvedExpressiveScheme)
+    }
+  val colorScheme =
+    if (uiStyle == UiStyleVersion.V2_MINIMAL_OLED && seedColor == null && !useDynamic) {
+      if (darkTheme) remember(palette) { buildDarkColorScheme(palette) }
+      else remember(palette) { buildLightColorScheme(palette) }
+    } else {
+      resolvedExpressiveScheme
     }
 
   CompositionLocalProvider(
@@ -122,6 +148,7 @@ fun EdgeCodeTheme(
     MaterialTheme(
       colorScheme = colorScheme,
       typography = EdgeCodeTypography,
+      shapes = ExpressiveShapes,
       content = content,
     )
   }

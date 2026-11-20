@@ -2,6 +2,7 @@ package com.example.editor.canvas
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -11,8 +12,11 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -65,6 +69,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -83,6 +88,7 @@ import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
@@ -100,6 +106,7 @@ import com.example.editor.drag.DragTransferMode
 import com.example.editor.engine.ClipboardHistoryStore
 import com.example.editor.engine.EdgeEditorSession
 import com.example.editor.engine.LineChange
+import com.example.editor.engine.LineRenderCache
 import com.example.editor.selection.SelectionScope
 import com.example.idecore.completion.EdgeCompletionItem
 import com.example.idecore.completion.EdgeCompletionKind
@@ -479,6 +486,88 @@ fun BoxScope.EdgeFastScrollLayer(
       }
     }
   }
+}
+
+@Composable
+fun BoxScope.EdgeHorizontalScrollbarLayer(
+  geometry: EdgeEditorGeometry,
+  session: EdgeEditorSession,
+  cache: LineRenderCache,
+) {
+  if (geometry.wordWrap) return
+  val maxH = geometry.maxHorizontalScroll(session, cache)
+  if (maxH <= 0.5f) return
+
+  val palette = LocalIdePalette.current
+  val density = LocalDensity.current
+  val gutterDp = with(density) { geometry.effectiveGutterPx.toDp() }
+  val minThumbPx = with(density) { 36.dp.toPx() }
+  val trackWidthPx = remember { mutableFloatStateOf(0f) }
+
+  var dragging by remember { mutableStateOf(false) }
+  val alpha by animateFloatAsState(
+    targetValue = if (dragging) 0.85f else 0.42f,
+    animationSpec = tween(140),
+    label = "editorHScrollbar",
+  )
+
+  fun computeThumbWidth(trackW: Float, curMaxH: Float): Float {
+    val vpW = (geometry.viewport.width - geometry.textOriginX).coerceAtLeast(1f)
+    val contentW = vpW + curMaxH
+    if (contentW <= 0f || trackW <= 0f) return minThumbPx
+    return (trackW * (vpW / contentW)).coerceIn(minThumbPx, trackW)
+  }
+
+  val dragState =
+    rememberDraggableState { delta ->
+      val track = trackWidthPx.floatValue
+      val curMaxH = geometry.maxHorizontalScroll(session, cache)
+      val thumb = computeThumbWidth(track, curMaxH)
+      val availTrack = (track - thumb).coerceAtLeast(1f)
+      val contentDelta = (delta / availTrack) * curMaxH
+      if (contentDelta != 0f) {
+        geometry.scrollBy(contentDelta, 0f, session, cache)
+      }
+    }
+
+  Box(
+    modifier =
+      Modifier
+        .align(Alignment.BottomStart)
+        .fillMaxWidth()
+        .padding(start = gutterDp, end = 10.dp, bottom = 3.dp)
+        .height(14.dp)
+        .onSizeChanged { trackWidthPx.floatValue = it.width.toFloat() }
+        .draggable(
+          state = dragState,
+          orientation = Orientation.Horizontal,
+          onDragStarted = { dragging = true },
+          onDragStopped = { dragging = false },
+        )
+        .drawBehind {
+          val curMaxH = geometry.maxHorizontalScroll(session, cache)
+          if (curMaxH <= 0.5f) return@drawBehind
+          val thumbW = computeThumbWidth(size.width, curMaxH)
+          val frac = (geometry.hOffset / curMaxH).coerceIn(0f, 1f)
+          val x = frac * (size.width - thumbW).coerceAtLeast(0f)
+          val h = if (dragging) 5.dp.toPx() else 3.5.dp.toPx()
+          val y = (size.height - h) / 2f
+          val radius = CornerRadius(h / 2f, h / 2f)
+          drawRoundRect(
+            color = palette.border.copy(alpha = 0.25f * alpha),
+            topLeft = Offset(0f, y),
+            size = Size(size.width, h),
+            cornerRadius = radius,
+          )
+          drawRoundRect(
+            color = (if (dragging) palette.ctaBg else palette.textMuted).copy(alpha = alpha),
+            topLeft = Offset(x, y),
+            size = Size(thumbW, h),
+            cornerRadius = radius,
+          )
+        }
+        .testTag("editor_horizontal_scrollbar"),
+  )
 }
 
 // ---- 5. Gutter Diff Hunk Preview + One-Tap Revert ----

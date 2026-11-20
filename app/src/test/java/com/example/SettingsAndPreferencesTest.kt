@@ -12,11 +12,19 @@ import com.example.data.security.IconLabelBehavior
 import com.example.data.security.PopupMenuStyleConfig
 import com.example.data.security.SelectionDragConfig
 import com.example.data.security.SmartSelectionHoldMode
+import androidx.compose.ui.graphics.Color
 import com.example.editor.selection.SmartSelectionInitialDepth
+import com.example.ui.screens.settings.parseHexColor
+import com.example.ui.theme.CaAccent
+import com.example.ui.theme.expressiveColorScheme
+import com.example.ui.theme.expressiveColorSchemeFromSeed
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -344,5 +352,168 @@ class SettingsAndPreferencesTest {
     store.updateEditorSettings { it.copy(apiCacheTtlHours = -5) }
     val clampedLow = store.editorSettingsFlow.first()
     assertEquals(0, clampedLow.apiCacheTtlHours)
+  }
+
+  @Test
+  fun expressiveThemeModeAccentAndCustomSeedPersistAndSyncCleanly() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val store = AuthPreferencesStore(context)
+
+    val defaults = EditorSettings()
+    assertEquals(EditorSettings.THEME_DARK, defaults.themeMode)
+    assertEquals(EditorSettings.ACCENT_LIME, defaults.accent)
+    assertEquals(EditorSettings.DEFAULT_ACCENT_COLOR, defaults.accentColor)
+    assertTrue(defaults.resolveDarkTheme(systemIsDark = false))
+
+    // System mode tracks system dark flag dynamically
+    store.updateEditorSettings { it.copy(themeMode = EditorSettings.THEME_SYSTEM) }
+    val systemSettings = store.editorSettingsFlow.first()
+    assertEquals(EditorSettings.THEME_SYSTEM, systemSettings.normalizedThemeMode())
+    assertFalse(systemSettings.resolveDarkTheme(systemIsDark = false))
+    assertTrue(systemSettings.resolveDarkTheme(systemIsDark = true))
+
+    // Expressive accent + custom hex seed round-trip & dynamic flag sync
+    val customSeed = 0xFF3DDC84L
+    store.updateEditorSettings {
+      it.copy(
+        themeMode = EditorSettings.THEME_LIGHT,
+        accent = EditorSettings.ACCENT_CUSTOM,
+        accentColor = customSeed,
+      )
+    }
+    val customLoaded = store.editorSettingsFlow.first()
+    assertEquals(EditorSettings.THEME_LIGHT, customLoaded.themeMode)
+    assertFalse(customLoaded.darkTheme)
+    assertFalse(customLoaded.resolveDarkTheme(systemIsDark = true))
+    assertEquals(EditorSettings.ACCENT_CUSTOM, customLoaded.accent)
+    assertFalse(customLoaded.dynamicColor)
+    assertEquals(customSeed, customLoaded.accentColor)
+
+    // Dynamic accent sets dynamicColor = true cleanly
+    store.updateEditorSettings { it.copy(accent = EditorSettings.ACCENT_DYNAMIC) }
+    val dynamicLoaded = store.editorSettingsFlow.first()
+    assertEquals(EditorSettings.ACCENT_DYNAMIC, dynamicLoaded.accent)
+    assertTrue(dynamicLoaded.dynamicColor)
+
+    // Selecting expressive preset clears dynamic flag & persists accent
+    for (presetAccent in CaAccent.entries) {
+      store.updateEditorSettings { it.copy(accent = presetAccent.key) }
+      val loaded = store.editorSettingsFlow.first()
+      assertEquals(presetAccent.key, loaded.accent)
+      assertFalse(loaded.dynamicColor)
+    }
+  }
+
+  @Test
+  fun expressiveSeedSchemeAndHexParserProduceValidDistinctSchemes() {
+    val parsed6 = parseHexColor("#3DDC84")
+    val parsedNoHash = parseHexColor("8b5cf6")
+    val invalid = parseHexColor("not-a-color")
+    assertNotNull(parsed6)
+    assertNotNull(parsedNoHash)
+    assertNull(invalid)
+    assertEquals(Color(0xFF3DDC84L), parsed6)
+    assertEquals(Color(0xFF8B5CF6L), parsedNoHash)
+
+    val darkSeedScheme = expressiveColorSchemeFromSeed(parsed6!!, dark = true)
+    val lightSeedScheme = expressiveColorSchemeFromSeed(parsed6, dark = false)
+    assertNotEquals(darkSeedScheme.background, lightSeedScheme.background)
+    assertNotEquals(darkSeedScheme.primary, lightSeedScheme.primary)
+    assertNotEquals(darkSeedScheme.surfaceContainer, lightSeedScheme.surfaceContainer)
+
+    for (accent in CaAccent.entries) {
+      val darkPalette = expressiveColorScheme(accent, dark = true)
+      val lightPalette = expressiveColorScheme(accent, dark = false)
+      assertNotEquals(darkPalette.primary, lightPalette.primary)
+      assertNotEquals(darkPalette.surface, lightPalette.surface)
+    }
+  }
+
+  @Test
+  fun codeAssistEditorCompletionAnalysisAndStartupSettingsPersistAndNormalizeCleanly() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val store = AuthPreferencesStore(context)
+
+    val defaults = EditorSettings()
+    assertTrue(defaults.reopenLastProject)
+    assertEquals(EditorSettings.CODE_FONT_JETBRAINS, defaults.codeFont)
+    assertEquals(EditorSettings.CARET_LINE, defaults.caretStyle)
+    assertTrue(defaults.fontLigatures)
+    assertTrue(defaults.showHorizontalScrollbar)
+    assertTrue(defaults.pinchZoomEnabled)
+    assertTrue(defaults.showSymbolBar)
+    assertTrue(defaults.autoPopupCompletion)
+    assertEquals(110, defaults.completionDelayMs)
+    assertEquals(50, defaults.completionMaxItems)
+    assertTrue(defaults.analyzeOnTheFly)
+    assertEquals(300, defaults.reparseDelayMs)
+    assertEquals(EditorSettings.CLOSE_UNSAVED_ASK, defaults.closeUnsavedPolicy)
+
+    store.updateEditorSettings {
+      it.copy(
+        reopenLastProject = false,
+        codeFont = EditorSettings.CODE_FONT_MONOSPACE,
+        caretStyle = EditorSettings.CARET_CANDLE,
+        fontLigatures = false,
+        showHorizontalScrollbar = false,
+        pinchZoomEnabled = false,
+        showSymbolBar = false,
+        autoPopupCompletion = false,
+        completionDelayMs = 240,
+        completionMaxItems = 120,
+        analyzeOnTheFly = false,
+        reparseDelayMs = 650,
+        closeUnsavedPolicy = EditorSettings.CLOSE_UNSAVED_DISCARD,
+      )
+    }
+
+    val loaded = store.editorSettingsFlow.first()
+    assertFalse(loaded.reopenLastProject)
+    assertEquals(EditorSettings.CODE_FONT_MONOSPACE, loaded.codeFont)
+    assertEquals(EditorSettings.CARET_CANDLE, loaded.caretStyle)
+    assertFalse(loaded.fontLigatures)
+    assertFalse(loaded.showHorizontalScrollbar)
+    assertFalse(loaded.pinchZoomEnabled)
+    assertFalse(loaded.showSymbolBar)
+    assertFalse(loaded.autoPopupCompletion)
+    assertEquals(240, loaded.completionDelayMs)
+    assertEquals(120, loaded.completionMaxItems)
+    assertFalse(loaded.analyzeOnTheFly)
+    assertEquals(650, loaded.reparseDelayMs)
+    assertEquals(EditorSettings.CLOSE_UNSAVED_DISCARD, loaded.closeUnsavedPolicy)
+    // Switching policy to DISCARD keeps warnOnCloseDirtyTab synchronized to false
+    assertFalse(loaded.warnOnCloseDirtyTab)
+
+    // Out-of-bounds delays/max items clamp and unknown keys normalize safely
+    store.updateEditorSettings {
+      it.copy(
+        codeFont = "comic_sans",
+        caretStyle = "rainbow",
+        completionDelayMs = 5000,
+        completionMaxItems = 2,
+        reparseDelayMs = -100,
+        closeUnsavedPolicy = "unknown",
+        warnOnCloseDirtyTab = true,
+      )
+    }
+    val clamped = store.editorSettingsFlow.first()
+    assertEquals(EditorSettings.CODE_FONT_JETBRAINS, clamped.normalizedCodeFont())
+    assertEquals(EditorSettings.CARET_LINE, clamped.normalizedCaretStyle())
+    assertEquals(EditorSettings.MAX_COMPLETION_DELAY_MS, clamped.completionDelayMs)
+    assertEquals(EditorSettings.MIN_COMPLETION_MAX_ITEMS, clamped.completionMaxItems)
+    assertEquals(EditorSettings.MIN_REPARSE_DELAY_MS, clamped.reparseDelayMs)
+    assertEquals(EditorSettings.CLOSE_UNSAVED_ASK, clamped.normalizedCloseUnsavedPolicy())
+
+    // Toggling warnOnCloseDirtyTab off syncs closeUnsavedPolicy to SAVE
+    store.updateEditorSettings { it.copy(warnOnCloseDirtyTab = false) }
+    val syncedSave = store.editorSettingsFlow.first()
+    assertFalse(syncedSave.warnOnCloseDirtyTab)
+    assertEquals(EditorSettings.CLOSE_UNSAVED_SAVE, syncedSave.closeUnsavedPolicy)
+
+    // Toggling warnOnCloseDirtyTab back on syncs closeUnsavedPolicy to ASK
+    store.updateEditorSettings { it.copy(warnOnCloseDirtyTab = true) }
+    val syncedAsk = store.editorSettingsFlow.first()
+    assertTrue(syncedAsk.warnOnCloseDirtyTab)
+    assertEquals(EditorSettings.CLOSE_UNSAVED_ASK, syncedAsk.closeUnsavedPolicy)
   }
 }

@@ -312,10 +312,14 @@ enum class IconLabelBehavior(
 
 data class EditorSettings(
   val darkTheme: Boolean = true,
+  val themeMode: String = THEME_DARK,
   val dynamicColor: Boolean = false,
+  val accent: String = ACCENT_LIME,
+  val accentColor: Long = DEFAULT_ACCENT_COLOR,
   val themePreset: String = "OLIVE_OBSIDIAN",
   val uiStyleVersion: String = "V1",
   val iconLabelBehavior: IconLabelBehavior = IconLabelBehavior.REVEAL_ON_TAP,
+  val reopenLastProject: Boolean = true,
   val editorBgPreset: String = "NONE",
   val editorBgImagePath: String = "",
   val editorBgOpacity: Float = 0.28f,
@@ -326,14 +330,25 @@ data class EditorSettings(
   val fontSizeSp: Int = 13,
   val zoomPercent: Int = 100,
   val tabSize: Int = 2,
+  val codeFont: String = CODE_FONT_JETBRAINS,
+  val caretStyle: String = CARET_LINE,
+  val fontLigatures: Boolean = true,
   val wordWrap: Boolean = false,
+  val showHorizontalScrollbar: Boolean = true,
   val showLineNumbers: Boolean = true,
   val autoCloseBrackets: Boolean = true,
   val stickyHeaders: Boolean = true,
   val indentGuides: Boolean = true,
   val codeFolding: Boolean = true,
   val gutterDiffMarkers: Boolean = true,
+  val pinchZoomEnabled: Boolean = true,
   val softKeyboardSuggestions: Boolean = false,
+  val showSymbolBar: Boolean = true,
+  val autoPopupCompletion: Boolean = true,
+  val completionDelayMs: Int = 110,
+  val completionMaxItems: Int = 50,
+  val analyzeOnTheFly: Boolean = true,
+  val reparseDelayMs: Int = 300,
   val autoSaveEnabled: Boolean = true,
   val autoSaveIntervalSeconds: Int = 5,
   val defaultCompatibilityDate: String = "2024-11-01",
@@ -348,9 +363,112 @@ data class EditorSettings(
   val useUnifiedEditorEverywhere: Boolean = true,
   val apiCacheTtlHours: Int = 4,
   val warnOnCloseDirtyTab: Boolean = true,
+  val closeUnsavedPolicy: String = CLOSE_UNSAVED_ASK,
   val warnOnLeaveDirtyWorkspace: Boolean = true,
   val warnOnCloudOverwrite: Boolean = true,
-)
+) {
+  fun resolveDarkTheme(systemIsDark: Boolean): Boolean =
+    when (themeMode.lowercase()) {
+      THEME_LIGHT -> false
+      THEME_DARK -> true
+      THEME_SYSTEM -> systemIsDark
+      else -> darkTheme
+    }
+
+  fun normalizedThemeMode(): String =
+    when (themeMode.lowercase()) {
+      THEME_LIGHT -> THEME_LIGHT
+      THEME_SYSTEM -> THEME_SYSTEM
+      THEME_DARK -> THEME_DARK
+      else -> if (darkTheme) THEME_DARK else THEME_LIGHT
+    }
+
+  fun normalizedAccent(): String =
+    when (accent.lowercase()) {
+      ACCENT_DYNAMIC,
+      ACCENT_LIME,
+      ACCENT_VIOLET,
+      ACCENT_TEAL,
+      ACCENT_ORANGE,
+      ACCENT_PUMPKIN,
+      ACCENT_CUSTOM -> accent.lowercase()
+      else -> if (dynamicColor) ACCENT_DYNAMIC else accentForPreset(themePreset)
+    }
+
+  fun normalizedCodeFont(): String =
+    when (codeFont.lowercase()) {
+      CODE_FONT_MONOSPACE -> CODE_FONT_MONOSPACE
+      else -> CODE_FONT_JETBRAINS
+    }
+
+  fun normalizedCaretStyle(): String =
+    when (caretStyle.lowercase()) {
+      CARET_BLOCK,
+      CARET_UNDERLINE,
+      CARET_CANDLE -> caretStyle.lowercase()
+      else -> CARET_LINE
+    }
+
+  fun normalizedCloseUnsavedPolicy(): String =
+    when (closeUnsavedPolicy.lowercase()) {
+      CLOSE_UNSAVED_SAVE -> CLOSE_UNSAVED_SAVE
+      CLOSE_UNSAVED_DISCARD -> CLOSE_UNSAVED_DISCARD
+      CLOSE_UNSAVED_ASK -> CLOSE_UNSAVED_ASK
+      else -> if (warnOnCloseDirtyTab) CLOSE_UNSAVED_ASK else CLOSE_UNSAVED_SAVE
+    }
+
+  companion object {
+    const val THEME_LIGHT = "light"
+    const val THEME_DARK = "dark"
+    const val THEME_SYSTEM = "system"
+
+    const val ACCENT_DYNAMIC = "dynamic"
+    const val ACCENT_LIME = "lime"
+    const val ACCENT_VIOLET = "violet"
+    const val ACCENT_TEAL = "teal"
+    const val ACCENT_ORANGE = "orange"
+    const val ACCENT_PUMPKIN = "pumpkin"
+    const val ACCENT_CUSTOM = "custom"
+
+    const val CODE_FONT_JETBRAINS = "jetbrains"
+    const val CODE_FONT_MONOSPACE = "monospace"
+
+    const val CARET_LINE = "line"
+    const val CARET_BLOCK = "block"
+    const val CARET_UNDERLINE = "underline"
+    const val CARET_CANDLE = "candle"
+
+    const val CLOSE_UNSAVED_ASK = "ask"
+    const val CLOSE_UNSAVED_SAVE = "save"
+    const val CLOSE_UNSAVED_DISCARD = "discard"
+
+    const val MIN_COMPLETION_DELAY_MS = 0
+    const val MAX_COMPLETION_DELAY_MS = 1000
+    const val MIN_COMPLETION_MAX_ITEMS = 10
+    const val MAX_COMPLETION_MAX_ITEMS = 200
+    const val MIN_REPARSE_DELAY_MS = 0
+    const val MAX_REPARSE_DELAY_MS = 2000
+
+    const val DEFAULT_ACCENT_COLOR = 0xFF8B5CF6L
+
+    fun accentForPreset(preset: String): String =
+      when (preset.uppercase()) {
+        "SLATE_CARBON" -> ACCENT_TEAL
+        "MIDNIGHT_NOIR" -> ACCENT_VIOLET
+        "AMBER_DUSK" -> ACCENT_ORANGE
+        else -> ACCENT_LIME
+      }
+
+    fun presetForAccent(accent: String, fallback: String = "OLIVE_OBSIDIAN"): String =
+      when (accent.lowercase()) {
+        ACCENT_LIME -> "OLIVE_OBSIDIAN"
+        ACCENT_TEAL -> "SLATE_CARBON"
+        ACCENT_VIOLET -> "MIDNIGHT_NOIR"
+        ACCENT_ORANGE, ACCENT_PUMPKIN -> "AMBER_DUSK"
+        else -> fallback
+      }
+  }
+}
 
 class AuthPreferencesStore(private val context: Context) {
   private object Keys {
@@ -370,10 +488,14 @@ class AuthPreferencesStore(private val context: Context) {
     val GITHUB_NAME = stringPreferencesKey("github_display_name")
 
     val DARK_THEME = booleanPreferencesKey("editor_dark_theme")
+    val THEME_MODE = stringPreferencesKey("editor_theme_mode")
     val DYNAMIC_COLOR = booleanPreferencesKey("editor_dynamic_color")
+    val ACCENT = stringPreferencesKey("editor_accent")
+    val ACCENT_COLOR = longPreferencesKey("editor_accent_color")
     val THEME_PRESET = stringPreferencesKey("editor_theme_preset")
     val UI_STYLE_VERSION = stringPreferencesKey("editor_ui_style_version")
     val ICON_LABEL_BEHAVIOR = stringPreferencesKey("ui_icon_label_behavior")
+    val REOPEN_LAST_PROJECT = booleanPreferencesKey("app_reopen_last_project")
     val EDITOR_BG_PRESET = stringPreferencesKey("editor_bg_preset")
     val EDITOR_BG_IMAGE_PATH = stringPreferencesKey("editor_bg_image_path")
     val EDITOR_BG_OPACITY = floatPreferencesKey("editor_bg_opacity")
@@ -384,14 +506,25 @@ class AuthPreferencesStore(private val context: Context) {
     val FONT_SIZE_SP = intPreferencesKey("editor_font_size_sp")
     val ZOOM_PERCENT = intPreferencesKey("editor_zoom_percent")
     val TAB_SIZE = intPreferencesKey("editor_tab_size")
+    val CODE_FONT = stringPreferencesKey("editor_code_font")
+    val CARET_STYLE = stringPreferencesKey("editor_caret_style")
+    val FONT_LIGATURES = booleanPreferencesKey("editor_font_ligatures")
     val WORD_WRAP = booleanPreferencesKey("editor_word_wrap")
+    val SHOW_HORIZONTAL_SCROLLBAR = booleanPreferencesKey("editor_horizontal_scrollbar")
     val SHOW_LINE_NUMBERS = booleanPreferencesKey("editor_line_numbers")
     val AUTO_CLOSE_BRACKETS = booleanPreferencesKey("editor_auto_brackets")
     val STICKY_HEADERS = booleanPreferencesKey("editor_sticky_headers")
     val INDENT_GUIDES = booleanPreferencesKey("editor_indent_guides")
     val CODE_FOLDING = booleanPreferencesKey("editor_code_folding")
     val GUTTER_DIFF_MARKERS = booleanPreferencesKey("editor_gutter_diff_markers")
+    val PINCH_ZOOM_ENABLED = booleanPreferencesKey("editor_pinch_zoom")
     val SOFT_KEYBOARD_SUGGESTIONS = booleanPreferencesKey("editor_soft_keyboard_suggestions")
+    val SHOW_SYMBOL_BAR = booleanPreferencesKey("editor_show_symbol_bar")
+    val AUTO_POPUP_COMPLETION = booleanPreferencesKey("completion_auto_popup")
+    val COMPLETION_DELAY_MS = intPreferencesKey("completion_delay_ms")
+    val COMPLETION_MAX_ITEMS = intPreferencesKey("completion_max_items")
+    val ANALYZE_ON_THE_FLY = booleanPreferencesKey("analysis_on_the_fly")
+    val REPARSE_DELAY_MS = intPreferencesKey("analysis_reparse_delay_ms")
     val AUTO_SAVE_ENABLED = booleanPreferencesKey("editor_auto_save_enabled")
     val AUTO_SAVE_INTERVAL_SEC = intPreferencesKey("editor_auto_save_interval_sec")
     val DEFAULT_COMPAT_DATE = stringPreferencesKey("deploy_default_compat_date")
@@ -406,6 +539,7 @@ class AuthPreferencesStore(private val context: Context) {
     val USE_UNIFIED_EDITOR_EVERYWHERE = booleanPreferencesKey("editor_use_unified_everywhere")
     val API_CACHE_TTL_HOURS = intPreferencesKey("api_cache_ttl_hours")
     val WARN_CLOSE_DIRTY_TAB = booleanPreferencesKey("warn_on_close_dirty_tab")
+    val CLOSE_UNSAVED_POLICY = stringPreferencesKey("editor_close_unsaved_policy")
     val WARN_LEAVE_DIRTY_WORKSPACE = booleanPreferencesKey("warn_on_leave_dirty_workspace")
     val WARN_CLOUD_OVERWRITE = booleanPreferencesKey("warn_on_cloud_overwrite")
   }
@@ -446,12 +580,35 @@ class AuthPreferencesStore(private val context: Context) {
 
   val editorSettingsFlow: Flow<EditorSettings> =
     context.edgeCodeDataStore.data.map { prefs ->
+      val legacyDark = prefs[Keys.DARK_THEME] ?: true
+      val legacyDynamic = prefs[Keys.DYNAMIC_COLOR] ?: false
+      val preset = prefs[Keys.THEME_PRESET]?.takeIf { it.isNotBlank() } ?: "OLIVE_OBSIDIAN"
+      val storedThemeMode =
+        prefs[Keys.THEME_MODE]?.takeIf { it.isNotBlank() }
+          ?: if (legacyDark) EditorSettings.THEME_DARK else EditorSettings.THEME_LIGHT
+      val storedAccent =
+        prefs[Keys.ACCENT]?.takeIf { it.isNotBlank() }
+          ?: if (legacyDynamic) EditorSettings.ACCENT_DYNAMIC else EditorSettings.accentForPreset(preset)
+      val storedAccentColor = prefs[Keys.ACCENT_COLOR] ?: EditorSettings.DEFAULT_ACCENT_COLOR
+      val legacyWarnClose = prefs[Keys.WARN_CLOSE_DIRTY_TAB] ?: true
+      val storedClosePolicy =
+        prefs[Keys.CLOSE_UNSAVED_POLICY]?.takeIf { it.isNotBlank() }
+          ?: if (legacyWarnClose) EditorSettings.CLOSE_UNSAVED_ASK else EditorSettings.CLOSE_UNSAVED_SAVE
       EditorSettings(
-        darkTheme = prefs[Keys.DARK_THEME] ?: true,
-        dynamicColor = prefs[Keys.DYNAMIC_COLOR] ?: false,
-        themePreset = prefs[Keys.THEME_PRESET]?.takeIf { it.isNotBlank() } ?: "OLIVE_OBSIDIAN",
+        darkTheme =
+          when (storedThemeMode.lowercase()) {
+            EditorSettings.THEME_LIGHT -> false
+            EditorSettings.THEME_DARK -> true
+            else -> legacyDark
+          },
+        themeMode = storedThemeMode,
+        dynamicColor = storedAccent == EditorSettings.ACCENT_DYNAMIC || legacyDynamic,
+        accent = storedAccent,
+        accentColor = storedAccentColor,
+        themePreset = preset,
         uiStyleVersion = prefs[Keys.UI_STYLE_VERSION]?.takeIf { it.isNotBlank() } ?: "V1",
         iconLabelBehavior = IconLabelBehavior.fromKey(prefs[Keys.ICON_LABEL_BEHAVIOR]),
+        reopenLastProject = prefs[Keys.REOPEN_LAST_PROJECT] ?: true,
         editorBgPreset = prefs[Keys.EDITOR_BG_PRESET]?.takeIf { it.isNotBlank() } ?: "NONE",
         editorBgImagePath = prefs[Keys.EDITOR_BG_IMAGE_PATH].orEmpty(),
         editorBgOpacity = (prefs[Keys.EDITOR_BG_OPACITY] ?: 0.28f).coerceIn(0.05f, 1.0f),
@@ -462,14 +619,47 @@ class AuthPreferencesStore(private val context: Context) {
         fontSizeSp = (prefs[Keys.FONT_SIZE_SP] ?: 13).coerceIn(10, 20),
         zoomPercent = (prefs[Keys.ZOOM_PERCENT] ?: 100).coerceIn(60, 220),
         tabSize = if ((prefs[Keys.TAB_SIZE] ?: 2) == 4) 4 else 2,
+        codeFont =
+          when (prefs[Keys.CODE_FONT]?.lowercase()) {
+            EditorSettings.CODE_FONT_MONOSPACE -> EditorSettings.CODE_FONT_MONOSPACE
+            else -> EditorSettings.CODE_FONT_JETBRAINS
+          },
+        caretStyle =
+          when (prefs[Keys.CARET_STYLE]?.lowercase()) {
+            EditorSettings.CARET_BLOCK,
+            EditorSettings.CARET_UNDERLINE,
+            EditorSettings.CARET_CANDLE -> prefs[Keys.CARET_STYLE]!!.lowercase()
+            else -> EditorSettings.CARET_LINE
+          },
+        fontLigatures = prefs[Keys.FONT_LIGATURES] ?: true,
         wordWrap = prefs[Keys.WORD_WRAP] ?: false,
+        showHorizontalScrollbar = prefs[Keys.SHOW_HORIZONTAL_SCROLLBAR] ?: true,
         showLineNumbers = prefs[Keys.SHOW_LINE_NUMBERS] ?: true,
         autoCloseBrackets = prefs[Keys.AUTO_CLOSE_BRACKETS] ?: true,
         stickyHeaders = prefs[Keys.STICKY_HEADERS] ?: true,
         indentGuides = prefs[Keys.INDENT_GUIDES] ?: true,
         codeFolding = prefs[Keys.CODE_FOLDING] ?: true,
         gutterDiffMarkers = prefs[Keys.GUTTER_DIFF_MARKERS] ?: true,
+        pinchZoomEnabled = prefs[Keys.PINCH_ZOOM_ENABLED] ?: true,
         softKeyboardSuggestions = prefs[Keys.SOFT_KEYBOARD_SUGGESTIONS] ?: false,
+        showSymbolBar = prefs[Keys.SHOW_SYMBOL_BAR] ?: true,
+        autoPopupCompletion = prefs[Keys.AUTO_POPUP_COMPLETION] ?: true,
+        completionDelayMs =
+          (prefs[Keys.COMPLETION_DELAY_MS] ?: 110).coerceIn(
+            EditorSettings.MIN_COMPLETION_DELAY_MS,
+            EditorSettings.MAX_COMPLETION_DELAY_MS,
+          ),
+        completionMaxItems =
+          (prefs[Keys.COMPLETION_MAX_ITEMS] ?: 50).coerceIn(
+            EditorSettings.MIN_COMPLETION_MAX_ITEMS,
+            EditorSettings.MAX_COMPLETION_MAX_ITEMS,
+          ),
+        analyzeOnTheFly = prefs[Keys.ANALYZE_ON_THE_FLY] ?: true,
+        reparseDelayMs =
+          (prefs[Keys.REPARSE_DELAY_MS] ?: 300).coerceIn(
+            EditorSettings.MIN_REPARSE_DELAY_MS,
+            EditorSettings.MAX_REPARSE_DELAY_MS,
+          ),
         autoSaveEnabled = prefs[Keys.AUTO_SAVE_ENABLED] ?: true,
         autoSaveIntervalSeconds = (prefs[Keys.AUTO_SAVE_INTERVAL_SEC] ?: 5).coerceIn(3, 60),
         defaultCompatibilityDate =
@@ -484,7 +674,12 @@ class AuthPreferencesStore(private val context: Context) {
         selectionDragConfig = SelectionDragConfig.decode(prefs[Keys.SELECTION_DRAG_CONFIG], SelectionDragConfig.DEFAULT),
         useUnifiedEditorEverywhere = prefs[Keys.USE_UNIFIED_EDITOR_EVERYWHERE] ?: true,
         apiCacheTtlHours = (prefs[Keys.API_CACHE_TTL_HOURS] ?: 4).coerceIn(0, 24),
-        warnOnCloseDirtyTab = prefs[Keys.WARN_CLOSE_DIRTY_TAB] ?: true,
+        warnOnCloseDirtyTab =
+          when (storedClosePolicy.lowercase()) {
+            EditorSettings.CLOSE_UNSAVED_SAVE, EditorSettings.CLOSE_UNSAVED_DISCARD -> false
+            else -> legacyWarnClose
+          },
+        closeUnsavedPolicy = storedClosePolicy,
         warnOnLeaveDirtyWorkspace = prefs[Keys.WARN_LEAVE_DIRTY_WORKSPACE] ?: true,
         warnOnCloudOverwrite = prefs[Keys.WARN_CLOUD_OVERWRITE] ?: true,
       )
@@ -560,13 +755,81 @@ class AuthPreferencesStore(private val context: Context) {
 
   suspend fun updateEditorSettings(transform: (EditorSettings) -> EditorSettings) {
     val current = editorSettingsFlow.first()
-    val next = transform(current)
+    val rawNext = transform(current)
+    val resolvedMode =
+      when {
+        rawNext.themeMode != current.themeMode -> rawNext.normalizedThemeMode()
+        rawNext.darkTheme != current.darkTheme ->
+          if (rawNext.darkTheme) EditorSettings.THEME_DARK else EditorSettings.THEME_LIGHT
+        else -> rawNext.normalizedThemeMode()
+      }
+    val resolvedDark =
+      when (resolvedMode) {
+        EditorSettings.THEME_LIGHT -> false
+        EditorSettings.THEME_DARK -> true
+        else -> rawNext.darkTheme
+      }
+    val resolvedAccent =
+      when {
+        rawNext.accent != current.accent -> rawNext.normalizedAccent()
+        rawNext.dynamicColor != current.dynamicColor ->
+          if (rawNext.dynamicColor) EditorSettings.ACCENT_DYNAMIC
+          else EditorSettings.accentForPreset(rawNext.themePreset)
+        else -> rawNext.normalizedAccent()
+      }
+    val resolvedDynamic = resolvedAccent == EditorSettings.ACCENT_DYNAMIC
+    val resolvedPreset =
+      when {
+        rawNext.themePreset != current.themePreset -> rawNext.themePreset.ifBlank { "OLIVE_OBSIDIAN" }
+        rawNext.accent != current.accent -> EditorSettings.presetForAccent(resolvedAccent, rawNext.themePreset.ifBlank { "OLIVE_OBSIDIAN" })
+        else -> rawNext.themePreset.ifBlank { "OLIVE_OBSIDIAN" }
+      }
+    val resolvedClosePolicy =
+      when {
+        rawNext.closeUnsavedPolicy != current.closeUnsavedPolicy -> rawNext.normalizedCloseUnsavedPolicy()
+        rawNext.warnOnCloseDirtyTab != current.warnOnCloseDirtyTab ->
+          if (rawNext.warnOnCloseDirtyTab) EditorSettings.CLOSE_UNSAVED_ASK else EditorSettings.CLOSE_UNSAVED_SAVE
+        else -> rawNext.normalizedCloseUnsavedPolicy()
+      }
+    val resolvedWarnClose = resolvedClosePolicy == EditorSettings.CLOSE_UNSAVED_ASK
+    val next =
+      rawNext.copy(
+        darkTheme = resolvedDark,
+        themeMode = resolvedMode,
+        dynamicColor = resolvedDynamic,
+        accent = resolvedAccent,
+        accentColor = rawNext.accentColor or 0xFF000000L,
+        themePreset = resolvedPreset,
+        codeFont = rawNext.normalizedCodeFont(),
+        caretStyle = rawNext.normalizedCaretStyle(),
+        closeUnsavedPolicy = resolvedClosePolicy,
+        warnOnCloseDirtyTab = resolvedWarnClose,
+        completionDelayMs =
+          rawNext.completionDelayMs.coerceIn(
+            EditorSettings.MIN_COMPLETION_DELAY_MS,
+            EditorSettings.MAX_COMPLETION_DELAY_MS,
+          ),
+        completionMaxItems =
+          rawNext.completionMaxItems.coerceIn(
+            EditorSettings.MIN_COMPLETION_MAX_ITEMS,
+            EditorSettings.MAX_COMPLETION_MAX_ITEMS,
+          ),
+        reparseDelayMs =
+          rawNext.reparseDelayMs.coerceIn(
+            EditorSettings.MIN_REPARSE_DELAY_MS,
+            EditorSettings.MAX_REPARSE_DELAY_MS,
+          ),
+      )
     context.edgeCodeDataStore.edit { prefs ->
       prefs[Keys.DARK_THEME] = next.darkTheme
+      prefs[Keys.THEME_MODE] = next.themeMode
       prefs[Keys.DYNAMIC_COLOR] = next.dynamicColor
-      prefs[Keys.THEME_PRESET] = next.themePreset.ifBlank { "OLIVE_OBSIDIAN" }
+      prefs[Keys.ACCENT] = next.accent
+      prefs[Keys.ACCENT_COLOR] = next.accentColor
+      prefs[Keys.THEME_PRESET] = next.themePreset
       prefs[Keys.UI_STYLE_VERSION] = next.uiStyleVersion.ifBlank { "V1" }
       prefs[Keys.ICON_LABEL_BEHAVIOR] = next.iconLabelBehavior.name
+      prefs[Keys.REOPEN_LAST_PROJECT] = next.reopenLastProject
       prefs[Keys.EDITOR_BG_PRESET] = next.editorBgPreset.ifBlank { "NONE" }
       prefs[Keys.EDITOR_BG_IMAGE_PATH] = next.editorBgImagePath
       prefs[Keys.EDITOR_BG_OPACITY] = next.editorBgOpacity.coerceIn(0.05f, 1.0f)
@@ -577,14 +840,25 @@ class AuthPreferencesStore(private val context: Context) {
       prefs[Keys.FONT_SIZE_SP] = next.fontSizeSp.coerceIn(10, 20)
       prefs[Keys.ZOOM_PERCENT] = next.zoomPercent.coerceIn(60, 220)
       prefs[Keys.TAB_SIZE] = next.tabSize
+      prefs[Keys.CODE_FONT] = next.codeFont
+      prefs[Keys.CARET_STYLE] = next.caretStyle
+      prefs[Keys.FONT_LIGATURES] = next.fontLigatures
       prefs[Keys.WORD_WRAP] = next.wordWrap
+      prefs[Keys.SHOW_HORIZONTAL_SCROLLBAR] = next.showHorizontalScrollbar
       prefs[Keys.SHOW_LINE_NUMBERS] = next.showLineNumbers
       prefs[Keys.AUTO_CLOSE_BRACKETS] = next.autoCloseBrackets
       prefs[Keys.STICKY_HEADERS] = next.stickyHeaders
       prefs[Keys.INDENT_GUIDES] = next.indentGuides
       prefs[Keys.CODE_FOLDING] = next.codeFolding
       prefs[Keys.GUTTER_DIFF_MARKERS] = next.gutterDiffMarkers
+      prefs[Keys.PINCH_ZOOM_ENABLED] = next.pinchZoomEnabled
       prefs[Keys.SOFT_KEYBOARD_SUGGESTIONS] = next.softKeyboardSuggestions
+      prefs[Keys.SHOW_SYMBOL_BAR] = next.showSymbolBar
+      prefs[Keys.AUTO_POPUP_COMPLETION] = next.autoPopupCompletion
+      prefs[Keys.COMPLETION_DELAY_MS] = next.completionDelayMs
+      prefs[Keys.COMPLETION_MAX_ITEMS] = next.completionMaxItems
+      prefs[Keys.ANALYZE_ON_THE_FLY] = next.analyzeOnTheFly
+      prefs[Keys.REPARSE_DELAY_MS] = next.reparseDelayMs
       prefs[Keys.AUTO_SAVE_ENABLED] = next.autoSaveEnabled
       prefs[Keys.AUTO_SAVE_INTERVAL_SEC] = next.autoSaveIntervalSeconds.coerceIn(3, 60)
       prefs[Keys.DEFAULT_COMPAT_DATE] = next.defaultCompatibilityDate.trim().ifBlank { "2024-11-01" }
@@ -599,6 +873,7 @@ class AuthPreferencesStore(private val context: Context) {
       prefs[Keys.USE_UNIFIED_EDITOR_EVERYWHERE] = next.useUnifiedEditorEverywhere
       prefs[Keys.API_CACHE_TTL_HOURS] = next.apiCacheTtlHours.coerceIn(0, 24)
       prefs[Keys.WARN_CLOSE_DIRTY_TAB] = next.warnOnCloseDirtyTab
+      prefs[Keys.CLOSE_UNSAVED_POLICY] = next.closeUnsavedPolicy
       prefs[Keys.WARN_LEAVE_DIRTY_WORKSPACE] = next.warnOnLeaveDirtyWorkspace
       prefs[Keys.WARN_CLOUD_OVERWRITE] = next.warnOnCloudOverwrite
     }

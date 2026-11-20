@@ -160,5 +160,10 @@ class CodeflareLogoIntegrationTest {
     assertTrue(html.contains("window.setHostTheme"))
     assertTrue(html.contains("unpauseAnimations"))
     assertTrue(html.contains("setCurrentTime"))
+
+    assertFalse(html.contains("clip-path=\"url(#tc)\""))
+    assertFalse(html.contains("<rect class=\"heatr\""))
+    assertTrue(html.contains("<use class=\"heat heatr\" href=\"#tp\" fill=\"url(#heat)\"/>"))
+    assertTrue(html.contains("attributeName=\"gradientTransform\" type=\"translate\" values=\"0 750;0 -330\""))
   }
 }

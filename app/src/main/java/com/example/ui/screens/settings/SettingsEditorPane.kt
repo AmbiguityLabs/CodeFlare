@@ -4,8 +4,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,40 +20,24 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.WrapText
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.ContentPaste
-import androidx.compose.material.icons.outlined.DataObject
-import androidx.compose.material.icons.outlined.DeleteSweep
-import androidx.compose.material.icons.outlined.Difference
 import androidx.compose.material.icons.outlined.DragIndicator
-import androidx.compose.material.icons.outlined.FormatIndentIncrease
-import androidx.compose.material.icons.outlined.FormatListNumbered
-import androidx.compose.material.icons.outlined.Keyboard
 import androidx.compose.material.icons.outlined.OpenWith
-import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.RestartAlt
-import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Swipe
-import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.CloudSync
-import androidx.compose.material.icons.outlined.SwapHoriz
-import androidx.compose.material.icons.outlined.UnfoldLess
-import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material.icons.outlined.ZoomIn
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -65,11 +49,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -84,7 +72,7 @@ import com.example.editor.selection.SelectionLadderState
 import com.example.editor.selection.SmartSelectionInitialDepth
 import com.example.editor.selection.SmartTextDomain
 import com.example.editor.selection.SmartTextSelectionEngine
-import com.example.ui.components.IconRevealButton
+import com.example.ui.theme.Ca
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
@@ -97,41 +85,31 @@ fun SettingsEditorPane(
   onClearAutoSavedDrafts: (() -> Unit)?,
   modifier: Modifier = Modifier,
 ) {
+  val scheme = MaterialTheme.colorScheme
   val palette = LocalIdePalette.current
   val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
-
-  val enabledEditorFlags =
-    listOf(
-      settings.wordWrap,
-      settings.showLineNumbers,
-      settings.codeFolding,
-      settings.stickyHeaders,
-      settings.indentGuides,
-      settings.gutterDiffMarkers,
-      settings.autoCloseBrackets,
-      settings.softKeyboardSuggestions,
-      settings.useUnifiedEditorEverywhere,
-    ).count { it }
+  val resolvedFont =
+    if (settings.normalizedCodeFont() == EditorSettings.CODE_FONT_MONOSPACE) {
+      FontFamily.Monospace
+    } else {
+      JetBrainsMono
+    }
+  val resolvedLigatures = if (settings.fontLigatures) null else "liga 0, calt 0"
+  val activeCaretStyle = settings.normalizedCaretStyle()
 
   Column(
     modifier = modifier.fillMaxWidth().testTag("settings_editor_section"),
-    verticalArrangement = Arrangement.spacedBy(12.dp),
+    verticalArrangement = Arrangement.spacedBy(14.dp),
   ) {
-    SettingsFoldableSection(
-      title = "Typography",
-      icon = Icons.Outlined.TextFields,
-      summary = "${settings.fontSizeSp}sp · ${settings.tabSize}sp",
-      initiallyExpanded = false,
-      contentPadding = 14.dp,
-    ) {
+    // 1. Typography & Caret
+    SettingsCard(title = "Typography & Caret") {
       val sampleLines =
         remember(settings.tabSize) {
           val indent = " ".repeat(settings.tabSize)
           listOf(
             "export default {",
-            "${indent}async fetch(req) {",
-            "${indent}${indent}return Response.json({ ok: true, edge: \"cf\" });",
-            "${indent}}",
+            "${indent}const ok = status !== 404 => true;",
+            "${indent}return Response.json({ ok });",
             "};",
           )
         }
@@ -146,313 +124,410 @@ fun SettingsEditorPane(
           }
         }
 
-      Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Surface(
-          color = palette.editorBg,
-          shape = RoundedCornerShape(if (isV2) 16.dp else 10.dp),
-          border = if (isV2) null else BorderStroke(0.75.dp, palette.border.copy(alpha = 0.6f)),
-          modifier = Modifier.fillMaxWidth(),
-        ) {
-          Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
-              modifier =
-                Modifier
-                  .fillMaxWidth()
-                  .background(palette.tabBarBg)
-                  .padding(horizontal = 10.dp, vertical = 6.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-              Text(
-                text = "worker.js",
-                fontFamily = JetBrainsMono,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Medium,
-                color = palette.textSecondary,
-              )
-              Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (settings.stickyHeaders) {
-                  Text(
-                    text = "STICKY",
-                    fontFamily = JetBrainsMono,
-                    fontSize = 8.5.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = palette.syntaxFunction,
-                  )
-                }
-                if (settings.wordWrap) {
-                  Text(
-                    text = "WRAP",
-                    fontFamily = JetBrainsMono,
-                    fontSize = 8.5.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = palette.activePillFg,
-                  )
-                }
+      Surface(
+        color = palette.editorBg,
+        shape = RoundedCornerShape(if (isV2) Ca.radius.lg else Ca.radius.control),
+        border = if (isV2) null else BorderStroke(0.75.dp, scheme.outlineVariant.copy(alpha = 0.65f)),
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+          Row(
+            modifier =
+              Modifier
+                .fillMaxWidth()
+                .background(palette.tabBarBg)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            Text(
+              text = "worker.js",
+              fontFamily = resolvedFont,
+              fontSize = 10.sp,
+              fontWeight = FontWeight.Medium,
+              color = palette.textSecondary,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+              if (settings.fontLigatures) {
+                Text(
+                  text = "LIGA",
+                  fontFamily = JetBrainsMono,
+                  fontSize = 8.5.sp,
+                  fontWeight = FontWeight.Bold,
+                  color = palette.syntaxFunction,
+                )
+              }
+              if (settings.wordWrap) {
+                Text(
+                  text = "WRAP",
+                  fontFamily = JetBrainsMono,
+                  fontSize = 8.5.sp,
+                  fontWeight = FontWeight.Bold,
+                  color = palette.activePillFg,
+                )
               }
             }
-            SettingsHairlineDivider()
-            Column(
-              modifier =
-                Modifier
-                  .fillMaxWidth()
-                  .then(if (!settings.wordWrap) Modifier.horizontalScroll(rememberScrollState()) else Modifier)
-                  .padding(vertical = 8.dp),
-            ) {
-              val guideColor = palette.border.copy(alpha = 0.5f)
-              highlightedLines.forEachIndexed { idx, annotatedLine ->
-                val isModifiedPreview = idx == 2
-                val isFoldHeader = idx == 0 || idx == 1
-                Row(
-                  modifier =
-                    Modifier
-                      .fillMaxWidth()
-                      .background(if (idx == 2) palette.editorActiveLineBg else palette.editorBg)
-                      .padding(horizontal = 10.dp, vertical = 1.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-                ) {
-                  if (settings.showLineNumbers) {
+          }
+          SettingsHairlineDivider()
+          Column(
+            modifier =
+              Modifier
+                .fillMaxWidth()
+                .then(if (!settings.wordWrap) Modifier.horizontalScroll(rememberScrollState()) else Modifier)
+                .padding(vertical = 8.dp),
+          ) {
+            val guideColor = palette.border.copy(alpha = 0.5f)
+            highlightedLines.forEachIndexed { idx, annotatedLine ->
+              val isModifiedPreview = idx == 2
+              val isFoldHeader = idx == 0
+              Row(
+                modifier =
+                  Modifier
+                    .fillMaxWidth()
+                    .background(if (idx == 2) palette.editorActiveLineBg else palette.editorBg)
+                    .padding(horizontal = 10.dp, vertical = 1.dp),
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                if (settings.showLineNumbers) {
+                  Text(
+                    text = "${idx + 1}",
+                    fontFamily = resolvedFont,
+                    fontSize = (settings.fontSizeSp - 1).coerceAtLeast(9).sp,
+                    lineHeight = (settings.fontSizeSp + 6).sp,
+                    color = if (idx == 2) palette.activePillFg else palette.textMuted.copy(alpha = 0.6f),
+                    modifier = Modifier.width(18.dp),
+                  )
+                  if (settings.codeFolding) {
                     Text(
-                      text = "${idx + 1}",
+                      text = if (isFoldHeader) "▾" else " ",
                       fontFamily = JetBrainsMono,
-                      fontSize = (settings.fontSizeSp - 1).coerceAtLeast(9).sp,
-                      lineHeight = (settings.fontSizeSp + 6).sp,
-                      color = if (idx == 2) palette.activePillFg else palette.textMuted.copy(alpha = 0.6f),
-                      modifier = Modifier.width(18.dp),
+                      fontSize = 10.sp,
+                      color = palette.textMuted.copy(alpha = 0.7f),
+                      modifier = Modifier.width(12.dp),
                     )
-                    if (settings.codeFolding) {
-                      Text(
-                        text = if (isFoldHeader) "▾" else " ",
-                        fontFamily = JetBrainsMono,
-                        fontSize = 10.sp,
-                        color = palette.textMuted.copy(alpha = 0.7f),
-                        modifier = Modifier.width(12.dp),
-                      )
-                    }
-                    if (settings.gutterDiffMarkers) {
-                      Box(
-                        modifier =
-                          Modifier
-                            .padding(end = 6.dp)
-                            .width(2.5.dp)
-                            .height((settings.fontSizeSp + 4).dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(if (isModifiedPreview) EmeraldLive else palette.editorBg),
-                      )
-                    } else {
-                      Spacer(Modifier.width(6.dp))
-                    }
                   }
-                  Box(
-                    modifier =
-                      Modifier.drawBehind {
-                        if (settings.indentGuides && idx in 1..3) {
-                          drawLine(
-                            color = guideColor,
-                            start = Offset(1f, 0f),
-                            end = Offset(1f, size.height),
-                            strokeWidth = 1.dp.toPx(),
-                          )
-                          if (idx == 2) {
-                            val secondX = (settings.tabSize * (settings.fontSizeSp * 0.6f)).dp.toPx()
-                            drawLine(
-                              color = guideColor,
-                              start = Offset(secondX, 0f),
-                              end = Offset(secondX, size.height),
-                              strokeWidth = 1.dp.toPx(),
-                            )
-                          }
-                        }
-                      },
-                  ) {
+                  if (settings.gutterDiffMarkers) {
+                    Box(
+                      modifier =
+                        Modifier
+                          .padding(end = 6.dp)
+                          .width(2.5.dp)
+                          .height((settings.fontSizeSp + 4).dp)
+                          .clip(RoundedCornerShape(2.dp))
+                          .background(if (isModifiedPreview) EmeraldLive else palette.editorBg),
+                    )
+                  } else {
+                    Spacer(Modifier.width(6.dp))
+                  }
+                }
+                Box(
+                  modifier =
+                    Modifier.drawBehind {
+                      if (settings.indentGuides && idx in 1..2) {
+                        drawLine(
+                          color = guideColor,
+                          start = Offset(1f, 0f),
+                          end = Offset(1f, size.height),
+                          strokeWidth = 1.dp.toPx(),
+                        )
+                      }
+                    },
+                ) {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                       text = annotatedLine,
-                      fontFamily = JetBrainsMono,
+                      fontFamily = resolvedFont,
                       fontSize = settings.fontSizeSp.sp,
                       lineHeight = (settings.fontSizeSp + 6).sp,
                       softWrap = settings.wordWrap,
                       color = palette.textPrimary,
+                      style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = resolvedLigatures),
                     )
+                    if (idx == 2) {
+                      PreviewCaretIndicator(
+                        caretStyle = activeCaretStyle,
+                        caretColor = palette.activePillFg,
+                        heightDp = (settings.fontSizeSp + 3).coerceIn(12, 22),
+                      )
+                    }
                   }
                 }
               }
             }
           }
-        }
-
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-          ) {
-            Text("Font Size", fontSize = 13.5.sp, fontWeight = FontWeight.Medium, color = palette.textPrimary)
-            Text(
-              text = "${settings.fontSizeSp}sp",
-              fontFamily = JetBrainsMono,
-              fontSize = 11.sp,
-              fontWeight = FontWeight.SemiBold,
-              color = palette.activePillFg,
-            )
-          }
-          Slider(
-            value = settings.fontSizeSp.toFloat(),
-            onValueChange = { value -> onUpdateSettings { it.copy(fontSizeSp = value.toInt()) } },
-            valueRange = 10f..18f,
-            steps = 7,
-          )
-          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf(11, 13, 15, 17).forEach { sp ->
-              SettingsChoiceChip(
-                label = "${sp}sp",
-                selected = settings.fontSizeSp == sp,
-                onClick = { onUpdateSettings { it.copy(fontSizeSp = sp) } },
-                monospace = true,
-                modifier = Modifier.weight(1f),
-              )
-            }
-          }
-        }
-
-        SettingsHairlineDivider()
-
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          Text("Tab Size", fontSize = 13.5.sp, fontWeight = FontWeight.Medium, color = palette.textPrimary)
-          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(2, 4).forEach { spaces ->
-              val selected = settings.tabSize == spaces
-              SettingsChoiceChip(
-                label = "$spaces Spaces",
-                selected = selected,
-                leadingIcon = if (selected) Icons.Outlined.Check else null,
-                onClick = { onUpdateSettings { it.copy(tabSize = spaces) } },
-                modifier = Modifier.weight(1f),
+          if (!settings.wordWrap && settings.showHorizontalScrollbar) {
+            Box(
+              modifier =
+                Modifier
+                  .fillMaxWidth()
+                  .padding(start = if (settings.showLineNumbers) 36.dp else 10.dp, end = 10.dp, bottom = 5.dp),
+            ) {
+              Box(
+                modifier =
+                  Modifier
+                    .fillMaxWidth(0.42f)
+                    .height(3.dp)
+                    .clip(RoundedCornerShape(Ca.radius.pill))
+                    .background(palette.activePillFg.copy(alpha = 0.45f)),
               )
             }
           }
         }
       }
+
+      SettingsChoiceRow(
+        title = "Code font",
+        description = "Monospace typeface used in the code editor",
+        selected = settings.normalizedCodeFont(),
+        options =
+          listOf(
+            EditorSettings.CODE_FONT_JETBRAINS to "JetBrains Mono",
+            EditorSettings.CODE_FONT_MONOSPACE to "System monospace",
+          ),
+        chipTestTagPrefix = "settings_code_font",
+        onSelect = { font -> onUpdateSettings { it.copy(codeFont = font) } },
+      )
+
+      SettingsDivider()
+
+      SettingsSliderRow(
+        title = "Font size",
+        description = "Editor code & gutter text size",
+        value = settings.fontSizeSp,
+        min = 10,
+        max = 20,
+        step = 1,
+        unit = "sp",
+        modifier = Modifier.testTag("settings_editor_font_size"),
+        onChange = { sp -> onUpdateSettings { it.copy(fontSizeSp = sp) } },
+      )
+
+      SettingsDivider()
+
+      SettingsChoiceRow(
+        title = "Caret style",
+        description = "Visual cursor style inside the editor",
+        selected = activeCaretStyle,
+        options =
+          listOf(
+            EditorSettings.CARET_LINE to "Line",
+            EditorSettings.CARET_BLOCK to "Block",
+            EditorSettings.CARET_UNDERLINE to "Underline",
+            EditorSettings.CARET_CANDLE to "Candle",
+          ),
+        chipTestTagPrefix = "settings_caret",
+        onSelect = { style -> onUpdateSettings { it.copy(caretStyle = style) } },
+      )
+
+      SettingsDivider()
+
+      SettingsToggleRow(
+        title = "Font ligatures",
+        description = "Render multi-character operators like => and !== as single glyphs",
+        checked = settings.fontLigatures,
+        horizontalPadding = 0.dp,
+        modifier = Modifier.testTag("settings_editor_ligatures"),
+        onCheckedChange = { enabled -> onUpdateSettings { it.copy(fontLigatures = enabled) } },
+      )
+
+      SettingsDivider()
+
+      SettingsChoiceRow(
+        title = "Tab size",
+        description = "Spaces inserted per indent level",
+        selected = settings.tabSize.toString(),
+        options = listOf("2" to "2 Spaces", "4" to "4 Spaces"),
+        chipTestTagPrefix = "settings_tab_size",
+        onSelect = { choice ->
+          val spaces = choice.toIntOrNull() ?: 2
+          onUpdateSettings { it.copy(tabSize = spaces) }
+        },
+      )
     }
 
-    SettingsFoldableSection(
-      title = "Editor",
-      icon = Icons.Outlined.Tune,
-      summary = "$enabledEditorFlags/9",
-      initiallyExpanded = false,
-    ) {
+    // 2. Display & Code
+    SettingsCard(title = "Display & Code") {
       SettingsToggleRow(
-        title = "Word Wrap",
-        leadingIcon = Icons.AutoMirrored.Outlined.WrapText,
+        title = "Word wrap",
+        description = "Wrap long lines inside the viewport",
         checked = settings.wordWrap,
+        horizontalPadding = 0.dp,
         onCheckedChange = { wrap -> onUpdateSettings { it.copy(wordWrap = wrap) } },
       )
-      SettingsHairlineDivider(startIndent = 54.dp)
+      SettingsDivider()
       SettingsToggleRow(
-        title = "Line Numbers",
-        leadingIcon = Icons.Outlined.FormatListNumbered,
+        title = "Horizontal scrollbar",
+        description = "Show a draggable bottom scrollbar when word wrap is off",
+        checked = settings.showHorizontalScrollbar,
+        horizontalPadding = 0.dp,
+        modifier = Modifier.testTag("settings_editor_hscrollbar"),
+        onCheckedChange = { enabled -> onUpdateSettings { it.copy(showHorizontalScrollbar = enabled) } },
+      )
+      SettingsDivider()
+      SettingsToggleRow(
+        title = "Line numbers",
+        description = "Show line numbers in the left gutter",
         checked = settings.showLineNumbers,
+        horizontalPadding = 0.dp,
         onCheckedChange = { ln -> onUpdateSettings { it.copy(showLineNumbers = ln) } },
       )
-      SettingsHairlineDivider(startIndent = 54.dp)
+      SettingsDivider()
       SettingsToggleRow(
-        title = "Code Folding",
-        leadingIcon = Icons.Outlined.UnfoldLess,
+        title = "Code folding",
+        description = "Show fold chevrons for blocks and functions",
         checked = settings.codeFolding,
+        horizontalPadding = 0.dp,
         onCheckedChange = { fold -> onUpdateSettings { it.copy(codeFolding = fold) } },
       )
-      SettingsHairlineDivider(startIndent = 54.dp)
+      SettingsDivider()
       SettingsToggleRow(
-        title = "Sticky Headers",
-        leadingIcon = Icons.Outlined.PushPin,
+        title = "Sticky headers",
+        description = "Pin the current enclosing block at the top",
         checked = settings.stickyHeaders,
+        horizontalPadding = 0.dp,
         onCheckedChange = { sticky -> onUpdateSettings { it.copy(stickyHeaders = sticky) } },
       )
-      SettingsHairlineDivider(startIndent = 54.dp)
+      SettingsDivider()
       SettingsToggleRow(
-        title = "Indent Guides",
-        leadingIcon = Icons.Outlined.FormatIndentIncrease,
+        title = "Indent guides",
+        description = "Draw subtle vertical alignment lines per indent",
         checked = settings.indentGuides,
+        horizontalPadding = 0.dp,
         onCheckedChange = { guides -> onUpdateSettings { it.copy(indentGuides = guides) } },
       )
-      SettingsHairlineDivider(startIndent = 54.dp)
+      SettingsDivider()
       SettingsToggleRow(
-        title = "Gutter Diff Markers",
-        leadingIcon = Icons.Outlined.Difference,
+        title = "Gutter diff markers",
+        description = "Highlight edited lines compared to saved state",
         checked = settings.gutterDiffMarkers,
+        horizontalPadding = 0.dp,
         onCheckedChange = { diff -> onUpdateSettings { it.copy(gutterDiffMarkers = diff) } },
       )
-      SettingsHairlineDivider(startIndent = 54.dp)
+      SettingsDivider()
       SettingsToggleRow(
-        title = "Auto-Close Brackets",
-        leadingIcon = Icons.Outlined.DataObject,
+        title = "Auto-close brackets",
+        description = "Automatically insert matching quotes and brackets",
         checked = settings.autoCloseBrackets,
+        horizontalPadding = 0.dp,
         onCheckedChange = { auto -> onUpdateSettings { it.copy(autoCloseBrackets = auto) } },
       )
-      SettingsHairlineDivider(startIndent = 54.dp)
-      SettingsToggleRow(
-        title = "Keyboard Suggestions",
-        leadingIcon = Icons.Outlined.Keyboard,
-        checked = settings.softKeyboardSuggestions,
-        onCheckedChange = { sug -> onUpdateSettings { it.copy(softKeyboardSuggestions = sug) } },
-      )
-      SettingsHairlineDivider(startIndent = 54.dp)
+      SettingsDivider()
       SettingsToggleRow(
         title = "Unified Editor Everywhere",
-        leadingIcon = Icons.Outlined.Code,
+        description = "Use the Edge canvas editor across code, diff, and config views",
         checked = settings.useUnifiedEditorEverywhere,
-        onCheckedChange = { unified -> onUpdateSettings { it.copy(useUnifiedEditorEverywhere = unified) } },
+        horizontalPadding = 0.dp,
         modifier = Modifier.testTag("settings_toggle_unified_editor"),
+        onCheckedChange = { unified -> onUpdateSettings { it.copy(useUnifiedEditorEverywhere = unified) } },
       )
-      SettingsHairlineDivider(startIndent = 54.dp)
-      Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-      ) {
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically,
-        ) {
-          Text(
-            text = "Toolbar & Icon Labels",
-            fontSize = 13.5.sp,
-            fontWeight = FontWeight.Medium,
-            color = palette.textPrimary,
-          )
-          Text(
-            text = settings.iconLabelBehavior.shortLabel,
-            fontFamily = JetBrainsMono,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = palette.activePillFg,
-          )
-        }
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-          IconLabelBehavior.entries.forEach { behavior ->
-            SettingsChoiceChip(
-              label = behavior.shortLabel,
-              selected = settings.iconLabelBehavior == behavior,
-              onClick = { onUpdateSettings { it.copy(iconLabelBehavior = behavior) } },
-              modifier = Modifier.weight(1f).testTag("settings_editor_label_behavior_${behavior.name.lowercase()}"),
-            )
-          }
-        }
-      }
+      SettingsDivider()
+      SettingsChoiceRow(
+        title = "Toolbar & icon labels",
+        description = "How editor toolbar action labels appear",
+        selected = settings.iconLabelBehavior.name,
+        options = IconLabelBehavior.entries.map { it.name to it.shortLabel },
+        chipTestTagPrefix = "settings_editor_label_behavior",
+        onSelect = { key ->
+          onUpdateSettings { it.copy(iconLabelBehavior = IconLabelBehavior.fromKey(key)) }
+        },
+      )
     }
 
-    SettingsFoldableSection(
-      title = "Auto-Save",
-      icon = Icons.Outlined.Save,
-      summary = if (settings.autoSaveEnabled) "${settings.autoSaveIntervalSeconds}s" else "Off",
-      initiallyExpanded = false,
+    // 3. Gestures & Keyboard
+    SettingsCard(title = "Gestures & Keyboard") {
+      SettingsToggleRow(
+        title = "Pinch to zoom",
+        description = "Scale font size with two-finger pinch gesture",
+        checked = settings.pinchZoomEnabled,
+        horizontalPadding = 0.dp,
+        modifier = Modifier.testTag("settings_editor_pinch_zoom"),
+        onCheckedChange = { enabled -> onUpdateSettings { it.copy(pinchZoomEnabled = enabled) } },
+      )
+      SettingsDivider()
+      SettingsToggleRow(
+        title = "Keyboard suggestions",
+        description = "Allow soft keyboard auto-suggestions and strip words",
+        checked = settings.softKeyboardSuggestions,
+        horizontalPadding = 0.dp,
+        onCheckedChange = { sug -> onUpdateSettings { it.copy(softKeyboardSuggestions = sug) } },
+      )
+      SettingsDivider()
+      SettingsToggleRow(
+        title = "Symbol bar above keyboard",
+        description = "Show quick coding symbols row at the bottom of the editor",
+        checked = settings.showSymbolBar,
+        horizontalPadding = 0.dp,
+        modifier = Modifier.testTag("settings_editor_symbol_bar"),
+        onCheckedChange = { enabled -> onUpdateSettings { it.copy(showSymbolBar = enabled) } },
+      )
+    }
+
+    // 4. Tabs, Warnings & Auto-Save
+    SettingsCard(
+      title = "Tabs & Auto-Save",
+      modifier = Modifier.testTag("settings_unsaved_warnings_section"),
     ) {
+      SettingsChoiceRow(
+        title = "Closing a tab with unsaved changes",
+        description = "What happens when closing a modified file tab",
+        selected = settings.normalizedCloseUnsavedPolicy(),
+        options =
+          listOf(
+            EditorSettings.CLOSE_UNSAVED_ASK to "Ask",
+            EditorSettings.CLOSE_UNSAVED_SAVE to "Save",
+            EditorSettings.CLOSE_UNSAVED_DISCARD to "Don't save",
+          ),
+        chipTestTagPrefix = "settings_close_unsaved",
+        onSelect = { policy ->
+          onUpdateSettings {
+            it.copy(
+              closeUnsavedPolicy = policy,
+              warnOnCloseDirtyTab = (policy == EditorSettings.CLOSE_UNSAVED_ASK),
+            )
+          }
+        },
+      )
+      SettingsDivider()
+      SettingsToggleRow(
+        title = "Closing Modified Tab",
+        description = "Confirm before closing an unsaved editor tab",
+        checked = settings.warnOnCloseDirtyTab,
+        horizontalPadding = 0.dp,
+        modifier = Modifier.testTag("settings_warn_close_dirty_tab"),
+        onCheckedChange = { enabled ->
+          onUpdateSettings {
+            it.copy(
+              warnOnCloseDirtyTab = enabled,
+              closeUnsavedPolicy =
+                if (enabled) EditorSettings.CLOSE_UNSAVED_ASK else EditorSettings.CLOSE_UNSAVED_SAVE,
+            )
+          }
+        },
+      )
+      SettingsDivider()
+      SettingsToggleRow(
+        title = "Leaving or Switching Project",
+        description = "Warn before leaving a project with uncommitted edits",
+        checked = settings.warnOnLeaveDirtyWorkspace,
+        horizontalPadding = 0.dp,
+        modifier = Modifier.testTag("settings_warn_leave_workspace"),
+        onCheckedChange = { enabled -> onUpdateSettings { it.copy(warnOnLeaveDirtyWorkspace = enabled) } },
+      )
+      SettingsDivider()
+      SettingsToggleRow(
+        title = "Cloud / Git Overwrite",
+        description = "Warn before remote sync overwrites local modifications",
+        checked = settings.warnOnCloudOverwrite,
+        horizontalPadding = 0.dp,
+        modifier = Modifier.testTag("settings_warn_cloud_overwrite"),
+        onCheckedChange = { enabled -> onUpdateSettings { it.copy(warnOnCloudOverwrite = enabled) } },
+      )
+      SettingsDivider()
       SettingsToggleRow(
         title = "Auto-Save",
-        leadingIcon = Icons.Outlined.Save,
+        description = "Periodically save open project drafts",
         checked = settings.autoSaveEnabled,
+        horizontalPadding = 0.dp,
         onCheckedChange = { enabled -> onUpdateSettings { it.copy(autoSaveEnabled = enabled) } },
       )
 
@@ -461,93 +536,46 @@ fun SettingsEditorPane(
         enter = fadeIn(),
         exit = fadeOut(),
       ) {
-        Column {
-          SettingsHairlineDivider()
-          Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-          ) {
-            listOf(3, 5, 15, 30).forEach { seconds ->
-              SettingsChoiceChip(
-                label = "${seconds}s",
-                selected = settings.autoSaveIntervalSeconds == seconds,
-                onClick = { onUpdateSettings { it.copy(autoSaveIntervalSeconds = seconds) } },
-                monospace = true,
-                modifier = Modifier.weight(1f),
-              )
-            }
-          }
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+          SettingsDivider()
+          SettingsChoiceRow(
+            title = "Auto-save interval",
+            description = "How often drafts are flushed to disk",
+            selected = settings.autoSaveIntervalSeconds.toString(),
+            options = listOf("3" to "3s", "5" to "5s", "15" to "15s", "30" to "30s"),
+            onSelect = { sec ->
+              val v = sec.toIntOrNull() ?: 5
+              onUpdateSettings { it.copy(autoSaveIntervalSeconds = v) }
+            },
+          )
         }
       }
 
       if (onClearAutoSavedDrafts != null) {
-        SettingsHairlineDivider()
-        Row(
-          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically,
-        ) {
-          Text("Drafts", fontSize = 14.sp, color = palette.textPrimary)
-          IconRevealButton(
-            icon = Icons.Outlined.DeleteSweep,
-            revealedLabel = "Clear Drafts",
-            onClick = onClearAutoSavedDrafts,
-            height = 36.dp,
-            tag = "settings_clear_drafts_button",
-          )
-        }
+        SettingsDivider()
+        SettingsActionRow(
+          title = "Drafts",
+          description = "Clear locally cached auto-saved recovery buffers",
+          buttonLabel = "Clear Drafts",
+          destructive = true,
+          buttonTag = "settings_clear_drafts_button",
+          onClick = onClearAutoSavedDrafts,
+        )
       }
     }
 
-    val enabledWarningFlags =
-      listOf(
-        settings.warnOnCloseDirtyTab,
-        settings.warnOnLeaveDirtyWorkspace,
-        settings.warnOnCloudOverwrite,
-      ).count { it }
-    SettingsFoldableSection(
-      title = "Unsaved File Warnings",
-      icon = Icons.Outlined.WarningAmber,
-      summary = "$enabledWarningFlags/3",
-      initiallyExpanded = false,
-      modifier = Modifier.testTag("settings_unsaved_warnings_section"),
-    ) {
-      SettingsToggleRow(
-        title = "Closing Modified Tab",
-        leadingIcon = Icons.Outlined.Close,
-        checked = settings.warnOnCloseDirtyTab,
-        onCheckedChange = { enabled -> onUpdateSettings { it.copy(warnOnCloseDirtyTab = enabled) } },
-        modifier = Modifier.testTag("settings_warn_close_dirty_tab"),
-      )
-      SettingsHairlineDivider(startIndent = 54.dp)
-      SettingsToggleRow(
-        title = "Leaving or Switching Project",
-        leadingIcon = Icons.Outlined.SwapHoriz,
-        checked = settings.warnOnLeaveDirtyWorkspace,
-        onCheckedChange = { enabled -> onUpdateSettings { it.copy(warnOnLeaveDirtyWorkspace = enabled) } },
-        modifier = Modifier.testTag("settings_warn_leave_workspace"),
-      )
-      SettingsHairlineDivider(startIndent = 54.dp)
-      SettingsToggleRow(
-        title = "Cloud / Git Overwrite",
-        leadingIcon = Icons.Outlined.CloudSync,
-        checked = settings.warnOnCloudOverwrite,
-        onCheckedChange = { enabled -> onUpdateSettings { it.copy(warnOnCloudOverwrite = enabled) } },
-        modifier = Modifier.testTag("settings_warn_cloud_overwrite"),
-      )
-    }
-
+    // 5. Selection & Drag
     val selConfig = settings.selectionDragConfig.normalized()
     SettingsFoldableSection(
       title = "Selection & Drag",
       icon = Icons.Outlined.TouchApp,
       summary = "${selConfig.holdMode.shortLabel} · ${selConfig.enabledOverlayCount}/7",
       initiallyExpanded = false,
-      contentPadding = 14.dp,
+      contentPadding = 16.dp,
       modifier = Modifier.testTag("settings_selection_drag_section"),
     ) {
       val previewCode = "const url = \"https://edge.dev/v1\";"
-      val previewAnchorOffset = 22 // inside https://edge.dev/v1
+      val previewAnchorOffset = 22
       val previewLadder =
         remember(selConfig.initialDepth, selConfig.holdMode) {
           SmartTextSelectionEngine.resolveAt(
@@ -596,12 +624,12 @@ fun SettingsEditorPane(
         }
       }
 
-      Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // Interactive Live Preview Card
+      Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        // Interactive Live Preview Card (uses code editor palette for authentic preview)
         Surface(
           color = palette.editorBg,
-          shape = RoundedCornerShape(if (isV2) 16.dp else 10.dp),
-          border = if (isV2) null else BorderStroke(0.75.dp, palette.border.copy(alpha = 0.6f)),
+          shape = RoundedCornerShape(if (isV2) Ca.radius.lg else Ca.radius.control),
+          border = if (isV2) null else BorderStroke(0.75.dp, scheme.outlineVariant.copy(alpha = 0.65f)),
           modifier = Modifier.fillMaxWidth().testTag("settings_selection_drag_preview"),
         ) {
           Column(
@@ -641,7 +669,6 @@ fun SettingsEditorPane(
               }
             }
 
-            // Simulated minimal opaque icon-first Selection Toolbar reacting to switches
             val previewBehavior = settings.iconLabelBehavior
             Surface(
               color = palette.chromeSurface,
@@ -797,55 +824,60 @@ fun SettingsEditorPane(
           }
         }
 
-        // Hold Mode
+        // Hold Behavior
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          Text("Hold Behavior", fontSize = 13.5.sp, fontWeight = FontWeight.Medium, color = palette.textPrimary)
-          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+          Text("Hold Behavior", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, color = scheme.onSurface)
+          Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             SmartSelectionHoldMode.entries.forEach { mode ->
-              val selected = selConfig.holdMode == mode
-              SettingsChoiceChip(
+              SettingsPillChip(
                 label = mode.shortLabel,
-                selected = selected,
+                selected = selConfig.holdMode == mode,
+                tag = "sel_hold_mode_${mode.name}",
                 onClick = { updateSelectionConfig { it.copy(holdMode = mode) } },
-                modifier = Modifier.weight(1f).testTag("sel_hold_mode_${mode.name}"),
               )
             }
           }
         }
 
-        // Initial Depth
+        SettingsDivider()
+
+        // Initial Scope Depth
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          Text("Initial Scope Depth", fontSize = 13.5.sp, fontWeight = FontWeight.Medium, color = palette.textPrimary)
-          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+          Text("Initial Scope Depth", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, color = scheme.onSurface)
+          Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf(
               SmartSelectionInitialDepth.COMPACT to "Compact",
               SmartSelectionInitialDepth.SMART_AUTO to "Smart Auto",
               SmartSelectionInitialDepth.BROAD to "Broad",
             ).forEach { (depth, label) ->
-              SettingsChoiceChip(
+              SettingsPillChip(
                 label = label,
                 selected = selConfig.initialDepth == depth,
+                tag = "sel_depth_${depth.name}",
                 onClick = { updateSelectionConfig { it.copy(initialDepth = depth) } },
-                modifier = Modifier.weight(1f).testTag("sel_depth_${depth.name}"),
               )
             }
           }
         }
 
+        SettingsDivider()
+
         // Default Editor Drag Policy
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          Text("Default Editor Drag Mode", fontSize = 13.5.sp, fontWeight = FontWeight.Medium, color = palette.textPrimary)
-          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+          Text("Default Editor Drag Mode", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, color = scheme.onSurface)
+          Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             DefaultEditorDragPolicy.entries.forEach { policy ->
-              SettingsChoiceChip(
+              SettingsPillChip(
                 label = policy.shortLabel,
                 selected = selConfig.defaultEditorDragMode == policy,
+                tag = "sel_drag_policy_${policy.name}",
                 onClick = { updateSelectionConfig { it.copy(defaultEditorDragMode = policy) } },
-                modifier = Modifier.weight(1f).testTag("sel_drag_policy_${policy.name}"),
               )
             }
           }
         }
+
+        SettingsDivider()
 
         // Hold Trigger Delay
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -854,50 +886,54 @@ fun SettingsEditorPane(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
           ) {
-            Text("Hold Trigger Delay", fontSize = 13.5.sp, fontWeight = FontWeight.Medium, color = palette.textPrimary)
-            Text(
-              text = "${selConfig.holdDelayMs}ms",
-              fontFamily = JetBrainsMono,
-              fontSize = 11.sp,
-              fontWeight = FontWeight.SemiBold,
-              color = palette.activePillFg,
-            )
+            Text("Hold Trigger Delay", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, color = scheme.onSurface)
+            Box(
+              modifier =
+                Modifier
+                  .background(scheme.primaryContainer, RoundedCornerShape(Ca.radius.pill))
+                  .padding(horizontal = 10.dp, vertical = 4.dp),
+            ) {
+              Text(
+                text = "${selConfig.holdDelayMs} ms",
+                color = scheme.primary,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+              )
+            }
           }
-          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf(240, 320, 450).forEach { ms ->
-              SettingsChoiceChip(
+              SettingsPillChip(
                 label = "${ms}ms",
                 selected = selConfig.holdDelayMs == ms,
+                tag = "sel_hold_delay_$ms",
                 onClick = { updateSelectionConfig { it.copy(holdDelayMs = ms) } },
-                monospace = true,
-                modifier = Modifier.weight(1f).testTag("sel_hold_delay_$ms"),
               )
             }
           }
         }
 
-        SettingsHairlineDivider()
+        SettingsDivider()
 
-        // Drag Behavior Switches
         SettingsToggleRow(
           title = "Immediate Slide-to-Drag",
           leadingIcon = Icons.Outlined.Swipe,
           checked = selConfig.immediateSlideToDrag,
           onCheckedChange = { enabled -> updateSelectionConfig { it.copy(immediateSlideToDrag = enabled) } },
-          horizontalPadding = 2.dp,
+          horizontalPadding = 0.dp,
           modifier = Modifier.testTag("sel_toggle_immediate_slide"),
         )
-        SettingsHairlineDivider()
+        SettingsDivider()
         SettingsToggleRow(
           title = "Cross-App Global Drag",
           leadingIcon = Icons.Outlined.OpenWith,
           checked = selConfig.allowCrossAppDrag,
           onCheckedChange = { enabled -> updateSelectionConfig { it.copy(allowCrossAppDrag = enabled) } },
-          horizontalPadding = 2.dp,
+          horizontalPadding = 0.dp,
           modifier = Modifier.testTag("sel_toggle_cross_app"),
         )
 
-        SettingsHairlineDivider()
+        SettingsDivider()
 
         Text(
           text = "HOLD OVERLAY ELEMENTS (${selConfig.enabledOverlayCount}/7)",
@@ -905,7 +941,7 @@ fun SettingsEditorPane(
           fontSize = 9.5.sp,
           fontWeight = FontWeight.Bold,
           letterSpacing = 0.7.sp,
-          color = palette.textMuted,
+          color = scheme.outline,
         )
 
         SettingsToggleRow(
@@ -913,66 +949,66 @@ fun SettingsEditorPane(
           leadingIcon = Icons.Outlined.AutoAwesome,
           checked = selConfig.showScopeBadge,
           onCheckedChange = { v -> updateSelectionConfig { it.copy(showScopeBadge = v) } },
-          horizontalPadding = 2.dp,
+          horizontalPadding = 0.dp,
           modifier = Modifier.testTag("sel_toggle_scope_badge"),
         )
-        SettingsHairlineDivider()
+        SettingsDivider()
         SettingsToggleRow(
           title = "Expand / Shrink Buttons",
           leadingIcon = Icons.Outlined.Tune,
           checked = selConfig.showExpandShrink,
           onCheckedChange = { v -> updateSelectionConfig { it.copy(showExpandShrink = v) } },
-          horizontalPadding = 2.dp,
+          horizontalPadding = 0.dp,
           modifier = Modifier.testTag("sel_toggle_expand_shrink"),
         )
-        SettingsHairlineDivider()
+        SettingsDivider()
         SettingsToggleRow(
           title = "Drag Grip",
           leadingIcon = Icons.Outlined.DragIndicator,
           checked = selConfig.showDragGrip,
           onCheckedChange = { v -> updateSelectionConfig { it.copy(showDragGrip = v) } },
-          horizontalPadding = 2.dp,
+          horizontalPadding = 0.dp,
           modifier = Modifier.testTag("sel_toggle_drag_grip"),
         )
-        SettingsHairlineDivider()
+        SettingsDivider()
         SettingsToggleRow(
           title = "Move / Copy Switch",
           leadingIcon = Icons.Outlined.ContentCopy,
           checked = selConfig.showModeToggle,
           onCheckedChange = { v -> updateSelectionConfig { it.copy(showModeToggle = v) } },
-          horizontalPadding = 2.dp,
+          horizontalPadding = 0.dp,
           modifier = Modifier.testTag("sel_toggle_mode_switch"),
         )
-        SettingsHairlineDivider()
+        SettingsDivider()
         SettingsToggleRow(
           title = "Drop Target Loupe (1.5x)",
           leadingIcon = Icons.Outlined.ZoomIn,
           checked = selConfig.showDropTargetLoupe,
           onCheckedChange = { v -> updateSelectionConfig { it.copy(showDropTargetLoupe = v) } },
-          horizontalPadding = 2.dp,
+          horizontalPadding = 0.dp,
           modifier = Modifier.testTag("sel_toggle_drop_loupe"),
         )
-        SettingsHairlineDivider()
+        SettingsDivider()
         SettingsToggleRow(
           title = "Quick Actions (Copy, Cut, Paste, All)",
           leadingIcon = Icons.Outlined.Timer,
           checked = selConfig.showQuickActions,
           onCheckedChange = { v -> updateSelectionConfig { it.copy(showQuickActions = v) } },
-          horizontalPadding = 2.dp,
+          horizontalPadding = 0.dp,
           modifier = Modifier.testTag("sel_toggle_quick_actions"),
         )
-        SettingsHairlineDivider()
+        SettingsDivider()
         SettingsToggleRow(
           title = "Code Actions (//, Rename)",
           leadingIcon = Icons.Outlined.Code,
           checked = selConfig.showCodeActions,
           onCheckedChange = { v -> updateSelectionConfig { it.copy(showCodeActions = v) } },
-          horizontalPadding = 2.dp,
+          horizontalPadding = 0.dp,
           modifier = Modifier.testTag("sel_toggle_code_actions"),
         )
 
         if (selConfig != SelectionDragConfig.DEFAULT) {
-          SettingsHairlineDivider()
+          SettingsDivider()
           Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End,
@@ -987,6 +1023,63 @@ fun SettingsEditorPane(
             }
           }
         }
+      }
+    }
+  }
+}
+
+@Composable
+private fun PreviewCaretIndicator(
+  caretStyle: String,
+  caretColor: Color,
+  heightDp: Int,
+) {
+  Canvas(modifier = Modifier.padding(start = 1.dp).width(9.dp).height(heightDp.dp)) {
+    val w = size.width
+    val h = size.height
+    when (caretStyle) {
+      EditorSettings.CARET_BLOCK -> {
+        drawRoundRect(
+          color = caretColor.copy(alpha = 0.36f),
+          topLeft = Offset.Zero,
+          size = Size(w * 0.85f, h),
+          cornerRadius = CornerRadius(2f, 2f),
+        )
+      }
+      EditorSettings.CARET_UNDERLINE -> {
+        val barH = 2.2.dp.toPx()
+        drawRect(
+          color = caretColor,
+          topLeft = Offset(0f, h - barH),
+          size = Size(w * 0.85f, barH),
+        )
+      }
+      EditorSettings.CARET_CANDLE -> {
+        val cx = w * 0.35f
+        val flameBottom = h * 0.36f
+        val bodyW = 2.dp.toPx()
+        drawRoundRect(
+          color = Color(0xFFFFE4B5).copy(alpha = 0.85f),
+          topLeft = Offset(cx - bodyW / 2f, flameBottom + 1f),
+          size = Size(bodyW, (h - flameBottom - 1f).coerceAtLeast(2f)),
+          cornerRadius = CornerRadius(1.5f, 1.5f),
+        )
+        val flameTop = (flameBottom - 5.dp.toPx()).coerceAtLeast(0f)
+        val path =
+          Path().apply {
+            moveTo(cx, flameBottom)
+            cubicTo(cx - 3.dp.toPx(), flameBottom - 1.dp.toPx(), cx - 2.dp.toPx(), flameTop + 1.dp.toPx(), cx, flameTop)
+            cubicTo(cx + 2.dp.toPx(), flameTop + 1.dp.toPx(), cx + 3.dp.toPx(), flameBottom - 1.dp.toPx(), cx, flameBottom)
+            close()
+          }
+        drawPath(path, Color(0xFFFF8C00))
+      }
+      else -> {
+        drawRect(
+          color = caretColor,
+          topLeft = Offset.Zero,
+          size = Size(2.dp.toPx(), h),
+        )
       }
     }
   }

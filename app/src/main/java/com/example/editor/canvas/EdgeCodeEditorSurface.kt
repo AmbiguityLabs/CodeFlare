@@ -24,6 +24,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,6 +64,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
@@ -299,6 +301,14 @@ fun EdgeCodeEditorSurface(
 
   val selectionConfig = editorSettings.selectionDragConfig.normalized()
   val latestSelectionConfig by rememberUpdatedState(selectionConfig)
+  val latestPinchZoomEnabled by rememberUpdatedState(editorSettings.pinchZoomEnabled)
+  val activeCaretStyle = editorSettings.normalizedCaretStyle()
+  val resolvedCodeFont =
+    if (editorSettings.normalizedCodeFont() == EditorSettings.CODE_FONT_MONOSPACE) {
+      FontFamily.Monospace
+    } else {
+      JetBrainsMono
+    }
 
   // Smart Selection Ladder + Drag-and-Drop state
   var selectionLadder by remember(filePath) { mutableStateOf<SelectionLadderState?>(null) }
@@ -469,18 +479,19 @@ fun EdgeCodeEditorSurface(
   // Font & geometry metrics scaled by live zoom
   val effectiveFontSp = (editorSettings.fontSizeSp * (liveZoomPercent / 100f)).coerceIn(8f, 36f)
   val codeTextStyle =
-    remember(effectiveFontSp, palette.textPrimary) {
+    remember(effectiveFontSp, palette.textPrimary, resolvedCodeFont, editorSettings.fontLigatures) {
       TextStyle(
-        fontFamily = JetBrainsMono,
+        fontFamily = resolvedCodeFont,
         fontSize = effectiveFontSp.sp,
         lineHeight = (effectiveFontSp * 1.46f).sp,
         color = palette.textPrimary,
+        fontFeatureSettings = if (editorSettings.fontLigatures) null else "liga 0, calt 0",
       )
     }
   val gutterTextStyle =
-    remember(effectiveFontSp) {
+    remember(effectiveFontSp, resolvedCodeFont) {
       TextStyle(
-        fontFamily = JetBrainsMono,
+        fontFamily = resolvedCodeFont,
         fontSize = (effectiveFontSp * 0.84f).coerceIn(8f, 22f).sp,
       )
     }
@@ -557,13 +568,32 @@ fun EdgeCodeEditorSurface(
     }
   }
 
-  // Caret blink loop (solid immediately after typing/tapping)
-  LaunchedEffect(isFocused, session.selection, session.editCount, readOnly) {
+  var flameTime by remember { mutableFloatStateOf(0f) }
+  LaunchedEffect(activeCaretStyle, isFocused, readOnly) {
+    if (activeCaretStyle != EditorSettings.CARET_CANDLE || !isFocused || readOnly) {
+      flameTime = 0f
+      return@LaunchedEffect
+    }
+    var lastNs = 0L
+    while (true) {
+      val nowNs = withFrameNanos { it }
+      if (lastNs == 0L || nowNs - lastNs >= 32_000_000L) {
+        flameTime = (nowNs % 100_000_000_000L) / 1_000_000_000f
+        lastNs = nowNs
+      }
+    }
+  }
+
+  // Caret blink loop (solid immediately after typing/tapping; candle stays steadily lit)
+  LaunchedEffect(isFocused, session.selection, session.editCount, readOnly, activeCaretStyle) {
     if (!isFocused || readOnly || !session.selection.collapsed) {
       caretAlphaAnim.snapTo(0f)
       return@LaunchedEffect
     }
     caretAlphaAnim.snapTo(1f)
+    if (activeCaretStyle == EditorSettings.CARET_CANDLE) {
+      return@LaunchedEffect
+    }
     delay(450L)
     while (true) {
       caretAlphaAnim.animateTo(0f, tween(140))
@@ -1160,8 +1190,8 @@ fun EdgeCodeEditorSurface(
                   val pressed = ev.changes.filter { it.pressed }
                   if (pressed.isEmpty()) break
 
-                  // Two-finger pinch-to-zoom
-                  if (pressed.size == 2) {
+                  // Two-finger pinch-to-zoom (honors pinchZoomEnabled)
+                  if (pressed.size == 2 && latestPinchZoomEnabled) {
                     val zoomFactor = ev.calculateZoom()
                     val span = ev.calculateCentroidSize(useCurrent = true)
                     if (!pinching && span > 20f && abs(zoomFactor - 1f) > 0.02f) {
@@ -1368,6 +1398,8 @@ fun EdgeCodeEditorSurface(
                 caretAlpha = caretAlphaAnim.value,
                 showCaret = isFocused && !readOnly,
                 showTouchHandles = showTouchHandles,
+                caretStyle = activeCaretStyle,
+                flameTime = flameTime,
                 dropHoverState = dropHoverState,
                 isSelfDragMoveActive = isSelfDragActive && userDragMode == DragTransferMode.MOVE && !readOnly,
               ),
@@ -1390,7 +1422,7 @@ fun EdgeCodeEditorSurface(
       },
     )
 
-    // Overlay 2: Fast-Scroll Outline Scrubber
+    // Overlay 2: Fast-Scroll Outline Scrubber + Bottom Horizontal Scrollbar
     EdgeFastScrollLayer(
       geometry = geometry,
       session = session,
@@ -1400,6 +1432,14 @@ fun EdgeCodeEditorSurface(
         geometry.vOffset = (frac * maxV).coerceIn(0f, maxV)
       },
     )
+
+    if (editorSettings.showHorizontalScrollbar && !editorSettings.wordWrap) {
+      EdgeHorizontalScrollbarLayer(
+        geometry = geometry,
+        session = session,
+        cache = renderCache,
+      )
+    }
 
     // Overlay 3: Live Smart Hold Scope Pill + Floating Selection Toolbar
     val selAnchorY =

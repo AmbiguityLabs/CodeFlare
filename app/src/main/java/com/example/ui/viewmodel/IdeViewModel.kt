@@ -684,11 +684,12 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
         )
       }
 
+      val shouldReopenLast = runCatching { prefsStore.editorSettingsFlow.first().reopenLastProject }.getOrDefault(true)
       val creds = prefsStore.credentialsFlow.first()
       if (creds != null) {
         _uiState.update { it.copy(credentials = creds, isBootstrapping = false) }
         appendLog("INFO", "Restored encrypted Cloudflare session (${creds.method.name})")
-        if (lastPointer != null && lastPointer.isLocalScratchpad && !hasAttemptedAutoReopen && _uiState.value.workspace == null) {
+        if (shouldReopenLast && lastPointer != null && lastPointer.isLocalScratchpad && !hasAttemptedAutoReopen && _uiState.value.workspace == null) {
           hasAttemptedAutoReopen = true
           val localDraft = restoredDrafts.firstOrNull { it.workspaceKey == lastPointer.workspaceKey }
           if (localDraft != null && ramDb.hasWorkspace(localDraft.workspaceKey)) {
@@ -700,7 +701,7 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
         bootstrapAccountAndWorkers(creds)
       } else {
         _uiState.update { it.copy(isBootstrapping = false) }
-        if (lastPointer != null && lastPointer.isLocalScratchpad && !hasAttemptedAutoReopen && _uiState.value.workspace == null) {
+        if (shouldReopenLast && lastPointer != null && lastPointer.isLocalScratchpad && !hasAttemptedAutoReopen && _uiState.value.workspace == null) {
           hasAttemptedAutoReopen = true
           val localDraft = restoredDrafts.firstOrNull { it.workspaceKey == lastPointer.workspaceKey }
           if (localDraft != null && ramDb.hasWorkspace(localDraft.workspaceKey)) {
@@ -2814,15 +2815,29 @@ export default {
     flushActiveEditorBuffer()
     val state = _uiState.value
     val targetDirty = state.workspace?.files?.firstOrNull { it.path == path }?.isDirty == true
-    if (targetDirty && state.editorSettings.warnOnCloseDirtyTab) {
-      showUnsavedWarning(
-        action = PendingUnsavedAction.CloseTab(path),
-        title = "Unsaved File: ${path.substringAfterLast('/')}",
-        message = "This file has unsaved modifications. Keep changes in workspace draft or discard edits to this file.",
-        dirtyPathsOverride = listOf(path),
-        allowKeepLocalDraft = true,
-      )
-      return
+    val policy = state.editorSettings.normalizedCloseUnsavedPolicy()
+    if (targetDirty) {
+      when {
+        policy == com.example.data.security.EditorSettings.CLOSE_UNSAVED_SAVE -> {
+          closeFileTabInternal(path)
+          return
+        }
+        policy == com.example.data.security.EditorSettings.CLOSE_UNSAVED_DISCARD -> {
+          revertSingleFileToOriginal(path)
+          closeFileTabInternal(path)
+          return
+        }
+        state.editorSettings.warnOnCloseDirtyTab -> {
+          showUnsavedWarning(
+            action = PendingUnsavedAction.CloseTab(path),
+            title = "Unsaved File: ${path.substringAfterLast('/')}",
+            message = "This file has unsaved modifications. Keep changes in workspace draft or discard edits to this file.",
+            dirtyPathsOverride = listOf(path),
+            allowKeepLocalDraft = true,
+          )
+          return
+        }
+      }
     }
     closeFileTabInternal(path)
   }
@@ -3006,11 +3021,13 @@ export default {
 
     if (textChanged) {
       val filesSnapshot = latestFilesForAnalysis
-      if (filesSnapshot != null) {
+      val editorCfg = _uiState.value.editorSettings
+      if (filesSnapshot != null && editorCfg.analyzeOnTheFly) {
+        val delayMs = editorCfg.reparseDelayMs.toLong().coerceIn(0L, 2000L)
         diagnosticsJob?.cancel()
         diagnosticsJob =
           viewModelScope.launch {
-            delay(420L)
+            if (delayMs > 0L) delay(delayMs)
             val editedFile = filesSnapshot.firstOrNull { it.path == path }
             val diags =
               withContext(Dispatchers.Default) {
@@ -3120,7 +3137,8 @@ export default {
       )
     }
     val snap = filesSnapshot
-    if (snap != null) {
+    val editorCfg = _uiState.value.editorSettings
+    if (snap != null && editorCfg.analyzeOnTheFly) {
       diagnosticsJob?.cancel()
       diagnosticsJob =
         viewModelScope.launch {

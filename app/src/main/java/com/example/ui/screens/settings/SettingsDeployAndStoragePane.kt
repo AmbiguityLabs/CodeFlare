@@ -4,32 +4,23 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.AccountTree
-import androidx.compose.material.icons.outlined.Cached
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.Language
-import androidx.compose.material.icons.outlined.Memory
-import androidx.compose.material.icons.outlined.OpenInBrowser
-import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Storage
-import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -50,11 +41,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.security.EditorSettings
 import com.example.ui.components.IconRevealButton
+import com.example.ui.theme.Ca
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
-import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.RoseError
-import com.example.ui.theme.UiStyleVersion
 import com.example.ui.viewmodel.IdeUiState
 
 @Composable
@@ -64,101 +54,80 @@ fun SettingsDeployPane(
   onNotify: (String) -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val palette = LocalIdePalette.current
+  val scheme = MaterialTheme.colorScheme
   var compatDateDraft by rememberSaveable(settings.defaultCompatibilityDate) {
     mutableStateOf(settings.defaultCompatibilityDate)
   }
 
-  val enabledDefaults =
-    listOf(
-      settings.defaultNodejsCompat,
-      settings.defaultWorkersDevEnabled,
-      settings.autoOpenPreviewOnDeploy,
-    ).count { it }
-
   Column(
     modifier = modifier.fillMaxWidth().testTag("settings_deploy_defaults_section"),
-    verticalArrangement = Arrangement.spacedBy(12.dp),
+    verticalArrangement = Arrangement.spacedBy(14.dp),
   ) {
-    SettingsFoldableSection(
-      title = "Compatibility Date",
-      icon = Icons.Outlined.Schedule,
-      summary = settings.defaultCompatibilityDate,
-      initiallyExpanded = false,
-      contentPadding = 14.dp,
-    ) {
-      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
+    SettingsCard(title = "Compatibility Date") {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        OutlinedTextField(
+          value = compatDateDraft,
+          onValueChange = { compatDateDraft = it },
+          label = { Text("Date") },
+          singleLine = true,
+          textStyle = TextStyle(fontFamily = JetBrainsMono, fontSize = 13.sp),
+          shape = RoundedCornerShape(Ca.radius.control),
+          modifier = Modifier.weight(1f).testTag("settings_compat_date_input"),
+        )
+        Button(
+          onClick = {
+            val clean = compatDateDraft.trim().ifBlank { "2024-11-01" }
+            compatDateDraft = clean
+            onUpdateSettings { it.copy(defaultCompatibilityDate = clean) }
+            onNotify("Saved: $clean")
+          },
+          enabled = compatDateDraft.trim().isNotEmpty() && compatDateDraft.trim() != settings.defaultCompatibilityDate,
+          colors = ButtonDefaults.buttonColors(containerColor = scheme.primary, contentColor = scheme.onPrimary),
+          shape = RoundedCornerShape(Ca.radius.control),
+          modifier = Modifier.height(50.dp),
         ) {
-          OutlinedTextField(
-            value = compatDateDraft,
-            onValueChange = { compatDateDraft = it },
-            label = { Text("Date") },
-            singleLine = true,
-            textStyle = TextStyle(fontFamily = JetBrainsMono, fontSize = 13.sp),
-            shape = RoundedCornerShape(10.dp),
-            modifier = Modifier.weight(1f).testTag("settings_compat_date_input"),
-          )
-          Button(
-            onClick = {
-              val clean = compatDateDraft.trim().ifBlank { "2024-11-01" }
-              compatDateDraft = clean
-              onUpdateSettings { it.copy(defaultCompatibilityDate = clean) }
-              onNotify("Saved: $clean")
-            },
-            enabled = compatDateDraft.trim().isNotEmpty() && compatDateDraft.trim() != settings.defaultCompatibilityDate,
-            colors = ButtonDefaults.buttonColors(containerColor = palette.ctaBg, contentColor = palette.ctaFg),
-            shape = RoundedCornerShape(10.dp),
-            modifier = Modifier.height(50.dp),
-          ) {
-            Text("Save", fontWeight = FontWeight.SemiBold)
-          }
-        }
-
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-          listOf("2024-11-01", "2025-05-01", "2026-01-01").forEach { preset ->
-            SettingsChoiceChip(
-              label = preset,
-              selected = settings.defaultCompatibilityDate == preset,
-              onClick = {
-                compatDateDraft = preset
-                onUpdateSettings { it.copy(defaultCompatibilityDate = preset) }
-              },
-              monospace = true,
-              modifier = Modifier.weight(1f),
-            )
-          }
+          Text("Save", fontWeight = FontWeight.SemiBold)
         }
       }
+
+      SettingsChoiceRow(
+        title = "Runtime presets",
+        description = "Select a standard Cloudflare Workers compatibility date",
+        selected = settings.defaultCompatibilityDate,
+        options = listOf("2024-11-01" to "2024-11-01", "2025-05-01" to "2025-05-01", "2026-01-01" to "2026-01-01"),
+        onSelect = { preset ->
+          compatDateDraft = preset
+          onUpdateSettings { it.copy(defaultCompatibilityDate = preset) }
+        },
+      )
     }
 
-    SettingsFoldableSection(
-      title = "Defaults",
-      icon = Icons.Outlined.Tune,
-      summary = "$enabledDefaults/3",
-      initiallyExpanded = false,
-    ) {
+    SettingsCard(title = "Worker Defaults") {
       SettingsToggleRow(
         title = "nodejs_compat",
-        leadingIcon = Icons.Outlined.Memory,
+        description = "Enable Node.js compatibility APIs in new Workers",
         checked = settings.defaultNodejsCompat,
+        horizontalPadding = 0.dp,
         onCheckedChange = { enabled -> onUpdateSettings { it.copy(defaultNodejsCompat = enabled) } },
       )
-      SettingsHairlineDivider(startIndent = 54.dp)
+      SettingsDivider()
       SettingsToggleRow(
         title = "workers.dev Subdomain",
-        leadingIcon = Icons.Outlined.Language,
+        description = "Expose new Workers on your workers.dev subdomain by default",
         checked = settings.defaultWorkersDevEnabled,
+        horizontalPadding = 0.dp,
         onCheckedChange = { enabled -> onUpdateSettings { it.copy(defaultWorkersDevEnabled = enabled) } },
       )
-      SettingsHairlineDivider(startIndent = 54.dp)
+      SettingsDivider()
       SettingsToggleRow(
         title = "Auto-Open Preview",
-        leadingIcon = Icons.Outlined.OpenInBrowser,
+        description = "Launch the deployed endpoint preview automatically after deployment",
         checked = settings.autoOpenPreviewOnDeploy,
+        horizontalPadding = 0.dp,
         onCheckedChange = { enabled -> onUpdateSettings { it.copy(autoOpenPreviewOnDeploy = enabled) } },
       )
     }
@@ -177,8 +146,7 @@ fun SettingsStorageAndSessionPane(
   onNotify: (String) -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val palette = LocalIdePalette.current
-  val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
+  val scheme = MaterialTheme.colorScheme
   val clipboard = LocalClipboardManager.current
   val storage = uiState.projectStorageSummary
   val creds = uiState.credentials
@@ -190,146 +158,146 @@ fun SettingsStorageAndSessionPane(
 
   Column(
     modifier = modifier.fillMaxWidth().testTag("settings_storage_section"),
-    verticalArrangement = Arrangement.spacedBy(16.dp),
+    verticalArrangement = Arrangement.spacedBy(14.dp),
   ) {
-    SettingsGroup(
-      label = "Directory",
-      trailingValue = if (storage.hasNativeStorageAccess) "NATIVE" else "SCOPED",
-      contentPadding = 14.dp,
-    ) {
-      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Surface(
-          color = palette.editorBg,
-          shape = RoundedCornerShape(if (isV2) 16.dp else 10.dp),
-          border = if (isV2) null else BorderStroke(0.75.dp, palette.border.copy(alpha = 0.55f)),
+    SettingsCard(title = "Directory") {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+      ) {
+        Text(
+          text = if (storage.hasNativeStorageAccess) "Native external directory" else "Scoped app directory",
+          style = MaterialTheme.typography.bodySmall,
+          color = scheme.onSurfaceVariant,
+        )
+        Text(
+          text = if (storage.hasNativeStorageAccess) "NATIVE" else "SCOPED",
+          fontFamily = JetBrainsMono,
+          fontSize = 10.sp,
+          fontWeight = FontWeight.SemiBold,
+          color = scheme.primary,
+        )
+      }
+
+      Surface(
+        color = scheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(Ca.radius.control),
+        border = BorderStroke(0.75.dp, scheme.outlineVariant.copy(alpha = 0.55f)),
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Row(
+          modifier = Modifier.padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          Text(
+            text = resolvedPath,
+            fontFamily = JetBrainsMono,
+            fontSize = 11.sp,
+            color = scheme.primary,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+          )
+          IconButton(
+            onClick = {
+              clipboard.setText(AnnotatedString(resolvedPath))
+              onNotify("Copied path")
+            },
+            modifier = Modifier.size(34.dp),
+          ) {
+            Icon(
+              imageVector = Icons.Outlined.ContentCopy,
+              contentDescription = "Copy folder path",
+              tint = scheme.onSurfaceVariant,
+              modifier = Modifier.size(16.dp),
+            )
+          }
+        }
+      }
+
+      if (!storage.hasNativeStorageAccess && onRequestStorageAccess != null) {
+        Row(
           modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
         ) {
-          Row(
-            modifier = Modifier.padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-          ) {
-            Text(
-              text = resolvedPath,
-              fontFamily = JetBrainsMono,
-              fontSize = 11.sp,
-              color = palette.activePillFg,
-              maxLines = 2,
-              overflow = TextOverflow.Ellipsis,
-              modifier = Modifier.weight(1f),
-            )
-            IconButton(
-              onClick = {
-                clipboard.setText(AnnotatedString(resolvedPath))
-                onNotify("Copied path")
-              },
-              modifier = Modifier.size(34.dp),
-            ) {
-              Icon(
-                imageVector = Icons.Outlined.ContentCopy,
-                contentDescription = "Copy folder path",
-                tint = palette.textSecondary,
-                modifier = Modifier.size(16.dp),
-              )
-            }
-          }
+          Text("Folder Access", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurface)
+          IconRevealButton(
+            icon = Icons.Outlined.Folder,
+            revealedLabel = "Grant Folder Access",
+            accentContainer = true,
+            onClick = onRequestStorageAccess,
+            height = 38.dp,
+            tag = "settings_grant_storage_button",
+          )
         }
+      }
 
-        if (!storage.hasNativeStorageAccess && onRequestStorageAccess != null) {
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-          ) {
-            Text("Folder Access", fontSize = 14.sp, color = palette.textPrimary)
-            IconRevealButton(
-              icon = Icons.Outlined.Folder,
-              revealedLabel = "Grant Folder Access",
-              accentContainer = true,
-              onClick = onRequestStorageAccess,
-              height = 38.dp,
-              tag = "settings_grant_storage_button",
-            )
-          }
-        }
-
-        SettingsFoldableSection(
-          title = "Storage Stats",
-          icon = Icons.Outlined.Storage,
-          summary = "${storage.totalDiskKb} KB",
-          initiallyExpanded = false,
-          contentPadding = 10.dp,
-        ) {
-          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SettingsMetricTile(label = "Projects", value = storage.projectCount.toString(), modifier = Modifier.weight(1f))
-            SettingsMetricTile(label = "Imports", value = storage.importedFilesCount.toString(), modifier = Modifier.weight(1f))
-            SettingsMetricTile(label = "Exports", value = storage.exportedFilesCount.toString(), modifier = Modifier.weight(1f))
-            SettingsMetricTile(label = "Disk", value = "${storage.totalDiskKb} KB", modifier = Modifier.weight(1f))
-          }
+      SettingsFoldableSection(
+        title = "Storage Stats",
+        icon = Icons.Outlined.Storage,
+        summary = "${storage.totalDiskKb} KB",
+        initiallyExpanded = false,
+        contentPadding = 12.dp,
+      ) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          SettingsMetricTile(label = "Projects", value = storage.projectCount.toString(), modifier = Modifier.weight(1f))
+          SettingsMetricTile(label = "Imports", value = storage.importedFilesCount.toString(), modifier = Modifier.weight(1f))
+          SettingsMetricTile(label = "Exports", value = storage.exportedFilesCount.toString(), modifier = Modifier.weight(1f))
+          SettingsMetricTile(label = "Disk", value = "${storage.totalDiskKb} KB", modifier = Modifier.weight(1f))
         }
       }
     }
 
-    val cacheSummary =
-      if (settings.apiCacheTtlHours <= 0) "Manual" else "${settings.apiCacheTtlHours}h"
-    SettingsFoldableSection(
+    SettingsCard(
       title = "API Sync & Cache",
-      icon = Icons.Outlined.Cached,
-      summary = cacheSummary,
-      initiallyExpanded = false,
-      contentPadding = 14.dp,
       modifier = Modifier.testTag("settings_api_cache_section"),
     ) {
-      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(
-          text = "Auto-Refresh Interval",
-          fontSize = 13.5.sp,
-          fontWeight = FontWeight.Medium,
-          color = palette.textPrimary,
-        )
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-          listOf(1 to "1h", 2 to "2h", 4 to "4h").forEach { (hours, label) ->
-            SettingsChoiceChip(
-              label = label,
-              selected = settings.apiCacheTtlHours == hours,
-              onClick = { onUpdateSettings { it.copy(apiCacheTtlHours = hours) } },
-              monospace = true,
-              modifier = Modifier.weight(1f).testTag("settings_api_cache_ttl_$hours"),
-            )
+      SettingsChoiceRow(
+        title = "Auto-refresh interval",
+        description = "How long API responses remain cached locally",
+        selected = settings.apiCacheTtlHours.toString(),
+        options =
+          listOf(
+            "1" to "1h",
+            "2" to "2h",
+            "4" to "4h",
+            "6" to "6h",
+            "12" to "12h",
+            "0" to "Manual",
+          ),
+        chipTestTagPrefix = "settings_api_cache_ttl",
+        onSelect = { hoursStr ->
+          val hours = hoursStr.toIntOrNull() ?: 4
+          onUpdateSettings { it.copy(apiCacheTtlHours = hours) }
+        },
+      )
+
+      if (onClearApiCache != null) {
+        SettingsDivider()
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("Cached API Data", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, color = scheme.onSurface)
+            Text("Purge cached Cloudflare dashboards & schemas", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
           }
-        }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-          listOf(6 to "6h", 12 to "12h", 0 to "Manual").forEach { (hours, label) ->
-            SettingsChoiceChip(
-              label = label,
-              selected = settings.apiCacheTtlHours == hours,
-              onClick = { onUpdateSettings { it.copy(apiCacheTtlHours = hours) } },
-              monospace = hours > 0,
-              modifier = Modifier.weight(1f).testTag("settings_api_cache_ttl_$hours"),
-            )
-          }
-        }
-        if (onClearApiCache != null) {
-          SettingsHairlineDivider()
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-          ) {
-            Text("Cached API Data", fontSize = 14.sp, color = palette.textPrimary)
-            IconRevealButton(
-              icon = Icons.Outlined.DeleteSweep,
-              revealedLabel = "Clear Cache",
-              onClick = onClearApiCache,
-              height = 36.dp,
-              tag = "settings_clear_api_cache_button",
-            )
-          }
+          IconRevealButton(
+            icon = Icons.Outlined.DeleteSweep,
+            revealedLabel = "Clear Cache",
+            onClick = onClearApiCache,
+            height = 36.dp,
+            tag = "settings_clear_api_cache_button",
+          )
         }
       }
     }
 
-    SettingsGroup(label = "Sync & Session") {
+    SettingsCard(title = "Sync & Session") {
       if (onOpenGitHubHub != null) {
         val gitHubLogin = uiState.gitHubCreds?.login
         SettingsMenuRow(
@@ -339,16 +307,16 @@ fun SettingsStorageAndSessionPane(
           statusDotColor = if (gitHubLogin != null) EmeraldLive else null,
           onClick = onOpenGitHubHub,
         )
-        SettingsHairlineDivider()
+        SettingsDivider()
       }
 
       if (creds != null) {
         Row(
-          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+          modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.SpaceBetween,
           verticalAlignment = Alignment.CenterVertically,
         ) {
-          Text("Session", fontSize = 14.5.sp, color = RoseError)
+          Text("Session", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, color = RoseError)
           IconRevealButton(
             icon = Icons.AutoMirrored.Outlined.Logout,
             revealedLabel = "Disconnect Cloudflare",
@@ -360,11 +328,11 @@ fun SettingsStorageAndSessionPane(
         }
       } else {
         Row(
-          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+          modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.SpaceBetween,
           verticalAlignment = Alignment.CenterVertically,
         ) {
-          Text("Session", fontSize = 14.5.sp, color = palette.textPrimary)
+          Text("Session", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, color = scheme.onSurface)
           IconRevealButton(
             icon = Icons.AutoMirrored.Outlined.Logout,
             revealedLabel = "Auth Setup",

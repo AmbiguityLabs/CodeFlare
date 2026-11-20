@@ -3,6 +3,7 @@ package com.example.editor.canvas
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -19,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.data.remote.DiagnosticItem
 import com.example.data.remote.DiagnosticSeverity
+import com.example.data.security.EditorSettings
 import com.example.editor.BracketMatch
 import com.example.editor.drag.DragTransferMode
 import com.example.editor.drag.EditorDropHoverState
@@ -56,6 +58,8 @@ data class EdgeEditorDrawParams(
   val caretAlpha: Float,
   val showCaret: Boolean,
   val showTouchHandles: Boolean,
+  val caretStyle: String = EditorSettings.CARET_LINE,
+  val flameTime: Float = 0f,
   val dropHoverState: EditorDropHoverState? = null,
   val isSelfDragMoveActive: Boolean = false,
 )
@@ -350,15 +354,47 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
       }
     }
 
-    // 1d. Animated gliding caret
+    // 1d. Animated gliding caret (supports Line, Block, Underline, and flickering Candle styles)
     if (p.showCaret && sel.collapsed && p.caretAlpha > 0.01f && p.dropHoverState == null) {
-      val caretW = 2.dp.toPx()
-      drawRoundRect(
-        color = palette.ctaBg.copy(alpha = p.caretAlpha),
-        topLeft = Offset(p.caretAnimatedX - caretW * 0.5f, p.caretAnimatedY + 2f),
-        size = Size(caretW, (lineH - 4f).coerceAtLeast(8f)),
-        cornerRadius = CornerRadius(1.dp.toPx()),
-      )
+      val caretColor = palette.ctaBg.copy(alpha = p.caretAlpha)
+      val cellW = geom.charWidthPx.coerceAtLeast(lineH * 0.52f)
+      when (p.caretStyle.lowercase()) {
+        EditorSettings.CARET_BLOCK -> {
+          drawRoundRect(
+            color = palette.ctaBg.copy(alpha = p.caretAlpha * 0.42f),
+            topLeft = Offset(p.caretAnimatedX, p.caretAnimatedY + 1f),
+            size = Size(cellW, (lineH - 2f).coerceAtLeast(8f)),
+            cornerRadius = CornerRadius(2.dp.toPx()),
+          )
+        }
+        EditorSettings.CARET_UNDERLINE -> {
+          val h = 2.2.dp.toPx()
+          drawRoundRect(
+            color = caretColor,
+            topLeft = Offset(p.caretAnimatedX, p.caretAnimatedY + lineH - h - 1f),
+            size = Size(cellW, h),
+            cornerRadius = CornerRadius(1.dp.toPx()),
+          )
+        }
+        EditorSettings.CARET_CANDLE -> {
+          drawCandleCaret(
+            cx = p.caretAnimatedX,
+            cy = p.caretAnimatedY,
+            lineHeight = lineH,
+            color = caretColor,
+            t = p.flameTime,
+          )
+        }
+        else -> {
+          val caretW = 2.dp.toPx()
+          drawRoundRect(
+            color = caretColor,
+            topLeft = Offset(p.caretAnimatedX - caretW * 0.5f, p.caretAnimatedY + 2f),
+            size = Size(caretW, (lineH - 4f).coerceAtLeast(8f)),
+            cornerRadius = CornerRadius(1.dp.toPx()),
+          )
+        }
+      }
     }
 
     // 1e. Live Drag-and-Drop Caret Preview (high-contrast vertical bar + diamond cap + soft halo)
@@ -637,6 +673,46 @@ private fun DrawScope.drawSelectionTeardrop(
     }
   drawPath(stem, color = color)
 }
+
+private fun DrawScope.drawCandleCaret(
+  cx: Float,
+  cy: Float,
+  lineHeight: Float,
+  color: Color,
+  t: Float,
+) {
+  val stickW = 3.dp.toPx()
+  val stickTop = cy + lineHeight * 0.28f
+  drawRoundRect(
+    color = color,
+    topLeft = Offset(cx - stickW / 2f, stickTop),
+    size = Size(stickW, (cy + lineHeight - stickTop - 1f).coerceAtLeast(4f)),
+    cornerRadius = CornerRadius(1.dp.toPx()),
+  )
+  val wickH = 1.5.dp.toPx()
+  drawRect(Color(0xFF3A2A1E), Offset(cx - 0.5.dp.toPx(), stickTop - wickH), Size(1.dp.toPx(), wickH))
+  val flicker = 1f + 0.09f * kotlin.math.sin(t * 11f) + 0.05f * kotlin.math.sin(t * 17.3f + 1f)
+  val lean = 0.7.dp.toPx() * kotlin.math.sin(t * 7.1f)
+  val base = stickTop - wickH * 0.4f
+  val h = (lineHeight * 0.46f * flicker).coerceAtLeast(6f)
+  val w = 4.0.dp.toPx()
+  val glowCenter = Offset(cx + lean * 0.5f, base - h * 0.45f)
+  drawCircle(
+    brush = Brush.radialGradient(listOf(Color(0xFFFF9A2E).copy(alpha = 0.28f), Color.Transparent), glowCenter, h * 0.95f),
+    radius = h * 0.95f,
+    center = glowCenter,
+  )
+  drawPath(candleFlamePath(cx, base, w, h, lean), Color(0xFFFF8A1F))
+  drawPath(candleFlamePath(cx, base, w * 0.5f, h * 0.6f, lean * 0.6f), Color(0xFFFFE27A))
+}
+
+private fun candleFlamePath(cx: Float, base: Float, w: Float, h: Float, lean: Float): Path =
+  Path().apply {
+    moveTo(cx, base)
+    cubicTo(cx - w, base, cx - w * 0.7f, base - h * 0.55f, cx + lean, base - h)
+    cubicTo(cx + w * 0.7f, base - h * 0.55f, cx + w, base, cx, base)
+    close()
+  }
 
 private fun leadingIndentCols(line: String, tabSize: Int): Int {
   var cols = 0
