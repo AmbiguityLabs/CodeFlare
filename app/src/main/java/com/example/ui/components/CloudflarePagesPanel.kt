@@ -374,7 +374,7 @@ private fun PagesProjectDetailView(
           val hasWorkerBundle = stagedAssets.any { it.normalizedPath == "/_worker.js" }
 
           Surface(
-            color = palette.editorBg,
+            color = palette.chromeBg,
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth(),
           ) {
@@ -496,7 +496,7 @@ private fun PagesProjectDetailView(
               Surface(
                 onClick = { if (!uiState.isPagesDirectUploading) directTargetEnv = mode },
                 shape = RoundedCornerShape(8.dp),
-                color = if (active) palette.activePillBg else palette.editorBg,
+                color = if (active) palette.activePillBg else palette.chromeBg,
                 modifier = Modifier.weight(1f),
               ) {
                 Text(
@@ -574,7 +574,7 @@ private fun PagesProjectDetailView(
         uiState.pagesLastDirectDeployment?.let { lastDep ->
           val liveUrl = lastDep.url ?: "https://${project.subdomain ?: "${project.name}.pages.dev"}"
           Surface(
-            color = palette.editorBg,
+            color = palette.chromeBg,
             shape = RoundedCornerShape(10.dp),
             modifier = Modifier.fillMaxWidth(),
           ) {
@@ -667,7 +667,7 @@ private fun PagesProjectDetailView(
     }
 
     if (uiState.pagesBuildLogs.isNotEmpty()) {
-      Surface(color = palette.editorBg, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) {
+      Surface(color = palette.chromeBg, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) {
         SelectionContainer {
           Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text("BUILD LOGS", style = MaterialTheme.typography.labelSmall, color = palette.activePillFg)
@@ -819,7 +819,7 @@ private fun PagesProjectDetailView(
                   }
               },
               shape = RoundedCornerShape(8.dp),
-              color = if (active) palette.activePillBg else palette.editorBg,
+              color = if (active) palette.activePillBg else palette.chromeBg,
               modifier = Modifier.weight(1f),
             ) {
               Text(
@@ -994,7 +994,7 @@ private fun PagesBindingRow(
   onDelete: () -> Unit,
 ) {
   val palette = LocalIdePalette.current
-  Surface(color = palette.editorBg, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
+  Surface(color = palette.chromeBg, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
     Row(modifier = Modifier.padding(start = 8.dp, end = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
       Surface(color = palette.activePillBg, shape = RoundedCornerShape(4.dp)) {
         Text(kind, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = palette.activePillFg, modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp))

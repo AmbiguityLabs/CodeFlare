@@ -53,6 +53,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,16 +62,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.example.data.remote.CfAccount
 import com.example.data.security.AuthMethod
 import com.example.data.security.EditorSettings
 import com.example.ui.components.AppearanceHubContent
 import com.example.ui.components.EditorAppearanceStudioContent
+import com.example.ui.components.FloatingPreviewController
+import com.example.ui.components.FloatingSettingsPreviewOverlay
 import com.example.ui.components.HomeAppearanceStudioContent
 import com.example.ui.components.IconRevealButton
+import com.example.ui.components.LocalFloatingPreviewController
 import com.example.ui.screens.settings.AppearanceSubPage
 import com.example.ui.screens.settings.SettingsAnalysisPane
 import com.example.ui.screens.settings.SettingsCategory
@@ -207,113 +213,130 @@ fun SettingsScreen(
     val detailPane: @Composable (SettingsCategory, AppearanceSubPage?, PaddingValues) -> Unit =
       { category, subPage, innerPadding ->
         val paneScroll = rememberScrollState()
-        Box(
-          modifier = Modifier.fillMaxSize().padding(innerPadding),
-          contentAlignment = Alignment.TopCenter,
-        ) {
-          Column(
+        val floatingPreviewController = remember(category, subPage) { FloatingPreviewController() }
+        var detailContainerSize by remember { mutableStateOf(IntSize.Zero) }
+        CompositionLocalProvider(LocalFloatingPreviewController provides floatingPreviewController) {
+          Box(
             modifier =
               Modifier
-                .widthIn(max = 660.dp)
-                .fillMaxWidth()
-                .verticalScroll(paneScroll)
-                .padding(horizontal = 16.dp, vertical = 14.dp)
-                .navigationBarsPadding(),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .fillMaxSize()
+                .padding(innerPadding)
+                .onSizeChanged { detailContainerSize = it },
+            contentAlignment = Alignment.TopCenter,
           ) {
-            when (category) {
-              SettingsCategory.APPEARANCE -> {
-                when (subPage) {
-                  null -> {
-                    Box(modifier = Modifier.fillMaxWidth().testTag("settings_appearance_section")) {
-                      AppearanceHubContent(
-                        settings = settings,
-                        onUpdateSettings = onUpdateSettings,
-                        onOpenSubPage = { nextSub -> appearanceSubPage = nextSub },
-                      )
+            Column(
+              modifier =
+                Modifier
+                  .widthIn(max = 660.dp)
+                  .fillMaxWidth()
+                  .verticalScroll(paneScroll)
+                  .padding(horizontal = 16.dp, vertical = 14.dp)
+                  .navigationBarsPadding(),
+              verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+              when (category) {
+                SettingsCategory.APPEARANCE -> {
+                  when (subPage) {
+                    null -> {
+                      Box(modifier = Modifier.fillMaxWidth().testTag("settings_appearance_section")) {
+                        AppearanceHubContent(
+                          settings = settings,
+                          onUpdateSettings = onUpdateSettings,
+                          onOpenSubPage = { nextSub -> appearanceSubPage = nextSub },
+                        )
+                      }
                     }
-                  }
 
-                  AppearanceSubPage.HOME_PAGE -> {
-                    Box(modifier = Modifier.fillMaxWidth().testTag("settings_appearance_home_section")) {
-                      HomeAppearanceStudioContent(
-                        settings = settings,
-                        onUpdateSettings = onUpdateSettings,
-                      )
+                    AppearanceSubPage.HOME_PAGE -> {
+                      Box(modifier = Modifier.fillMaxWidth().testTag("settings_appearance_home_section")) {
+                        HomeAppearanceStudioContent(
+                          settings = settings,
+                          onUpdateSettings = onUpdateSettings,
+                        )
+                      }
                     }
-                  }
 
-                  AppearanceSubPage.EDITOR -> {
-                    Box(modifier = Modifier.fillMaxWidth().testTag("settings_appearance_editor_section")) {
-                      EditorAppearanceStudioContent(
-                        settings = settings,
-                        onUpdateSettings = onUpdateSettings,
-                        onPickEditorBackgroundImage = onPickEditorBackgroundImage,
-                        onClearEditorBackgroundImage = onClearEditorBackgroundImage,
-                      )
+                    AppearanceSubPage.EDITOR -> {
+                      Box(modifier = Modifier.fillMaxWidth().testTag("settings_appearance_editor_section")) {
+                        EditorAppearanceStudioContent(
+                          settings = settings,
+                          onUpdateSettings = onUpdateSettings,
+                          onPickEditorBackgroundImage = onPickEditorBackgroundImage,
+                          onClearEditorBackgroundImage = onClearEditorBackgroundImage,
+                        )
+                      }
                     }
                   }
                 }
-              }
 
-              SettingsCategory.EDITOR -> {
-                SettingsEditorPane(
-                  settings = settings,
-                  onUpdateSettings = onUpdateSettings,
-                  onClearAutoSavedDrafts = onClearAutoSavedDrafts,
-                )
-              }
+                SettingsCategory.EDITOR -> {
+                  SettingsEditorPane(
+                    settings = settings,
+                    onUpdateSettings = onUpdateSettings,
+                    onClearAutoSavedDrafts = onClearAutoSavedDrafts,
+                  )
+                }
 
-              SettingsCategory.COMPLETION -> {
-                SettingsCompletionPane(
-                  settings = settings,
-                  onUpdateSettings = onUpdateSettings,
-                )
-              }
+                SettingsCategory.COMPLETION -> {
+                  SettingsCompletionPane(
+                    settings = settings,
+                    onUpdateSettings = onUpdateSettings,
+                  )
+                }
 
-              SettingsCategory.ANALYSIS -> {
-                SettingsAnalysisPane(
-                  settings = settings,
-                  onUpdateSettings = onUpdateSettings,
-                )
-              }
+                SettingsCategory.ANALYSIS -> {
+                  SettingsAnalysisPane(
+                    settings = settings,
+                    onUpdateSettings = onUpdateSettings,
+                  )
+                }
 
-              SettingsCategory.CLOUDFLARE -> {
-                SettingsCloudflarePane(
-                  uiState = uiState,
-                  onSelectAccount = onSelectAccount,
-                  onVerifyCredentials = onVerifyCredentials,
-                  onUpdateApiToken = onUpdateApiToken,
-                  onUpdateGlobalKey = onUpdateGlobalKey,
-                  onStartOAuth = onStartOAuth,
-                  onCancelOAuth = onCancelOAuth,
-                  onClearCredentialFeedback = onClearCredentialFeedback,
-                  onNotify = onNotify,
-                )
-              }
+                SettingsCategory.CLOUDFLARE -> {
+                  SettingsCloudflarePane(
+                    uiState = uiState,
+                    onSelectAccount = onSelectAccount,
+                    onVerifyCredentials = onVerifyCredentials,
+                    onUpdateApiToken = onUpdateApiToken,
+                    onUpdateGlobalKey = onUpdateGlobalKey,
+                    onStartOAuth = onStartOAuth,
+                    onCancelOAuth = onCancelOAuth,
+                    onClearCredentialFeedback = onClearCredentialFeedback,
+                    onNotify = onNotify,
+                  )
+                }
 
-              SettingsCategory.DEPLOY -> {
-                SettingsDeployPane(
-                  settings = settings,
-                  onUpdateSettings = onUpdateSettings,
-                  onNotify = onNotify,
-                )
-              }
+                SettingsCategory.DEPLOY -> {
+                  SettingsDeployPane(
+                    settings = settings,
+                    onUpdateSettings = onUpdateSettings,
+                    onNotify = onNotify,
+                  )
+                }
 
-              SettingsCategory.STORAGE -> {
-                SettingsStorageAndSessionPane(
-                  uiState = uiState,
-                  onUpdateSettings = onUpdateSettings,
-                  onClearApiCache = onClearApiCache,
-                  onOpenGitHubHub = onOpenGitHubHub,
-                  onRequestStorageAccess = onRequestStorageAccess,
-                  onRequestDisconnect = { confirmDisconnect = true },
-                  onDirectAuthSetup = onDisconnectCloudflare,
-                  onNotify = onNotify,
-                )
+                SettingsCategory.STORAGE -> {
+                  SettingsStorageAndSessionPane(
+                    uiState = uiState,
+                    onUpdateSettings = onUpdateSettings,
+                    onClearApiCache = onClearApiCache,
+                    onOpenGitHubHub = onOpenGitHubHub,
+                    onRequestStorageAccess = onRequestStorageAccess,
+                    onRequestDisconnect = { confirmDisconnect = true },
+                    onDirectAuthSetup = onDisconnectCloudflare,
+                    onNotify = onNotify,
+                  )
+                }
               }
+              Spacer(
+                Modifier.height(
+                  if (floatingPreviewController.hasAnyFloatingPreview()) 230.dp else 16.dp,
+                ),
+              )
             }
-            Spacer(Modifier.height(16.dp))
+
+            FloatingSettingsPreviewOverlay(
+              controller = floatingPreviewController,
+              containerSizePx = detailContainerSize,
+            )
           }
         }
       }

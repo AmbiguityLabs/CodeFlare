@@ -653,6 +653,106 @@ class EdgeEditorSession(
     applyEdit(lineEnd, lineEnd, insertion, TextRange(newCaret), EditKind.ATOMIC, resyncIme = true)
   }
 
+  fun selectCurrentLine() {
+    val startLine = doc.lineForOffset(selection.min)
+    val endLine =
+      doc.lineForOffset(
+        if (selection.collapsed) selection.min else (selection.max - 1).coerceAtLeast(selection.min),
+      )
+    val start = doc.lineStart(startLine)
+    val end = if (endLine + 1 < doc.lineCount) doc.lineStart(endLine + 1) else doc.lineEnd(endLine)
+    setSelection(TextRange(start, end))
+  }
+
+  fun deleteLine(): Boolean {
+    if (readOnly || (doc.length == 0 && doc.lineCount <= 1)) return false
+    val startLine = doc.lineForOffset(selection.min)
+    val endLine =
+      doc.lineForOffset(
+        if (selection.collapsed) selection.min else (selection.max - 1).coerceAtLeast(selection.min),
+      )
+    return when {
+      endLine + 1 < doc.lineCount -> {
+        val delStart = doc.lineStart(startLine)
+        val delEnd = doc.lineStart(endLine + 1)
+        applyEdit(delStart, delEnd, "", TextRange(delStart), EditKind.ATOMIC, resyncIme = true)
+        true
+      }
+      startLine > 0 -> {
+        val delStart = (doc.lineStart(startLine) - 1).coerceAtLeast(0)
+        val delEnd = doc.lineEnd(endLine)
+        val newCaret = doc.lineStart(startLine - 1)
+        applyEdit(delStart, delEnd, "", TextRange(newCaret), EditKind.ATOMIC, resyncIme = true)
+        true
+      }
+      else -> {
+        applyEdit(0, doc.length, "", TextRange(0), EditKind.ATOMIC, resyncIme = true)
+        true
+      }
+    }
+  }
+
+  fun joinLines(): Boolean {
+    if (readOnly || doc.lineCount <= 1) return false
+    val startLine = doc.lineForOffset(selection.min)
+    val rawEndLine =
+      doc.lineForOffset(
+        if (selection.collapsed) selection.min else (selection.max - 1).coerceAtLeast(selection.min),
+      )
+    val endLine =
+      if (rawEndLine > startLine) rawEndLine
+      else (startLine + 1).coerceAtMost(doc.lineCount - 1)
+    if (endLine <= startLine) return false
+
+    val blockStart = doc.lineStart(startLine)
+    val blockEnd = doc.lineEnd(endLine)
+    val sb = StringBuilder()
+    var joinCaret = blockStart
+    for (ln in startLine..endLine) {
+      val lineTxt = doc.lineText(ln)
+      if (ln == startLine) {
+        sb.append(lineTxt.trimEnd())
+        joinCaret = blockStart + sb.length
+      } else {
+        val trimmed = lineTxt.trimStart()
+        if (trimmed.isNotEmpty()) {
+          if (sb.isNotEmpty()) sb.append(' ')
+          sb.append(trimmed)
+        }
+      }
+    }
+    val nextSel =
+      if (selection.collapsed) TextRange(joinCaret.coerceIn(blockStart, blockStart + sb.length))
+      else TextRange(blockStart, blockStart + sb.length)
+    applyEdit(blockStart, blockEnd, sb.toString(), nextSel, EditKind.ATOMIC, resyncIme = true)
+    return true
+  }
+
+  fun sortSelectedLines(descending: Boolean = false): Boolean {
+    if (readOnly) return false
+    val startLine = doc.lineForOffset(selection.min)
+    val endLine =
+      doc.lineForOffset(
+        if (selection.collapsed) selection.min else (selection.max - 1).coerceAtLeast(selection.min),
+      )
+    if (endLine <= startLine) return false
+    val lines = (startLine..endLine).map { doc.lineText(it) }
+    val sorted = if (descending) lines.sortedDescending() else lines.sorted()
+    if (sorted == lines) return false
+    val blockStart = doc.lineStart(startLine)
+    val blockEnd = doc.lineEnd(endLine)
+    val replacement = sorted.joinToString("\n")
+    applyEdit(
+      blockStart,
+      blockEnd,
+      replacement,
+      TextRange(blockStart, blockStart + replacement.length),
+      EditKind.ATOMIC,
+      resyncIme = true,
+    )
+    return true
+  }
+
   fun undo(): Boolean {
     if (readOnly || undoStack.isEmpty()) return false
     val entry = undoStack.removeLast()

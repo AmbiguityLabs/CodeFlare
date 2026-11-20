@@ -21,6 +21,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Archive
@@ -58,6 +60,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -758,7 +761,7 @@ private fun ZipPlanSummarySection(
     val previewLimit = 24
     val shownFiles = plan.files.take(previewLimit)
     Surface(
-      color = palette.editorBg,
+      color = palette.chromeBg,
       shape = RoundedCornerShape(10.dp),
       modifier = Modifier.fillMaxWidth(),
     ) {
@@ -1079,7 +1082,7 @@ fun CommandPaletteDialog(
                 cmd.action()
               },
               shape = RoundedCornerShape(9.dp),
-              color = palette.editorBg,
+              color = palette.chromeBg,
               modifier = Modifier.fillMaxWidth(),
             ) {
               Row(
@@ -1480,6 +1483,132 @@ fun UnsavedChangesWarningDialog(
       }
     },
     confirmButton = {
+      TextButton(onClick = onDismiss) { Text("Cancel") }
+    },
+  )
+}
+
+@Composable
+fun GoToLineDialog(
+  fileName: String,
+  totalLines: Int,
+  currentLine: Int,
+  currentColumn: Int,
+  lineSnippetProvider: (Int) -> String,
+  onDismiss: () -> Unit,
+  onJumpTo: (line: Int, col: Int) -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  val safeTotal = totalLines.coerceAtLeast(1)
+  var query by remember(fileName, currentLine, currentColumn) {
+    mutableStateOf("$currentLine:$currentColumn")
+  }
+
+  val normalized = query.trim().removePrefix(":")
+  val parts = normalized.split(':')
+  val parsedLine = parts.getOrNull(0)?.trim()?.toIntOrNull()
+  val parsedCol = (parts.getOrNull(1)?.trim()?.toIntOrNull() ?: 1).coerceAtLeast(1)
+  val targetLine = parsedLine?.coerceIn(1, safeTotal)
+  val isOutOfRange = parsedLine != null && parsedLine !in 1..safeTotal
+  val previewSnippet = remember(targetLine, fileName) {
+    targetLine?.let { lineSnippetProvider(it).trim() }.orEmpty()
+  }
+
+  fun submitIfValid() {
+    if (targetLine != null) {
+      onJumpTo(targetLine, parsedCol)
+      onDismiss()
+    }
+  }
+
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = {
+      Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text("Go to Line / Column")
+        Text(
+          text = "$fileName · $safeTotal lines (now Ln $currentLine:$currentColumn)",
+          fontFamily = JetBrainsMono,
+          fontSize = 11.sp,
+          color = palette.textMuted,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+    },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+          value = query,
+          onValueChange = { next ->
+            if (next.length <= 24) query = next
+          },
+          label = { Text("Line or line:column (e.g. 42 or 42:8)") },
+          singleLine = true,
+          shape = RoundedCornerShape(14.dp),
+          keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+          keyboardActions = KeyboardActions(onGo = { submitIfValid() }),
+          modifier = Modifier.fillMaxWidth().testTag("goto_line_dialog_input"),
+        )
+        Surface(
+          color = palette.chromeBg,
+          shape = RoundedCornerShape(10.dp),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+          ) {
+            if (targetLine != null) {
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                Text(
+                  text = "Target Ln $targetLine:$parsedCol",
+                  fontFamily = JetBrainsMono,
+                  fontSize = 11.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = if (isOutOfRange) AmberWarn else palette.ctaBg,
+                )
+                if (isOutOfRange) {
+                  Text(
+                    text = "(clamped to 1..$safeTotal)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AmberWarn,
+                  )
+                }
+              }
+              Text(
+                text = previewSnippet.ifEmpty { "<empty line>" },
+                fontFamily = JetBrainsMono,
+                fontSize = 11.sp,
+                color = if (previewSnippet.isEmpty()) palette.textMuted else palette.textPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+              )
+            } else {
+              Text(
+                text = "Enter a line number between 1 and $safeTotal",
+                style = MaterialTheme.typography.bodySmall,
+                color = palette.textMuted,
+              )
+            }
+          }
+        }
+      }
+    },
+    confirmButton = {
+      Button(
+        onClick = { submitIfValid() },
+        enabled = targetLine != null,
+        colors = ButtonDefaults.buttonColors(containerColor = palette.ctaBg, contentColor = palette.ctaFg),
+        modifier = Modifier.testTag("goto_line_confirm_button"),
+      ) {
+        Text("Jump", fontWeight = FontWeight.SemiBold)
+      }
+    },
+    dismissButton = {
       TextButton(onClick = onDismiss) { Text("Cancel") }
     },
   )

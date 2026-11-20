@@ -17,6 +17,7 @@ import com.example.data.remote.WorkerLanguage
 import com.example.editor.EdgeCodeEditorView
 import com.example.editor.SyntaxHighlighter
 import com.example.editor.canvas.computeSelectionToolbarTopPx
+import com.example.editor.engine.EdgeEditorSession
 import com.example.ui.theme.DarkIdePalette
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -311,5 +312,38 @@ class EditorEngineTest {
         isAllSelected = false,
       )
     assertEquals(64, emptyPasteBelow)
+  }
+
+  @Test
+  fun edgeEditorSession_lineAndBlockActionsWorkAndUndoCleanly() {
+    val initial = "    zeta\n    alpha\n    beta\nlast"
+    val session = EdgeEditorSession(initial, tabSize = 2)
+
+    // 1. selectCurrentLine & outdentSelection on lines 0..2
+    session.setSelection(TextRange(initial.indexOf("zeta"), initial.indexOf("beta") + 2))
+    session.outdentSelection()
+    assertEquals("  zeta\n  alpha\n  beta\nlast", session.doc.text)
+
+    // 2. sortSelectedLines ascending on lines 0..2
+    assertTrue(session.sortSelectedLines(descending = false))
+    assertEquals("  alpha\n  beta\n  zeta\nlast", session.doc.text)
+    assertTrue(session.undo())
+    assertEquals("  zeta\n  alpha\n  beta\nlast", session.doc.text)
+
+    // 3. joinLines at line 0
+    session.setSelection(TextRange(0))
+    assertTrue(session.joinLines())
+    assertEquals("  zeta alpha\n  beta\nlast", session.doc.text)
+
+    // 4. selectCurrentLine selects whole current line
+    session.setSelection(TextRange(session.doc.text.indexOf("beta")))
+    session.selectCurrentLine()
+    assertEquals("  beta\n", session.selectedText())
+
+    // 5. deleteLine removes current line cleanly and supports undo
+    assertTrue(session.deleteLine())
+    assertEquals("  zeta alpha\nlast", session.doc.text)
+    assertTrue(session.undo())
+    assertEquals("  zeta alpha\n  beta\nlast", session.doc.text)
   }
 }

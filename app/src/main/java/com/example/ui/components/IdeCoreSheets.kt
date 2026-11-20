@@ -524,7 +524,7 @@ private fun LocalHistoryPane(
 
       // Unified monospace diff viewport
       Surface(
-        color = palette.editorBg,
+        color = palette.chromeBg,
         shape = RoundedCornerShape(10.dp),
         border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.55f)),
         modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -537,7 +537,7 @@ private fun LocalHistoryPane(
               when (dl.kind) {
                 DiffLineKind.ADDED -> EmeraldLive.copy(alpha = 0.14f)
                 DiffLineKind.REMOVED -> RoseError.copy(alpha = 0.14f)
-                DiffLineKind.CONTEXT -> palette.editorBg
+                DiffLineKind.CONTEXT -> palette.chromeBg
               }
             val fg =
               when (dl.kind) {
@@ -727,7 +727,7 @@ private fun HairlineMonoSearchInput(
         .fillMaxWidth()
         .height(38.dp)
         .clip(RoundedCornerShape(9.dp))
-        .background(palette.editorBg)
+        .background(palette.chromeBg)
         .border(0.75.dp, palette.border.copy(alpha = 0.7f), RoundedCornerShape(9.dp))
         .padding(horizontal = 10.dp),
     verticalAlignment = Alignment.CenterVertically,

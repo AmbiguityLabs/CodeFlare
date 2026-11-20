@@ -144,7 +144,7 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
             Size(size.width - gutterW, bandH),
           )
           drawRect(
-            palette.activePillFg.copy(alpha = 0.78f),
+            palette.canvasAccent().copy(alpha = 0.78f),
             Offset(gutterW, topY + 2f),
             Size(2.dp.toPx(), (bandH - 4f).coerceAtLeast(4f)),
           )
@@ -186,12 +186,13 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
     // 1c. Per-line highlights, text, squiggles, brackets, composing underline
     val selPalette = selectionColorsFor(palette)
     val selBg = if (p.isSelfDragMoveActive) selPalette.canvasMoveFill else selPalette.canvasFill
-    val symBg = palette.activePillFg.copy(alpha = 0.14f)
-    val bracketFill = palette.activePillBg.copy(alpha = 0.9f)
-    val bracketStroke = palette.activePillFg.copy(alpha = 0.85f)
+    val canvasAccent = palette.canvasAccent()
+    val symBg = canvasAccent.copy(alpha = 0.14f)
+    val bracketFill = canvasAccent.copy(alpha = 0.16f)
+    val bracketStroke = canvasAccent.copy(alpha = 0.85f)
     val mismatchFill = RoseError.copy(alpha = 0.25f)
-    val foldBadgeBg = palette.activePillBg
-    val foldBadgeFg = palette.activePillFg
+    val foldBadgeBg = canvasAccent.copy(alpha = 0.16f)
+    val foldBadgeFg = canvasAccent
 
     for (docLine in visibleDocLines) {
       val topY = geom.lineTopViewportY(docLine, fold)
@@ -516,9 +517,10 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
 
       // Line number text (right-aligned)
       val numStr = (docLine + 1).toString()
+      val canvasAccent = palette.canvasAccent()
       val style =
         p.gutterStyle.copy(
-          color = if (isActive) palette.activePillFg else palette.textMuted.copy(alpha = 0.50f),
+          color = if (isActive) canvasAccent else palette.editorTextMuted.copy(alpha = 0.65f),
           fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
         )
       val measured = p.gutterMeasurer.measure(numStr, style = style, maxLines = 1)
@@ -552,7 +554,7 @@ fun DrawScope.drawEdgeEditor(p: EdgeEditorDrawParams) {
             }
           drawPath(
             path = chevron,
-            color = if (isCollapsed) palette.activePillFg else palette.textMuted.copy(alpha = 0.75f),
+            color = if (isCollapsed) canvasAccent else palette.editorTextMuted.copy(alpha = 0.80f),
             style = Stroke(width = 1.4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
           )
         }

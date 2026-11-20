@@ -310,7 +310,7 @@ fun ProblemsView(
 
   if (uiState.diagnostics.isEmpty()) {
     var showInfo by remember { mutableStateOf(false) }
-    Box(modifier = Modifier.fillMaxSize().background(palette.editorBg), contentAlignment = Alignment.Center) {
+    Box(modifier = Modifier.fillMaxSize().background(palette.chromeBg), contentAlignment = Alignment.Center) {
       Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         IconButton(onClick = { showInfo = !showInfo }) {
           Icon(
@@ -344,7 +344,7 @@ fun ProblemsView(
       }
     }
 
-  Column(modifier = Modifier.fillMaxSize().background(palette.editorBg)) {
+  Column(modifier = Modifier.fillMaxSize().background(palette.chromeBg)) {
     Row(
       modifier =
         Modifier
@@ -362,7 +362,7 @@ fun ProblemsView(
         val selected = severityFilter == key
         Surface(
           onClick = { severityFilter = key },
-          color = if (selected) palette.activePillBg else palette.editorBg,
+          color = if (selected) palette.activePillBg else palette.chromeBg,
           shape = RoundedCornerShape(6.dp),
           border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.55f)),
         ) {
@@ -456,7 +456,7 @@ fun ConsoleView(
       }
     }
 
-  Column(modifier = Modifier.fillMaxSize().background(palette.editorBg)) {
+  Column(modifier = Modifier.fillMaxSize().background(palette.chromeBg)) {
     Row(
       modifier =
         Modifier
@@ -470,7 +470,7 @@ fun ConsoleView(
         val selected = levelFilter == key
         Surface(
           onClick = { levelFilter = key },
-          color = if (selected) palette.activePillBg else palette.editorBg,
+          color = if (selected) palette.activePillBg else palette.chromeBg,
           shape = RoundedCornerShape(6.dp),
           border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.55f)),
         ) {
@@ -555,7 +555,7 @@ fun LiveTailView(
 ) {
   val palette = LocalIdePalette.current
   Column(
-    modifier = Modifier.fillMaxSize().background(palette.editorBg),
+    modifier = Modifier.fillMaxSize().background(palette.chromeBg),
   ) {
     Row(
       modifier =
@@ -573,7 +573,7 @@ fun LiveTailView(
         Surface(
           color =
             if (uiState.isTailRunning) EmeraldLive.copy(alpha = 0.16f)
-            else palette.editorBg,
+            else palette.chromeBg,
           shape = RoundedCornerShape(6.dp),
           border =
             BorderStroke(

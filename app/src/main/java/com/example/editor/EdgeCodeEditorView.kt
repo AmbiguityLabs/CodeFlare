@@ -494,7 +494,7 @@ class EdgeCodeEditorView(context: Context) : EditText(context) {
   }
 
   private fun applyPaletteStyles() {
-    setTextColor(palette.textPrimary.toArgb())
+    setTextColor(palette.editorTextPrimary.toArgb())
     highlightColor = palette.activePillBg.copy(alpha = 0.72f).toArgb()
     activeLinePaint.color = palette.editorActiveLineBg.copy(alpha = 0.55f).toArgb()
     gutterBgPaint.color =
@@ -502,17 +502,17 @@ class EdgeCodeEditorView(context: Context) : EditText(context) {
     gutterActiveBgPaint.color =
       (if (hasCustomBg) palette.editorActiveLineBg.copy(alpha = 0.72f) else palette.editorActiveLineBg).toArgb()
     gutterDividerPaint.color = palette.border.copy(alpha = 0.68f).toArgb()
-    gutterTextPaint.color = palette.textMuted.toArgb()
+    gutterTextPaint.color = palette.editorTextMuted.toArgb()
     searchMatchPaint.color = palette.searchMatchBg.toArgb()
     searchActiveMatchPaint.color = palette.searchActiveMatchBg.toArgb()
-    usageHighlightPaint.color = palette.activePillFg.copy(alpha = 0.14f).toArgb()
-    usageHighlightBorderPaint.color = palette.activePillFg.copy(alpha = 0.34f).toArgb()
+    usageHighlightPaint.color = palette.canvasAccent().copy(alpha = 0.14f).toArgb()
+    usageHighlightBorderPaint.color = palette.canvasAccent().copy(alpha = 0.34f).toArgb()
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
       val cursorDrawable =
         GradientDrawable().apply {
           setSize(max(2, (2f * density).roundToInt()), 0)
-          setColor(palette.activePillFg.toArgb())
+          setColor(palette.canvasAccent().toArgb())
         }
       textCursorDrawable = cursorDrawable
     }

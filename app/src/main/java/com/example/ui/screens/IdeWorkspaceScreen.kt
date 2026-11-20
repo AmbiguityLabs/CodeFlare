@@ -62,6 +62,7 @@ import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.MergeType
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.MyLocation
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Save
@@ -141,6 +142,7 @@ import com.example.ui.components.EdgeMenuUiLayersPanel
 import com.example.ui.components.EdgeBottomDock
 import com.example.ui.components.EdgeBottomDockItem
 import com.example.ui.components.GitHubAndDiffPanel
+import com.example.ui.components.GoToLineDialog
 import com.example.ui.components.IconRevealButton
 import com.example.ui.components.IconSegmentTab
 import com.example.ui.components.IconToggleRevealText
@@ -201,6 +203,7 @@ fun IdeWorkspaceScreen(
   var activeIdeSheetTab by remember { mutableStateOf<IdeCoreSheetTab?>(null) }
   var showRenameSymbolDialog by remember { mutableStateOf(false) }
   var renameSymbolInitial by remember { mutableStateOf("") }
+  var showGoToLineDialog by remember { mutableStateOf(false) }
   var editorCommandRequest by remember { mutableStateOf<Pair<Long, String>?>(null) }
 
   fun dispatchEditorCommand(cmd: String) {
@@ -303,6 +306,7 @@ fun IdeWorkspaceScreen(
   BackHandler {
     when {
       activeIdeSheetTab != null -> activeIdeSheetTab = null
+      showGoToLineDialog -> showGoToLineDialog = false
       showRenameSymbolDialog -> showRenameSymbolDialog = false
       showProjectGitModal -> showProjectGitModal = false
       showProjectSettingsModal -> showProjectSettingsModal = false
@@ -507,6 +511,42 @@ fun IdeWorkspaceScreen(
     )
   }
 
+  val activeFileForGoTo = uiState.activeFile
+  if (showGoToLineDialog && activeFileForGoTo != null) {
+    val activeFieldValue = uiState.editorFieldValues[activeFileForGoTo.path]
+    val docText = activeFieldValue?.text ?: activeFileForGoTo.content
+    val lines = remember(docText) { docText.lines() }
+    val caretOffset = (activeFieldValue?.selection?.end ?: 0).coerceIn(0, docText.length)
+    val caretLine =
+      remember(docText, caretOffset) {
+        var ln = 1
+        for (i in 0 until caretOffset) {
+          if (docText[i] == '\n') ln++
+        }
+        ln
+      }
+    val caretCol =
+      remember(docText, caretOffset) {
+        val prevNewline = docText.lastIndexOf('\n', (caretOffset - 1).coerceAtLeast(0))
+        if (caretOffset == 0) 1
+        else if (prevNewline < 0) caretOffset + 1
+        else caretOffset - prevNewline
+      }
+    GoToLineDialog(
+      fileName = activeFileForGoTo.fileName,
+      totalLines = lines.size.coerceAtLeast(1),
+      currentLine = caretLine,
+      currentColumn = caretCol,
+      lineSnippetProvider = { oneBasedLine ->
+        lines.getOrNull(oneBasedLine - 1).orEmpty()
+      },
+      onDismiss = { showGoToLineDialog = false },
+      onJumpTo = { line, col ->
+        viewModel.jumpToLine(activeFileForGoTo.path, line, col)
+      },
+    )
+  }
+
   if (showProjectSettingsModal) {
     val requestStorageAccess =
       com.example.ui.components.rememberStorageAccessRequester {
@@ -667,9 +707,18 @@ fun IdeWorkspaceScreen(
         PaletteCommand("Fold All", "EDITOR") { dispatchEditorCommand("fold_all") },
         PaletteCommand("Unfold All", "EDITOR") { dispatchEditorCommand("unfold_all") },
         PaletteCommand("Toggle Fold", "EDITOR") { dispatchEditorCommand("toggle_fold") },
+        PaletteCommand("Outdent Line(s)", "EDITOR") { dispatchEditorCommand("outdent_selection") },
+        PaletteCommand("Delete Line", "EDITOR") { dispatchEditorCommand("delete_line") },
+        PaletteCommand("Select Line", "EDITOR") { dispatchEditorCommand("select_line") },
+        PaletteCommand("Join Lines", "EDITOR") { dispatchEditorCommand("join_lines") },
+        PaletteCommand("Sort Selected Lines", "EDITOR") { dispatchEditorCommand("sort_lines") },
+        PaletteCommand("Jump to Matching Bracket", "EDITOR") { dispatchEditorCommand("jump_bracket") },
         PaletteCommand("Toggle Bookmark", "EDITOR") { dispatchEditorCommand("toggle_bookmark") },
         PaletteCommand("Next Bookmark", "EDITOR") { dispatchEditorCommand("next_bookmark") },
         PaletteCommand("Clipboard History", "EDITOR") { dispatchEditorCommand("paste_history") },
+        PaletteCommand("Go to Line", "NAV") {
+          if (uiState.activeFile != null) showGoToLineDialog = true
+        },
         PaletteCommand("Go to Symbol", "NAV") {
           activeIdeSheetTab = IdeCoreSheetTab.SYMBOLS
         },
@@ -1067,6 +1116,7 @@ fun IdeWorkspaceScreen(
                       onDismissDraftBanner = viewModel::dismissDraftBanner,
                       onDiscardRestoredDraft = viewModel::discardRestoredDraft,
                       onJumpToLine = viewModel::jumpToLine,
+                      onOpenGoToLine = { showGoToLineDialog = true },
                       onSyncWranglerToWorkspace = viewModel::syncWranglerFileToWorkspace,
                       onZoomPercentChange = viewModel::setEditorZoomPercent,
                       onJumpToLocation = viewModel::jumpToLine,
@@ -1329,6 +1379,15 @@ fun IdeWorkspaceScreen(
               )
             }
             if (activeWs != null) {
+              EdgeMenuItem(
+                label = "Go to Line",
+                icon = Icons.Outlined.MyLocation,
+                badgeText = ":LN",
+                onClick = {
+                  overflowMenuOpen = false
+                  if (uiState.activeFile != null) showGoToLineDialog = true
+                },
+              )
               EdgeMenuItem(
                 label = "Go to Symbol",
                 icon = Icons.Outlined.Tag,

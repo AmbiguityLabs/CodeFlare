@@ -384,7 +384,7 @@ fun EdgeMenuUiLayersPanel(
         .fillMaxWidth()
         .padding(horizontal = 4.dp, vertical = 4.dp)
         .clip(containerShape)
-        .background(palette.editorBg.copy(alpha = 0.72f))
+        .background(palette.chromeBg.copy(alpha = 0.88f))
         .border(0.75.dp, palette.border.copy(alpha = 0.65f), containerShape)
         .padding(horizontal = 8.dp, vertical = 7.dp)
         .testTag("ui_layers_panel"),

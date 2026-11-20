@@ -166,6 +166,29 @@ class EdgeEditorController {
     session?.duplicateLine()
   }
 
+  fun outdentSelection() {
+    session?.outdentSelection()
+  }
+
+  fun deleteLine(): Boolean = session?.deleteLine() == true
+
+  fun selectCurrentLine() {
+    session?.selectCurrentLine()
+  }
+
+  fun joinLines(): Boolean = session?.joinLines() == true
+
+  fun sortSelectedLines(descending: Boolean = false): Boolean =
+    session?.sortSelectedLines(descending) == true
+
+  fun jumpToMatchingBracket(language: WorkerLanguage): Boolean {
+    val s = session ?: return false
+    val match = CodeAnalyzer.findMatchingBracket(s.doc.text, s.selection.end, language) ?: return false
+    val target = match.partnerOffset ?: return false
+    s.setSelection(TextRange(target))
+    return true
+  }
+
   fun undo(): Boolean = session?.undo() == true
 
   fun redo(): Boolean = session?.redo() == true
@@ -487,12 +510,12 @@ fun EdgeCodeEditorSurface(
   // Font & geometry metrics scaled by live zoom
   val effectiveFontSp = (editorSettings.fontSizeSp * (liveZoomPercent / 100f)).coerceIn(8f, 36f)
   val codeTextStyle =
-    remember(effectiveFontSp, palette.textPrimary, resolvedCodeFont, editorSettings.fontLigatures) {
+    remember(effectiveFontSp, palette.editorTextPrimary, resolvedCodeFont, editorSettings.fontLigatures) {
       TextStyle(
         fontFamily = resolvedCodeFont,
         fontSize = effectiveFontSp.sp,
         lineHeight = (effectiveFontSp * 1.46f).sp,
-        color = palette.textPrimary,
+        color = palette.editorTextPrimary,
         fontFeatureSettings = if (editorSettings.fontLigatures) null else "liga 0, calt 0",
       )
     }

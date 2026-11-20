@@ -72,6 +72,8 @@ import com.example.editor.selection.SelectionLadderState
 import com.example.editor.selection.SmartSelectionInitialDepth
 import com.example.editor.selection.SmartTextDomain
 import com.example.editor.selection.SmartTextSelectionEngine
+import com.example.ui.components.SettingsPreviewSlot
+import com.example.ui.components.activatePreviewOnTouch
 import com.example.ui.theme.Ca
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
@@ -124,157 +126,168 @@ fun SettingsEditorPane(
           }
         }
 
-      Surface(
-        color = palette.editorBg,
-        shape = RoundedCornerShape(if (isV2) Ca.radius.lg else Ca.radius.control),
-        border = if (isV2) null else BorderStroke(0.75.dp, scheme.outlineVariant.copy(alpha = 0.65f)),
-        modifier = Modifier.fillMaxWidth(),
+      SettingsPreviewSlot(
+        id = "editor_typography_preview",
+        title = "Typography & Caret",
+        shortLabel = "Typography",
+        order = 1,
       ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-          Row(
-            modifier =
-              Modifier
-                .fillMaxWidth()
-                .background(palette.tabBarBg)
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-          ) {
-            Text(
-              text = "worker.js",
-              fontFamily = resolvedFont,
-              fontSize = 10.sp,
-              fontWeight = FontWeight.Medium,
-              color = palette.textSecondary,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-              if (settings.fontLigatures) {
-                Text(
-                  text = "LIGA",
-                  fontFamily = JetBrainsMono,
-                  fontSize = 8.5.sp,
-                  fontWeight = FontWeight.Bold,
-                  color = palette.syntaxFunction,
-                )
-              }
-              if (settings.wordWrap) {
-                Text(
-                  text = "WRAP",
-                  fontFamily = JetBrainsMono,
-                  fontSize = 8.5.sp,
-                  fontWeight = FontWeight.Bold,
-                  color = palette.activePillFg,
-                )
+        Surface(
+          color = palette.editorBg,
+          shape = RoundedCornerShape(if (isV2) Ca.radius.lg else Ca.radius.control),
+          border = if (isV2) null else BorderStroke(0.75.dp, scheme.outlineVariant.copy(alpha = 0.65f)),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+              modifier =
+                Modifier
+                  .fillMaxWidth()
+                  .background(palette.editorGutterBg)
+                  .padding(horizontal = 10.dp, vertical = 6.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Text(
+                text = "worker.js",
+                fontFamily = resolvedFont,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                color = palette.editorTextMuted,
+              )
+              Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (settings.fontLigatures) {
+                  Text(
+                    text = "LIGA",
+                    fontFamily = JetBrainsMono,
+                    fontSize = 8.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = palette.syntaxFunction,
+                  )
+                }
+                if (settings.wordWrap) {
+                  Text(
+                    text = "WRAP",
+                    fontFamily = JetBrainsMono,
+                    fontSize = 8.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = palette.canvasAccent(),
+                  )
+                }
               }
             }
-          }
-          SettingsHairlineDivider()
-          Column(
-            modifier =
-              Modifier
-                .fillMaxWidth()
-                .then(if (!settings.wordWrap) Modifier.horizontalScroll(rememberScrollState()) else Modifier)
-                .padding(vertical = 8.dp),
-          ) {
-            val guideColor = palette.border.copy(alpha = 0.5f)
-            highlightedLines.forEachIndexed { idx, annotatedLine ->
-              val isModifiedPreview = idx == 2
-              val isFoldHeader = idx == 0
-              Row(
-                modifier =
-                  Modifier
-                    .fillMaxWidth()
-                    .background(if (idx == 2) palette.editorActiveLineBg else palette.editorBg)
-                    .padding(horizontal = 10.dp, vertical = 1.dp),
-                verticalAlignment = Alignment.CenterVertically,
-              ) {
-                if (settings.showLineNumbers) {
-                  Text(
-                    text = "${idx + 1}",
-                    fontFamily = resolvedFont,
-                    fontSize = (settings.fontSizeSp - 1).coerceAtLeast(9).sp,
-                    lineHeight = (settings.fontSizeSp + 6).sp,
-                    color = if (idx == 2) palette.activePillFg else palette.textMuted.copy(alpha = 0.6f),
-                    modifier = Modifier.width(18.dp),
-                  )
-                  if (settings.codeFolding) {
-                    Text(
-                      text = if (isFoldHeader) "▾" else " ",
-                      fontFamily = JetBrainsMono,
-                      fontSize = 10.sp,
-                      color = palette.textMuted.copy(alpha = 0.7f),
-                      modifier = Modifier.width(12.dp),
-                    )
-                  }
-                  if (settings.gutterDiffMarkers) {
-                    Box(
-                      modifier =
-                        Modifier
-                          .padding(end = 6.dp)
-                          .width(2.5.dp)
-                          .height((settings.fontSizeSp + 4).dp)
-                          .clip(RoundedCornerShape(2.dp))
-                          .background(if (isModifiedPreview) EmeraldLive else palette.editorBg),
-                    )
-                  } else {
-                    Spacer(Modifier.width(6.dp))
-                  }
-                }
-                Box(
+            SettingsHairlineDivider()
+            Column(
+              modifier =
+                Modifier
+                  .fillMaxWidth()
+                  .then(if (!settings.wordWrap) Modifier.horizontalScroll(rememberScrollState()) else Modifier)
+                  .padding(vertical = 8.dp),
+            ) {
+              val guideColor = palette.border.copy(alpha = 0.5f)
+              highlightedLines.forEachIndexed { idx, annotatedLine ->
+                val isModifiedPreview = idx == 2
+                val isFoldHeader = idx == 0
+                Row(
                   modifier =
-                    Modifier.drawBehind {
-                      if (settings.indentGuides && idx in 1..2) {
-                        drawLine(
-                          color = guideColor,
-                          start = Offset(1f, 0f),
-                          end = Offset(1f, size.height),
-                          strokeWidth = 1.dp.toPx(),
+                    Modifier
+                      .fillMaxWidth()
+                      .background(if (idx == 2) palette.editorActiveLineBg else palette.editorBg)
+                      .padding(horizontal = 10.dp, vertical = 1.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  if (settings.showLineNumbers) {
+                    Text(
+                      text = "${idx + 1}",
+                      fontFamily = resolvedFont,
+                      fontSize = (settings.fontSizeSp - 1).coerceAtLeast(9).sp,
+                      lineHeight = (settings.fontSizeSp + 6).sp,
+                      color = if (idx == 2) palette.canvasAccent() else palette.editorTextMuted.copy(alpha = 0.65f),
+                      modifier = Modifier.width(18.dp),
+                    )
+                    if (settings.codeFolding) {
+                      Text(
+                        text = if (isFoldHeader) "▾" else " ",
+                        fontFamily = JetBrainsMono,
+                        fontSize = 10.sp,
+                        color = palette.editorTextMuted.copy(alpha = 0.75f),
+                        modifier = Modifier.width(12.dp),
+                      )
+                    }
+                    if (settings.gutterDiffMarkers) {
+                      Box(
+                        modifier =
+                          Modifier
+                            .padding(end = 6.dp)
+                            .width(2.5.dp)
+                            .height((settings.fontSizeSp + 4).dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(if (isModifiedPreview) EmeraldLive else palette.editorBg),
+                      )
+                    } else {
+                      Spacer(Modifier.width(6.dp))
+                    }
+                  }
+                  Box(
+                    modifier =
+                      Modifier.drawBehind {
+                        if (settings.indentGuides && idx in 1..2) {
+                          drawLine(
+                            color = guideColor,
+                            start = Offset(1f, 0f),
+                            end = Offset(1f, size.height),
+                            strokeWidth = 1.dp.toPx(),
+                          )
+                        }
+                      },
+                  ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                      Text(
+                        text = annotatedLine,
+                        fontFamily = resolvedFont,
+                        fontSize = settings.fontSizeSp.sp,
+                        lineHeight = (settings.fontSizeSp + 6).sp,
+                        softWrap = settings.wordWrap,
+                        color = palette.editorTextPrimary,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = resolvedLigatures),
+                      )
+                      if (idx == 2) {
+                        PreviewCaretIndicator(
+                          caretStyle = activeCaretStyle,
+                          caretColor = palette.canvasAccent(),
+                          heightDp = (settings.fontSizeSp + 3).coerceIn(12, 22),
                         )
                       }
-                    },
-                ) {
-                  Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                      text = annotatedLine,
-                      fontFamily = resolvedFont,
-                      fontSize = settings.fontSizeSp.sp,
-                      lineHeight = (settings.fontSizeSp + 6).sp,
-                      softWrap = settings.wordWrap,
-                      color = palette.textPrimary,
-                      style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = resolvedLigatures),
-                    )
-                    if (idx == 2) {
-                      PreviewCaretIndicator(
-                        caretStyle = activeCaretStyle,
-                        caretColor = palette.activePillFg,
-                        heightDp = (settings.fontSizeSp + 3).coerceIn(12, 22),
-                      )
                     }
                   }
                 }
               }
             }
-          }
-          if (!settings.wordWrap && settings.showHorizontalScrollbar) {
-            Box(
-              modifier =
-                Modifier
-                  .fillMaxWidth()
-                  .padding(start = if (settings.showLineNumbers) 36.dp else 10.dp, end = 10.dp, bottom = 5.dp),
-            ) {
+            if (!settings.wordWrap && settings.showHorizontalScrollbar) {
               Box(
                 modifier =
                   Modifier
-                    .fillMaxWidth(0.42f)
-                    .height(3.dp)
-                    .clip(RoundedCornerShape(Ca.radius.pill))
-                    .background(palette.activePillFg.copy(alpha = 0.45f)),
-              )
+                    .fillMaxWidth()
+                    .padding(start = if (settings.showLineNumbers) 36.dp else 10.dp, end = 10.dp, bottom = 5.dp),
+              ) {
+                Box(
+                  modifier =
+                    Modifier
+                      .fillMaxWidth(0.42f)
+                      .height(3.dp)
+                      .clip(RoundedCornerShape(Ca.radius.pill))
+                      .background(palette.activePillFg.copy(alpha = 0.45f)),
+                )
+              }
             }
           }
         }
       }
 
+      Column(
+        modifier = Modifier.fillMaxWidth().activatePreviewOnTouch("editor_typography_preview"),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+      ) {
       SettingsChoiceRow(
         title = "Code font",
         description = "Monospace typeface used in the code editor",
@@ -343,6 +356,7 @@ fun SettingsEditorPane(
           onUpdateSettings { it.copy(tabSize = spaces) }
         },
       )
+      }
     }
 
     // 2. Display & Code
@@ -624,7 +638,16 @@ fun SettingsEditorPane(
         }
       }
 
-      Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+      Column(
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+        modifier = Modifier.activatePreviewOnTouch("editor_selection_drag_preview"),
+      ) {
+        SettingsPreviewSlot(
+          id = "editor_selection_drag_preview",
+          title = "Selection & Drag",
+          shortLabel = "Selection",
+          order = 2,
+        ) {
         // Interactive Live Preview Card (uses code editor palette for authentic preview)
         Surface(
           color = palette.editorBg,
@@ -647,7 +670,7 @@ fun SettingsEditorPane(
                 fontSize = 9.5.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.7.sp,
-                color = palette.textMuted,
+                color = palette.editorTextMuted,
               )
               Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (selConfig.showDropTargetLoupe) {
@@ -664,7 +687,7 @@ fun SettingsEditorPane(
                   fontFamily = JetBrainsMono,
                   fontSize = 9.sp,
                   fontWeight = FontWeight.SemiBold,
-                  color = palette.activePillFg,
+                  color = palette.canvasAccent(),
                 )
               }
             }
@@ -794,7 +817,7 @@ fun SettingsEditorPane(
                 text = highlightedPreview,
                 fontFamily = JetBrainsMono,
                 fontSize = 12.sp,
-                color = palette.textPrimary,
+                color = palette.editorTextPrimary,
                 maxLines = 1,
               )
             }
@@ -809,7 +832,7 @@ fun SettingsEditorPane(
                   if (selConfig.immediateSlideToDrag) "Hold -> slide launches drag immediately"
                   else "Hold selects · use Drag grip or re-hold to drag",
                 fontSize = 11.sp,
-                color = palette.textSecondary,
+                color = palette.editorTextMuted,
               )
               if (selConfig.allowCrossAppDrag) {
                 Text(
@@ -817,11 +840,12 @@ fun SettingsEditorPane(
                   fontFamily = JetBrainsMono,
                   fontSize = 8.5.sp,
                   fontWeight = FontWeight.Bold,
-                  color = palette.activePillFg,
+                  color = palette.canvasAccent(),
                 )
               }
             }
           }
+        }
         }
 
         // Quick Overlay Mode Presets (Minimal vs Full Power)

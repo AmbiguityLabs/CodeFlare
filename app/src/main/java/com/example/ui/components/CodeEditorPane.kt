@@ -177,6 +177,7 @@ fun CodeEditorPane(
   onDismissDraftBanner: () -> Unit,
   onDiscardRestoredDraft: () -> Unit,
   onJumpToLine: (String, Int) -> Unit,
+  onOpenGoToLine: () -> Unit = {},
   onSyncWranglerToWorkspace: () -> Unit,
   onZoomPercentChange: (Int) -> Unit = {},
   onJumpToLocation: (String, Int, Int) -> Unit = { path, line, _ -> onJumpToLine(path, line) },
@@ -209,6 +210,12 @@ fun CodeEditorPane(
       "toggle_bookmark" -> editorController.toggleBookmark()
       "next_bookmark" -> editorController.nextBookmark()
       "paste_history" -> editorController.openPasteHistory()
+      "outdent_selection" -> editorController.outdentSelection()
+      "delete_line" -> editorController.deleteLine()
+      "select_line" -> editorController.selectCurrentLine()
+      "join_lines" -> editorController.joinLines()
+      "sort_lines" -> editorController.sortSelectedLines()
+      "jump_bracket" -> if (activeFile != null) editorController.jumpToMatchingBracket(activeFile.language)
     }
   }
 
@@ -371,7 +378,7 @@ fun CodeEditorPane(
       enter = slideInVertically(tween(170)) { -it } + fadeIn(tween(150)),
       exit = slideOutVertically(tween(140)) { -it } + fadeOut(tween(120)),
     ) {
-      Column(modifier = Modifier.fillMaxWidth().background(palette.editorBg)) {
+      Column(modifier = Modifier.fillMaxWidth().background(palette.chromeBg)) {
         Row(
           modifier =
             Modifier
@@ -691,7 +698,7 @@ fun CodeEditorPane(
                   .weight(1f)
                   .height(34.dp)
                   .clip(RoundedCornerShape(8.dp))
-                  .background(palette.editorBg)
+                  .background(palette.chromeBg)
                   .border(0.75.dp, palette.border.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
                   .edgeTextDropTarget(
                     targetSurfaceId = "Find",
@@ -829,7 +836,7 @@ fun CodeEditorPane(
                     .weight(1f)
                     .height(34.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(palette.editorBg)
+                    .background(palette.chromeBg)
                     .border(0.75.dp, palette.border.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
                     .edgeTextDropTarget(
                       targetSurfaceId = "Replace",
@@ -917,7 +924,7 @@ fun CodeEditorPane(
               Surface(
                 onClick = { onFindScopeChange(scopeIdx) },
                 shape = RoundedCornerShape(6.dp),
-                color = if (selected) palette.activePillBg else palette.editorBg,
+                color = if (selected) palette.activePillBg else palette.chromeBg,
                 border =
                   BorderStroke(
                     0.75.dp,
@@ -1087,14 +1094,14 @@ fun CodeEditorPane(
       enter = slideInVertically(tween(180)) { it } + fadeIn(tween(160)),
       exit = slideOutVertically(tween(150)) { it } + fadeOut(tween(130)),
     ) {
-      Column(modifier = Modifier.fillMaxWidth().background(palette.editorBg)) {
+      Column(modifier = Modifier.fillMaxWidth().background(palette.chromeBg)) {
         HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.5.dp)
         Row(
           modifier =
             Modifier
               .fillMaxWidth()
               .height(22.dp)
-              .background(palette.editorBg)
+              .background(palette.chromeBg)
               .padding(horizontal = 8.dp),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1102,6 +1109,7 @@ fun CodeEditorPane(
           EditorLiveStatusTelemetry(
             hudHolder = hudHolder,
             language = activeFile.language,
+            onOpenGoToLine = { flushThen(onOpenGoToLine) },
           )
           Spacer(Modifier.weight(1f))
 
@@ -1209,10 +1217,14 @@ fun CodeEditorPane(
               verticalAlignment = Alignment.CenterVertically,
             ) {
               AccessoryKey("TAB") { editorController.insertTab(uiState.editorSettings.tabSize) }
+              AccessoryKey("⇥|") { editorController.outdentSelection() }
               AccessoryKey("//") { editorController.toggleLineComment() }
               AccessoryKey("↑") { editorController.moveLineUp() }
               AccessoryKey("↓") { editorController.moveLineDown() }
               AccessoryKey("⧉") { editorController.duplicateLine() }
+              AccessoryKey("DEL") { editorController.deleteLine() }
+              AccessoryKey("JOIN") { editorController.joinLines() }
+              AccessoryKey("{↔}") { editorController.jumpToMatchingBracket(activeFile.language) }
               AccessoryKey("FOLD") { editorController.toggleFoldAtCurrentLine() }
               AccessoryKey("BM") { editorController.toggleBookmark() }
               AccessoryKey("CLIP") { editorController.openPasteHistory() }
@@ -1239,6 +1251,7 @@ fun CodeEditorPane(
 private fun EditorLiveStatusTelemetry(
   hudHolder: EditorLiveHudHolder,
   language: WorkerLanguage,
+  onOpenGoToLine: () -> Unit = {},
 ) {
   val palette = LocalIdePalette.current
   val t = hudHolder.telemetry
@@ -1252,6 +1265,12 @@ private fun EditorLiveStatusTelemetry(
       fontSize = 9.5.sp,
       color = palette.textSecondary,
       maxLines = 1,
+      modifier =
+        Modifier
+          .clip(RoundedCornerShape(4.dp))
+          .clickable(onClick = onOpenGoToLine)
+          .padding(horizontal = 3.dp, vertical = 1.dp)
+          .testTag("editor_status_goto_line"),
     )
     Text("·", fontSize = 9.5.sp, color = palette.textMuted)
     Text(
@@ -1675,7 +1694,7 @@ private fun EditorFileTabBar(
             Box {
               Surface(
                 shape = RoundedCornerShape(6.dp),
-                color = if (isActive) palette.editorBg else Color.Transparent,
+                color = if (isActive) palette.tabActiveBg else Color.Transparent,
                 border =
                   if (isActive && !isV2) BorderStroke(0.5.dp, palette.border.copy(alpha = 0.55f))
                   else null,
@@ -1913,7 +1932,7 @@ private fun EditorFileTabBar(
                 .padding(horizontal = 4.dp, vertical = 4.dp)
                 .height(34.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(palette.editorBg)
+                .background(palette.chromeBg)
                 .border(0.75.dp, palette.border.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
                 .padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically,

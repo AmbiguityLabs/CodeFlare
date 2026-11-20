@@ -321,6 +321,7 @@ fun BoxScope.EdgeStickyScrollHeader(
       modifier = Modifier.fillMaxWidth(),
     ) {
       Column(modifier = Modifier.fillMaxWidth()) {
+        val canvasAccent = palette.canvasAccent()
         Row(
           modifier =
             Modifier
@@ -336,14 +337,14 @@ fun BoxScope.EdgeStickyScrollHeader(
             text = "${sym.line}",
             fontFamily = JetBrainsMono,
             fontSize = 10.sp,
-            color = palette.textMuted,
+            color = palette.editorTextMuted,
             modifier = Modifier.widthIn(min = 22.dp),
           )
           Box(
             modifier =
               Modifier
                 .clip(RoundedCornerShape(4.dp))
-                .background(palette.activePillBg)
+                .background(canvasAccent.copy(alpha = 0.16f))
                 .padding(horizontal = 5.dp, vertical = 1.dp),
           ) {
             Text(
@@ -351,14 +352,14 @@ fun BoxScope.EdgeStickyScrollHeader(
               fontFamily = JetBrainsMono,
               fontSize = 8.5.sp,
               fontWeight = FontWeight.Bold,
-              color = palette.activePillFg,
+              color = canvasAccent,
             )
           }
           Text(
             text = lineText.trim().ifEmpty { sym.name },
             fontFamily = JetBrainsMono,
             fontSize = 11.sp,
-            color = palette.textPrimary,
+            color = palette.editorTextPrimary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),

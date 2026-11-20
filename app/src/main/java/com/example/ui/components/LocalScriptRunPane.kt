@@ -148,7 +148,7 @@ fun LocalScriptRunPane(
             .weight(1f)
             .height(34.dp)
             .clip(promptShape)
-            .background(palette.editorBg)
+            .background(palette.chromeBg)
             .border(0.5.dp, palette.border.copy(alpha = 0.65f), promptShape)
             .edgeTextDropTarget(
               targetSurfaceId = "CLI Prompt",
@@ -289,7 +289,7 @@ fun LocalScriptRunPane(
                 .weight(1f)
                 .height(32.dp)
                 .clip(pathShape)
-                .background(palette.editorBg)
+                .background(palette.chromeBg)
                 .border(0.5.dp, palette.border.copy(alpha = 0.6f), pathShape)
                 .edgeTextDropTarget(
                   targetSurfaceId = "CLI Path",
@@ -345,7 +345,7 @@ fun LocalScriptRunPane(
 
     if (result == null) {
       Column(
-        modifier = Modifier.weight(1f).fillMaxWidth().background(palette.editorBg).padding(20.dp),
+        modifier = Modifier.weight(1f).fillMaxWidth().background(palette.chromeBg).padding(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
       ) {
@@ -538,7 +538,7 @@ fun LocalScriptRunPane(
               .fillMaxWidth()
               .padding(start = 8.dp, end = 8.dp, bottom = 6.dp)
               .clip(RoundedCornerShape(7.dp))
-              .background(palette.editorBg)
+              .background(palette.chromeBg)
               .border(0.5.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(7.dp))
               .padding(horizontal = 8.dp, vertical = 5.dp),
           verticalAlignment = Alignment.CenterVertically,
@@ -583,7 +583,7 @@ fun LocalScriptRunPane(
 
     HorizontalDivider(color = palette.border.copy(alpha = 0.45f), thickness = 0.5.dp)
 
-    Box(modifier = Modifier.weight(1f).fillMaxWidth().background(palette.editorBg)) {
+    Box(modifier = Modifier.weight(1f).fillMaxWidth().background(palette.chromeBg)) {
       when (resultViewTab) {
         0 -> {
           if (result.errorMessage != null) {
@@ -676,7 +676,7 @@ fun LocalScriptRunPane(
                 val selected = logFilter == lvl
                 Surface(
                   onClick = { logFilter = lvl },
-                  color = if (selected) palette.activePillBg else palette.editorBg,
+                  color = if (selected) palette.activePillBg else palette.chromeBg,
                   shape = RoundedCornerShape(6.dp),
                   border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.55f)),
                 ) {

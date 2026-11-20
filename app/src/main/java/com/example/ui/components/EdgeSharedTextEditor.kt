@@ -180,7 +180,7 @@ fun EdgeSharedTextEditor(
               surfaceId = surfaceKey,
               domain = if (language == WorkerLanguage.JSON) SmartTextDomain.JSON else SmartTextDomain.TERMINAL_OR_LOG,
               style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 16.sp),
-              color = if (isErrorText) Color(0xFFF87171) else if (value.isEmpty()) palette.textMuted else palette.textPrimary,
+              color = if (isErrorText) Color(0xFFF87171) else if (value.isEmpty()) palette.editorTextMuted else palette.editorTextPrimary,
               onCopied = onCopiedFallback,
             )
           }

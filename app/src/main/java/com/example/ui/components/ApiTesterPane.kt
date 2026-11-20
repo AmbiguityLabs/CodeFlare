@@ -353,7 +353,7 @@ fun ApiTesterPane(
   }
 
   Column(
-    modifier = modifier.fillMaxSize().background(palette.editorBg).verticalScroll(mainScrollState).padding(10.dp),
+    modifier = modifier.fillMaxSize().background(palette.chromeBg).verticalScroll(mainScrollState).padding(10.dp),
     verticalArrangement = Arrangement.spacedBy(8.dp),
   ) {
     // 0. Environment Switcher Bar (Dev / Staging / Prod / Custom) + Import CTA
@@ -723,7 +723,7 @@ fun ApiTesterPane(
                 }
               }
             }
-            Surface(color = palette.editorBg, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
+            Surface(color = palette.chromeBg, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
               Row(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("{{baseUrl}}", style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp, fontWeight = FontWeight.Bold), color = palette.activePillFg)
                 Spacer(Modifier.width(8.dp))
@@ -799,7 +799,7 @@ fun ApiTesterPane(
                 Surface(
                   onClick = { onLoadRequest(saved) },
                   shape = RoundedCornerShape(8.dp),
-                  color = palette.editorBg,
+                  color = palette.chromeBg,
                   modifier = Modifier.fillMaxWidth(),
                 ) {
                   Row(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -850,7 +850,7 @@ fun ApiTesterPane(
                 Surface(
                   onClick = { onLoadRequest(item.request) },
                   shape = RoundedCornerShape(8.dp),
-                  color = palette.editorBg,
+                  color = palette.chromeBg,
                   modifier = Modifier.fillMaxWidth(),
                 ) {
                   Row(modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -998,7 +998,7 @@ fun ApiTesterPane(
                 Modifier
                   .fillMaxWidth()
                   .clip(RoundedCornerShape(8.dp))
-                  .background(palette.editorBg)
+                  .background(palette.chromeBg)
                   .border(0.5.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
                   .padding(horizontal = 8.dp, vertical = 5.dp),
               verticalAlignment = Alignment.CenterVertically,
@@ -1145,7 +1145,7 @@ fun ApiTesterPane(
                   .fillMaxWidth()
                   .heightIn(min = 120.dp, max = if (responseExpanded) 540.dp else 360.dp)
                   .clip(RoundedCornerShape(8.dp))
-                  .background(palette.editorBg)
+                  .background(palette.chromeBg)
                   .border(0.5.dp, palette.border.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
                   .verticalScroll(rememberScrollState())
                   .padding(10.dp),
@@ -1276,7 +1276,7 @@ private fun ApiAssertionsEditor(
     var opMenuOpen by remember(rule.id) { mutableStateOf(false) }
 
     Surface(
-      color = palette.editorBg,
+      color = palette.chromeBg,
       shape = RoundedCornerShape(10.dp),
       border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
       modifier = Modifier.fillMaxWidth(),

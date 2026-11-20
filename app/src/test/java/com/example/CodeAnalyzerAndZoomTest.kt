@@ -173,4 +173,62 @@ class CodeAnalyzerAndZoomTest {
     store.updateEditorSettings { it.copy(zoomPercent = 10) }
     assertEquals(60, store.editorSettingsFlow.first().zoomPercent)
   }
+
+  @Test
+  fun analyzeWorkspace_validatesTomlWranglerSchemaAndCrossFileEnvBindings() {
+    val wranglerToml =
+      WorkerFile(
+        path = "wrangler.toml",
+        content =
+          """
+          name = "edge-worker"
+          main = "src/missing.js"
+          compatibility_date = "2026-99"
+
+          [[kv_namespaces]]
+          binding = "DECLARED_KV"
+          id = ""
+
+          [[d1_databases]]
+          binding = "DECLARED_KV"
+          database_id = "db_123"
+
+          [triggers]
+          crons = ["0 * * *"]
+          """.trimIndent(),
+        originalContent = "",
+        contentType = "application/toml",
+        isEntryPoint = false,
+      )
+
+    val workerJs =
+      jsFile(
+        path = "src/index.js",
+        content =
+          """
+          export default {
+            async fetch(req, env) {
+              const ok = await env.DECLARED_KV.get("k");
+              const optional = env.OPTIONAL_VAR ?? "fallback";
+              const guarded = env.MAYBE_KV ? await env.MAYBE_KV.get("k") : null;
+              const missing = await env.UNDECLARED_DB.prepare("SELECT 1").all();
+              return Response.json({ ok, optional, guarded, missing });
+            }
+          };
+          """.trimIndent(),
+      )
+
+    val diags = CodeAnalyzer.analyzeWorkspace(listOf(wranglerToml, workerJs))
+    assertTrue(diags.any { it.filePath == "wrangler.toml" && it.message.contains("Invalid compatibility_date") })
+    assertTrue(diags.any { it.filePath == "wrangler.toml" && it.message.contains("not found in workspace") })
+    assertTrue(diags.any { it.filePath == "wrangler.toml" && it.message.contains("Duplicate binding name 'DECLARED_KV'") })
+    assertTrue(diags.any { it.filePath == "wrangler.toml" && it.message.contains("missing namespace 'id'") })
+    assertTrue(diags.any { it.filePath == "wrangler.toml" && it.message.contains("Invalid cron expression") })
+
+    // Cross-file env check flags unguarded missing binding, ignores declared & guarded bindings
+    assertTrue(diags.any { it.filePath == "src/index.js" && it.message.contains("env.UNDECLARED_DB") })
+    assertFalse(diags.any { it.filePath == "src/index.js" && it.message.contains("env.DECLARED_KV") })
+    assertFalse(diags.any { it.filePath == "src/index.js" && it.message.contains("env.OPTIONAL_VAR") })
+    assertFalse(diags.any { it.filePath == "src/index.js" && it.message.contains("env.MAYBE_KV") })
+  }
 }

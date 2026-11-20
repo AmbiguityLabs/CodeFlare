@@ -29,6 +29,32 @@ object CodeAnalyzer {
     }.sortedWith(compareBy<DiagnosticItem>({ it.severity.ordinal }, { it.line }, { it.column }))
   }
 
+  fun analyzeWorkspace(files: List<WorkerFile>): List<DiagnosticItem> {
+    val activeFiles = files.filterNot { it.isVirtualReadOnly }
+    if (activeFiles.isEmpty()) return emptyList()
+
+    val diagnostics = ArrayList<DiagnosticItem>()
+    for (file in activeFiles) {
+      diagnostics.addAll(analyzeFile(file))
+      if (file.path.endsWith(".toml", ignoreCase = true)) {
+        diagnostics.addAll(analyzeTomlSyntax(file))
+      }
+    }
+
+    val wranglerFile =
+      activeFiles.firstOrNull {
+        val name = it.path.substringAfterLast('/').lowercase()
+        name == "wrangler.toml" || name == "wrangler.jsonc" || name == "wrangler.json"
+      }
+    if (wranglerFile != null) {
+      diagnostics.addAll(analyzeWranglerSchemaAndBindings(wranglerFile, activeFiles))
+    }
+
+    return diagnostics
+      .distinctBy { listOf(it.filePath, it.line, it.column, it.message) }
+      .sortedWith(compareBy<DiagnosticItem>({ it.severity.ordinal }, { it.filePath }, { it.line }, { it.column }))
+  }
+
   private fun offsetToLineCol(code: String, targetOffset: Int): Pair<Int, Int> {
     val clamped = targetOffset.coerceIn(0, code.length)
     var line = 1
@@ -974,5 +1000,401 @@ object CodeAnalyzer {
     }
     val partner = pairs[targetOffset] ?: return null
     return BracketMatch(primaryOffset = targetOffset, partnerOffset = partner, isMismatch = false)
+  }
+
+  private fun analyzeTomlSyntax(file: WorkerFile): List<DiagnosticItem> {
+    val diagnostics = ArrayList<DiagnosticItem>()
+    val lines = file.content.lines()
+    var multilineQuote: String? = null
+    var bracketDepth = 0
+    lines.forEachIndexed { idx, rawLine ->
+      val lineNum = idx + 1
+      var i = 0
+      val len = rawLine.length
+      var inSingle = false
+      var inDouble = false
+      var commentStart = -1
+
+      while (i < len) {
+        if (multilineQuote != null) {
+          if (rawLine.startsWith(multilineQuote!!, i)) {
+            i += 3
+            multilineQuote = null
+            continue
+          }
+          i++
+          continue
+        }
+        val ch = rawLine[i]
+        if (inDouble) {
+          if (ch == '\\' && i + 1 < len) {
+            i += 2
+            continue
+          }
+          if (ch == '"') inDouble = false
+          i++
+          continue
+        }
+        if (inSingle) {
+          if (ch == '\'') inSingle = false
+          i++
+          continue
+        }
+        if (ch == '#') {
+          commentStart = i
+          break
+        }
+        if (rawLine.startsWith("\"\"\"", i) || rawLine.startsWith("'''", i)) {
+          multilineQuote = rawLine.substring(i, i + 3)
+          i += 3
+          continue
+        }
+        when (ch) {
+          '"' -> inDouble = true
+          '\'' -> inSingle = true
+          '[' -> bracketDepth++
+          ']' -> bracketDepth = (bracketDepth - 1).coerceAtLeast(0)
+        }
+        i++
+      }
+
+      if (inDouble || inSingle) {
+        diagnostics.add(
+          DiagnosticItem(
+            filePath = file.path,
+            line = lineNum,
+            column = 1,
+            message = "Unterminated string literal in TOML",
+            severity = DiagnosticSeverity.ERROR,
+            length = 1,
+          ),
+        )
+      }
+
+      val effective =
+        (if (commentStart >= 0) rawLine.substring(0, commentStart) else rawLine).trim()
+      if (effective.isEmpty() || multilineQuote != null) return@forEachIndexed
+
+      if (effective.startsWith("[")) {
+        val isArrayTable = effective.startsWith("[[")
+        val hasValidEnd = if (isArrayTable) effective.endsWith("]]") else effective.endsWith("]")
+        val headerInner =
+          if (isArrayTable) effective.removePrefix("[[").removeSuffix("]]").trim()
+          else effective.removePrefix("[").removeSuffix("]").trim()
+        if (!hasValidEnd || headerInner.isEmpty()) {
+          diagnostics.add(
+            DiagnosticItem(
+              filePath = file.path,
+              line = lineNum,
+              column = 1,
+              message = "Malformed TOML section header '$effective'",
+              severity = DiagnosticSeverity.ERROR,
+              length = effective.length,
+            ),
+          )
+        }
+      } else if (bracketDepth == 0 && !effective.startsWith("]") && !effective.startsWith("}")) {
+        val eqIdx = effective.indexOf('=')
+        if (eqIdx <= 0) {
+          diagnostics.add(
+            DiagnosticItem(
+              filePath = file.path,
+              line = lineNum,
+              column = 1,
+              message = "Expected 'key = value' assignment in TOML",
+              severity = DiagnosticSeverity.ERROR,
+              length = effective.length.coerceAtLeast(1),
+            ),
+          )
+        } else {
+          val valPart = effective.substring(eqIdx + 1).trim()
+          if (valPart.isEmpty()) {
+            diagnostics.add(
+              DiagnosticItem(
+                filePath = file.path,
+                line = lineNum,
+                column = eqIdx + 1,
+                message = "Missing value after '=' in TOML assignment",
+                severity = DiagnosticSeverity.ERROR,
+                length = 1,
+              ),
+            )
+          }
+        }
+      }
+    }
+    return diagnostics
+  }
+
+  private fun analyzeWranglerSchemaAndBindings(
+    wranglerFile: WorkerFile,
+    workspaceFiles: List<WorkerFile>,
+  ): List<DiagnosticItem> {
+    val diagnostics = ArrayList<DiagnosticItem>()
+    val wranglerName = wranglerFile.path.substringAfterLast('/')
+    val lines = wranglerFile.content.lines()
+
+    fun findLineContaining(needle: String): Int {
+      val idx = lines.indexOfFirst { it.contains(needle) }
+      return if (idx >= 0) idx + 1 else 1
+    }
+
+    val parsedResult = WranglerSyncParser.parse(wranglerFile.path, wranglerFile.content)
+    val parsed =
+      parsedResult.getOrElse { err ->
+        if (wranglerFile.path.endsWith(".toml", ignoreCase = true)) {
+          diagnostics.add(
+            DiagnosticItem(
+              filePath = wranglerFile.path,
+              line = 1,
+              column = 1,
+              message = "Invalid $wranglerName: ${err.message ?: "parse error"}",
+              severity = DiagnosticSeverity.ERROR,
+              length = 1,
+            ),
+          )
+        }
+        return diagnostics
+      }
+
+    // 1. Validate compatibility_date format
+    val compatDate = parsed.compatibilityDate?.trim().orEmpty()
+    if (compatDate.isEmpty()) {
+      diagnostics.add(
+        DiagnosticItem(
+          filePath = wranglerFile.path,
+          line = 1,
+          column = 1,
+          message = "Missing 'compatibility_date' in $wranglerName",
+          severity = DiagnosticSeverity.WARNING,
+          length = 1,
+        ),
+      )
+    } else if (!Regex("""^\d{4}-\d{2}-\d{2}$""").matches(compatDate)) {
+      diagnostics.add(
+        DiagnosticItem(
+          filePath = wranglerFile.path,
+          line = findLineContaining("compatibility_date"),
+          column = 1,
+          message = "Invalid compatibility_date '$compatDate' — expected YYYY-MM-DD",
+          severity = DiagnosticSeverity.ERROR,
+          length = "compatibility_date".length,
+        ),
+      )
+    }
+
+    // 2. Validate main entrypoint file exists when declared
+    val declaredMain = parsed.main?.trim()?.removePrefix("./").orEmpty()
+    if (declaredMain.isNotEmpty()) {
+      val normalizedPaths = workspaceFiles.map { it.path.removePrefix("./") }.toSet()
+      if (declaredMain !in normalizedPaths) {
+        diagnostics.add(
+          DiagnosticItem(
+            filePath = wranglerFile.path,
+            line = findLineContaining(declaredMain),
+            column = 1,
+            message = "Entry module '$declaredMain' referenced by 'main' was not found in workspace",
+            severity = DiagnosticSeverity.WARNING,
+            length = declaredMain.length.coerceAtLeast(1),
+          ),
+        )
+      }
+    }
+
+    // 3. Validate duplicate bindings & required resource identifiers
+    val seenBindings = HashSet<String>()
+    parsed.bindings.forEach { binding ->
+      if (!seenBindings.add(binding.name)) {
+        diagnostics.add(
+          DiagnosticItem(
+            filePath = wranglerFile.path,
+            line = findLineContaining(binding.name),
+            column = 1,
+            message = "Duplicate binding name '${binding.name}' in $wranglerName",
+            severity = DiagnosticSeverity.ERROR,
+            length = binding.name.length.coerceAtLeast(1),
+          ),
+        )
+      }
+      when (binding.type) {
+        "kv_namespace" ->
+          if (binding.namespaceId.isNullOrBlank()) {
+            diagnostics.add(
+              DiagnosticItem(
+                filePath = wranglerFile.path,
+                line = findLineContaining(binding.name),
+                column = 1,
+                message = "KV binding '${binding.name}' is missing namespace 'id'",
+                severity = DiagnosticSeverity.WARNING,
+                length = binding.name.length.coerceAtLeast(1),
+              ),
+            )
+          }
+        "d1" ->
+          if (binding.databaseId.isNullOrBlank()) {
+            diagnostics.add(
+              DiagnosticItem(
+                filePath = wranglerFile.path,
+                line = findLineContaining(binding.name),
+                column = 1,
+                message = "D1 binding '${binding.name}' is missing 'database_id'",
+                severity = DiagnosticSeverity.WARNING,
+                length = binding.name.length.coerceAtLeast(1),
+              ),
+            )
+          }
+        "r2_bucket" ->
+          if (binding.bucketName.isNullOrBlank()) {
+            diagnostics.add(
+              DiagnosticItem(
+                filePath = wranglerFile.path,
+                line = findLineContaining(binding.name),
+                column = 1,
+                message = "R2 binding '${binding.name}' is missing 'bucket_name'",
+                severity = DiagnosticSeverity.WARNING,
+                length = binding.name.length.coerceAtLeast(1),
+              ),
+            )
+          }
+        "queue" ->
+          if (binding.queueName.isNullOrBlank()) {
+            diagnostics.add(
+              DiagnosticItem(
+                filePath = wranglerFile.path,
+                line = findLineContaining(binding.name),
+                column = 1,
+                message = "Queue binding '${binding.name}' is missing 'queue'",
+                severity = DiagnosticSeverity.WARNING,
+                length = binding.name.length.coerceAtLeast(1),
+              ),
+            )
+          }
+        "service" ->
+          if (binding.service.isNullOrBlank()) {
+            diagnostics.add(
+              DiagnosticItem(
+                filePath = wranglerFile.path,
+                line = findLineContaining(binding.name),
+                column = 1,
+                message = "Service binding '${binding.name}' is missing target 'service'",
+                severity = DiagnosticSeverity.ERROR,
+                length = binding.name.length.coerceAtLeast(1),
+              ),
+            )
+          }
+      }
+    }
+
+    // 4. Validate cron trigger syntax (5 fields)
+    parsed.crons.forEach { cron ->
+      val fields = cron.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+      if (fields.size != 5) {
+        diagnostics.add(
+          DiagnosticItem(
+            filePath = wranglerFile.path,
+            line = findLineContaining(cron),
+            column = 1,
+            message = "Invalid cron expression '$cron' — expected 5 space-separated fields",
+            severity = DiagnosticSeverity.ERROR,
+            length = cron.length.coerceAtLeast(1),
+          ),
+        )
+      }
+    }
+
+    // 5. Cross-file check: warn on unguarded env.<BINDING> references missing from wrangler config
+    val declaredBindingNames = parsed.bindings.map { it.name }.toSet()
+    val envRefRegex = Regex("""(?<![.\w$])env\.([A-Za-z_$][A-Za-z0-9_$]*)\b""")
+    workspaceFiles
+      .filter { it.language == WorkerLanguage.JAVASCRIPT || it.language == WorkerLanguage.TYPESCRIPT }
+      .forEach { scriptFile ->
+        val maskedLines = maskJsCommentsAndStringsPreservingLines(scriptFile.content).lines()
+        maskedLines.forEachIndexed { idx, lineText ->
+          val lineNum = idx + 1
+          envRefRegex.findAll(lineText).forEach { match ->
+            val bindingName = match.groupValues[1]
+            if (bindingName !in declaredBindingNames && !isGuardedEnvAccess(lineText, bindingName)) {
+              diagnostics.add(
+                DiagnosticItem(
+                  filePath = scriptFile.path,
+                  line = lineNum,
+                  column = match.range.first + 1,
+                  message = "Binding 'env.$bindingName' is not declared in $wranglerName",
+                  severity = DiagnosticSeverity.WARNING,
+                  length = match.value.length,
+                ),
+              )
+            }
+          }
+        }
+      }
+
+    return diagnostics
+  }
+
+  private fun isGuardedEnvAccess(lineText: String, bindingName: String): Boolean {
+    val esc = Regex.escape(bindingName)
+    if (Regex("""\btypeof\s+env\.$esc\b""").containsMatchIn(lineText)) return true
+    if (Regex("""\benv\.$esc\s*(\?\?|\|\||&&|\?(?!\.))""").containsMatchIn(lineText)) return true
+    if (Regex("""\bif\s*\([^)]*\benv\.$esc\b""").containsMatchIn(lineText)) return true
+    return false
+  }
+
+  private fun maskJsCommentsAndStringsPreservingLines(code: String): String {
+    val out = StringBuilder(code.length)
+    var i = 0
+    val len = code.length
+    while (i < len) {
+      val c = code[i]
+      val next = if (i + 1 < len) code[i + 1] else '\u0000'
+      if (c == '/' && next == '/') {
+        out.append("  ")
+        i += 2
+        while (i < len && code[i] != '\n') {
+          out.append(' ')
+          i++
+        }
+        continue
+      }
+      if (c == '/' && next == '*') {
+        out.append("  ")
+        i += 2
+        while (i < len) {
+          if (code[i] == '*' && i + 1 < len && code[i + 1] == '/') {
+            out.append("  ")
+            i += 2
+            break
+          }
+          out.append(if (code[i] == '\n') '\n' else ' ')
+          i++
+        }
+        continue
+      }
+      if (c == '"' || c == '\'' || c == '`') {
+        val q = c
+        out.append(' ')
+        i++
+        while (i < len) {
+          val ch = code[i]
+          if (ch == '\\' && i + 1 < len) {
+            out.append(' ')
+            out.append(if (code[i + 1] == '\n') '\n' else ' ')
+            i += 2
+            continue
+          }
+          if (ch == q) {
+            out.append(' ')
+            i++
+            break
+          }
+          out.append(if (ch == '\n') '\n' else ' ')
+          i++
+        }
+        continue
+      }
+      out.append(c)
+      i++
+    }
+    return out.toString()
   }
 }

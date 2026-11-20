@@ -4940,7 +4940,7 @@ export default {
         workspace = nextWs,
         editorFieldValues = nextFields,
         editorRevision = state.editorRevision + 1L,
-        diagnostics = updatedFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+        diagnostics = rebuildDiagnosticsFull(updatedFiles),
         ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else state.ramDbStats,
         statusMessage = "Replaced $totalMatches match(es) across $fileHits $scopeLabel",
       )
@@ -4978,7 +4978,7 @@ export default {
         workspace = nextWs,
         editorFieldValues = nextFields,
         editorRevision = state.editorRevision + 1L,
-        diagnostics = updatedFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+        diagnostics = rebuildDiagnosticsFull(updatedFiles),
         ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else state.ramDbStats,
         statusMessage = "Replaced matches across $fileHits file(s) in RAM",
       )
@@ -6593,7 +6593,7 @@ export default {
           openTabPaths = state.openTabPaths + path,
           activeFilePath = path,
           editorFieldValues = state.editorFieldValues + (path to TextFieldValue(starterContent)),
-          diagnostics = nextFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+          diagnostics = rebuildDiagnosticsFull(nextFiles),
           statusMessage = "Created Pages file '$path'",
         )
       }
@@ -7557,7 +7557,7 @@ jobs:
           else state.editorFieldValues + (path to TextFieldValue(baseContent)),
         editorRevision = state.editorRevision + 1L,
         gitUnstagedExcludedPaths = state.gitUnstagedExcludedPaths - path,
-        diagnostics = nextFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+        diagnostics = rebuildDiagnosticsFull(nextFiles),
         statusMessage = "Discarded changes in $path",
       )
     }
@@ -7632,7 +7632,7 @@ jobs:
                 editorFieldValues =
                   state.editorFieldValues + mergeOutput.mergedEditable.associate { it.path to TextFieldValue(it.content) },
                 editorRevision = state.editorRevision + 1L,
-                diagnostics = nextFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+                diagnostics = rebuildDiagnosticsFull(nextFiles),
                 pendingMergeConflicts = conflicts,
                 showConflictResolverModal = conflicts.isNotEmpty(),
                 statusMessage =
@@ -7680,7 +7680,7 @@ jobs:
                 tabNavHistory = listOf(bundle.detectedEntryPath),
                 tabNavIndex = 0,
                 editorFieldValues = bundle.files.associate { it.path to TextFieldValue(it.content) },
-                diagnostics = bundle.files.flatMap { CodeAnalyzer.analyzeFile(it) },
+                diagnostics = rebuildDiagnosticsFull(bundle.files),
                 statusMessage = "Cloned ${bundle.repo.fullName} (${bundle.files.size} files) as Worker '$workerName'",
               )
             }
@@ -8087,7 +8087,7 @@ jobs:
                 tabNavHistory = listOf(entry),
                 tabNavIndex = 0,
                 editorFieldValues = finalFiles.associate { f -> f.path to TextFieldValue(f.content) },
-                diagnostics = finalFiles.flatMap { f -> CodeAnalyzer.analyzeFile(f) },
+                diagnostics = rebuildDiagnosticsFull(finalFiles),
                 statusMessage = "Pulled ${finalFiles.size} file(s) from ${repo.fullName}",
               )
             }
@@ -8115,7 +8115,7 @@ jobs:
                 editorFieldValues =
                   state.editorFieldValues + mergeOutput.mergedEditable.associate { it.path to TextFieldValue(it.content) },
                 editorRevision = state.editorRevision + 1L,
-                diagnostics = nextFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+                diagnostics = rebuildDiagnosticsFull(nextFiles),
                 pendingMergeConflicts = mergeOutput.conflicts,
                 showConflictResolverModal = mergeOutput.conflicts.isNotEmpty(),
                 statusMessage =
@@ -8399,7 +8399,7 @@ jobs:
         editorFieldValues = nextFields,
         editorRevision = s.editorRevision + 1L,
         gitWorkingBaseline = nextBaseline,
-        diagnostics = nextFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+        diagnostics = rebuildDiagnosticsFull(nextFiles),
         pendingMergeConflicts = emptyList(),
         showConflictResolverModal = false,
         statusMessage = "Applied merged changes across ${conflicts.size} resolved file(s)",
@@ -9285,11 +9285,10 @@ jobs:
 
   private fun rebuildDiagnosticsFull(files: List<WorkerFile>): List<DiagnosticItem> {
     fileDiagnosticsCache.clear()
-    val result = ArrayList<DiagnosticItem>()
+    val result = CodeAnalyzer.analyzeWorkspace(files)
+    val byPath = result.groupBy { it.filePath }
     for (file in files) {
-      val list = CodeAnalyzer.analyzeFile(file)
-      fileDiagnosticsCache[file.path] = list
-      result.addAll(list)
+      fileDiagnosticsCache[file.path] = byPath[file.path].orEmpty()
     }
     return result
   }
@@ -9298,15 +9297,9 @@ jobs:
     editedFile: WorkerFile,
     allFiles: List<WorkerFile>,
   ): List<DiagnosticItem> {
-    fileDiagnosticsCache[editedFile.path] = CodeAnalyzer.analyzeFile(editedFile)
-    val result = ArrayList<DiagnosticItem>()
-    for (file in allFiles) {
-      val cached = fileDiagnosticsCache[file.path] ?: CodeAnalyzer.analyzeFile(file).also {
-        fileDiagnosticsCache[file.path] = it
-      }
-      result.addAll(cached)
-    }
-    return result
+    val updated =
+      allFiles.map { if (it.path == editedFile.path) editedFile else it }
+    return rebuildDiagnosticsFull(updated)
   }
 
   private fun persistWorkspaceToProjectDirAsync(

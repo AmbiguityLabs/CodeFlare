@@ -21,6 +21,7 @@ import com.example.ui.theme.CaAccent
 import com.example.ui.theme.CodeStylePreset
 import com.example.ui.theme.EditorThemePreset
 import com.example.ui.theme.UiStyleVersion
+import com.example.ui.theme.applyCodeStylePreset
 import com.example.ui.theme.bridgedTo
 import com.example.ui.theme.expressiveColorScheme
 import com.example.ui.theme.expressiveColorSchemeFromSeed
@@ -672,5 +673,33 @@ class SettingsAndPreferencesTest {
       EditorBubbleColorStyle.MONO_GLASS,
       EditorBubbleColorStyle.fromKey("mono_glass"),
     )
+  }
+
+  @Test
+  fun darkModeUsesPureBlackOledAndLightUiDecouplesDarkCodeStyleCanvas() {
+    val darkScheme = expressiveColorSchemeFromSeed(darkTheme = true, seedHex = "#6366F1")
+    assertEquals(Color(0xFF000000), darkScheme.background)
+    assertEquals(Color(0xFF000000), darkScheme.surface)
+
+    val darkV1 =
+      paletteFor(darkTheme = true, preset = EditorThemePreset.OLIVE_OBSIDIAN, uiStyle = UiStyleVersion.V1_DEFAULT)
+        .bridgedTo(darkScheme)
+    assertEquals(Color(0xFF000000), darkV1.chromeBg)
+    assertEquals(Color(0xFF000000), darkV1.tabBarBg)
+
+    val lightScheme = expressiveColorSchemeFromSeed(darkTheme = false, seedHex = "#6366F1")
+    val lightWithDarkCanvas =
+      applyCodeStylePreset(
+        paletteFor(darkTheme = false, preset = EditorThemePreset.OLIVE_OBSIDIAN, uiStyle = UiStyleVersion.V1_DEFAULT),
+        codeStyle = CodeStylePreset.NEON_QUERY,
+        overrideCanvas = true,
+      ).bridgedTo(lightScheme)
+
+    // UI textPrimary must remain dark ink matching Light UI chrome, while editor canvas ink gets NEON_QUERY light text
+    assertEquals(lightScheme.onSurface, lightWithDarkCanvas.textPrimary)
+    assertEquals(CodeStylePreset.NEON_QUERY.canvasTextPrimary, lightWithDarkCanvas.editorTextPrimary)
+    assertEquals(CodeStylePreset.NEON_QUERY.canvasBg, lightWithDarkCanvas.editorBg)
+    assertNotEquals(lightWithDarkCanvas.textPrimary, lightWithDarkCanvas.editorTextPrimary)
+    assertTrue(lightWithDarkCanvas.hasEditorCanvasOverride)
   }
 }

@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
@@ -139,6 +140,17 @@ class MainActivity : ComponentActivity() {
 
       val systemDark = isSystemInDarkTheme()
       val effectiveDarkTheme = uiState.editorSettings.resolveDarkTheme(systemDark)
+      LaunchedEffect(effectiveDarkTheme) {
+        val transparent = android.graphics.Color.TRANSPARENT
+        enableEdgeToEdge(
+          statusBarStyle =
+            if (effectiveDarkTheme) SystemBarStyle.dark(transparent)
+            else SystemBarStyle.light(transparent, transparent),
+          navigationBarStyle =
+            if (effectiveDarkTheme) SystemBarStyle.dark(transparent)
+            else SystemBarStyle.light(transparent, transparent),
+        )
+      }
       EdgeCodeTheme(
         darkTheme = effectiveDarkTheme,
         dynamicColor = uiState.editorSettings.dynamicColor,
@@ -158,7 +170,7 @@ class MainActivity : ComponentActivity() {
         editorSettings = uiState.editorSettings,
       ) {
         val palette = LocalIdePalette.current
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxSize().background(palette.chromeBg)) {
           when {
             uiState.isBootstrapping -> {
               Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -215,7 +227,7 @@ class MainActivity : ComponentActivity() {
               modifier =
                 Modifier
                   .fillMaxSize()
-                  .background(if (palette.isDark) Color(0xFF0B0D1E) else Color(0xFFF4F5FB))
+                  .background(if (palette.isDark) Color(0xFF000000) else Color(0xFFFFFFFF))
                   .clickable(
                     enabled = !uiState.isBootstrapping,
                     interactionSource = remember { MutableInteractionSource() },

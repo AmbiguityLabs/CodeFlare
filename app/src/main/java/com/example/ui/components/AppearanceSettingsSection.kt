@@ -627,6 +627,8 @@ fun EditorAppearanceStudioContent(
     )
 
     val previewBubbleController = remember { EditorBubbleController() }
+    val floatingController = LocalFloatingPreviewController.current
+    val bgPreviewId = "editor_bg_live_preview"
     val bgSummary =
       if (activeBgPreset == EditorBackgroundPreset.CUSTOM && hasCustomPhotoFile) "Custom"
       else activeBgPreset.label
@@ -635,23 +637,34 @@ fun EditorAppearanceStudioContent(
       icon = Icons.Outlined.Wallpaper,
       summary = bgSummary,
       initiallyExpanded = false,
+      onExpandedChange = { expanded -> if (expanded) floatingController?.select(bgPreviewId) },
       contentPadding = 12.dp,
     ) {
-      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        InteractiveEditorBackgroundPreview(
-        settings = settings,
-        hasActiveBg = hasActiveBg,
-        bubbleController = previewBubbleController,
-        onPanDelta = { dxNorm, dyNorm ->
-          onUpdateSettings { cur ->
-            val maxShift = ((cur.editorBgZoom - 1f) * 0.45f).coerceIn(0f, 0.5f)
-            cur.copy(
-              editorBgOffsetX = (cur.editorBgOffsetX + dxNorm).coerceIn(-maxShift, maxShift),
-              editorBgOffsetY = (cur.editorBgOffsetY + dyNorm).coerceIn(-maxShift, maxShift),
-            )
-          }
-        },
-      )
+      Column(
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.activatePreviewOnTouch(bgPreviewId),
+      ) {
+        SettingsPreviewSlot(
+          id = bgPreviewId,
+          title = "Editor Background",
+          shortLabel = "Background",
+          order = 4,
+        ) {
+          InteractiveEditorBackgroundPreview(
+            settings = settings,
+            hasActiveBg = hasActiveBg,
+            bubbleController = previewBubbleController,
+            onPanDelta = { dxNorm, dyNorm ->
+              onUpdateSettings { cur ->
+                val maxShift = ((cur.editorBgZoom - 1f) * 0.45f).coerceIn(0f, 0.5f)
+                cur.copy(
+                  editorBgOffsetX = (cur.editorBgOffsetX + dxNorm).coerceIn(-maxShift, maxShift),
+                  editorBgOffsetY = (cur.editorBgOffsetY + dyNorm).coerceIn(-maxShift, maxShift),
+                )
+              }
+            },
+          )
+        }
 
       Row(
         modifier = Modifier.fillMaxWidth(),
@@ -735,7 +748,7 @@ fun EditorAppearanceStudioContent(
           Surface(
             onClick = { onUpdateSettings { it.copy(editorBgPreset = bg.key) } },
             shape = RoundedCornerShape(8.dp),
-            color = if (selected) palette.activePillBg else palette.editorBg,
+            color = if (selected) palette.activePillBg else palette.chromeSurface,
             border =
               BorderStroke(
                 0.75.dp,
@@ -769,7 +782,7 @@ fun EditorAppearanceStudioContent(
 
       if (hasActiveBg) {
         Surface(
-          color = palette.editorBg,
+          color = palette.chromeSurface,
           shape = RoundedCornerShape(10.dp),
           border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.55f)),
           modifier = Modifier.fillMaxWidth(),
@@ -974,70 +987,84 @@ query("SELECT * FROM marks", function (sets) {
       SyntaxHighlighter.highlight(activeSample, activeLang, previewPalette)
     }
 
+  val floatingController = LocalFloatingPreviewController.current
+  val codeStylePreviewId = "code_style_live_preview"
+
   SettingsFoldableSection(
     title = "Code Style References",
     icon = Icons.Outlined.Palette,
     summary = activeCodeStyle.label,
     initiallyExpanded = true,
+    onExpandedChange = { expanded -> if (expanded) floatingController?.select(codeStylePreviewId) },
     contentPadding = 14.dp,
     modifier = Modifier.testTag("settings_code_style_section"),
   ) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-      // Live Code Style Preview
-      Surface(
-        color = previewPalette.editorBg,
-        shape = RoundedCornerShape(Ca.radius.control),
-        border = BorderStroke(0.75.dp, scheme.outlineVariant.copy(alpha = 0.7f)),
-        modifier = Modifier.fillMaxWidth().testTag("settings_code_style_live_preview"),
+    Column(
+      verticalArrangement = Arrangement.spacedBy(12.dp),
+      modifier = Modifier.activatePreviewOnTouch(codeStylePreviewId),
+    ) {
+      SettingsPreviewSlot(
+        id = codeStylePreviewId,
+        title = "Code Style References",
+        shortLabel = "Code Style",
+        order = 1,
       ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-          Row(
-            modifier =
-              Modifier
-                .fillMaxWidth()
-                .background(previewPalette.editorGutterBg)
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-          ) {
-            Text(
-              text = "${activeCodeStyle.label} · ${if (previewHtml) "index.html" else "query.js"}",
-              fontFamily = JetBrainsMono,
-              fontSize = 10.sp,
-              fontWeight = FontWeight.SemiBold,
-              color = previewPalette.textPrimary,
-              maxLines = 1,
-              overflow = TextOverflow.Ellipsis,
-              modifier = Modifier.weight(1f),
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-              QuickPresetChip(
-                label = "JS",
-                selected = !previewHtml,
-                onClick = { previewHtml = false },
+        // Live Code Style Preview
+        Surface(
+          color = previewPalette.editorBg,
+          shape = RoundedCornerShape(Ca.radius.control),
+          border = BorderStroke(0.75.dp, scheme.outlineVariant.copy(alpha = 0.7f)),
+          modifier = Modifier.fillMaxWidth().testTag("settings_code_style_live_preview"),
+        ) {
+          Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+              modifier =
+                Modifier
+                  .fillMaxWidth()
+                  .background(previewPalette.editorGutterBg)
+                  .padding(horizontal = 10.dp, vertical = 6.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Text(
+                text = "${activeCodeStyle.label} · ${if (previewHtml) "index.html" else "query.js"}",
+                fontFamily = JetBrainsMono,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = previewPalette.editorTextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
               )
-              QuickPresetChip(
-                label = "HTML",
-                selected = previewHtml,
-                onClick = { previewHtml = true },
+              Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                QuickPresetChip(
+                  label = "JS",
+                  selected = !previewHtml,
+                  onClick = { previewHtml = false },
+                )
+                QuickPresetChip(
+                  label = "HTML",
+                  selected = previewHtml,
+                  onClick = { previewHtml = true },
+                )
+              }
+            }
+            HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.35f), thickness = 0.75.dp)
+            Box(
+              modifier =
+                Modifier
+                  .fillMaxWidth()
+                  .horizontalScroll(rememberScrollState())
+                  .padding(horizontal = 10.dp, vertical = 9.dp),
+            ) {
+              Text(
+                text = highlightedSample,
+                fontFamily = JetBrainsMono,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                color = previewPalette.editorTextPrimary,
               )
             }
-          }
-          HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.35f), thickness = 0.75.dp)
-          Box(
-            modifier =
-              Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 10.dp, vertical = 9.dp),
-          ) {
-            Text(
-              text = highlightedSample,
-              fontFamily = JetBrainsMono,
-              fontSize = 11.sp,
-              lineHeight = 16.sp,
-              color = previewPalette.textPrimary,
-            )
           }
         }
       }
@@ -1377,7 +1404,9 @@ private fun EditorBubblesCustomizationSection(
   onUpdateSettings: ((EditorSettings) -> EditorSettings) -> Unit,
 ) {
   val palette = LocalIdePalette.current
+  val floatingController = LocalFloatingPreviewController.current
   val cfg = settings.editorBubbles.normalized()
+  val bubblesPreviewId = "editor_bubbles_live_preview"
   val summaryText =
     if (cfg.enabled) "${cfg.count} · ${cfg.colorStyle.label}"
     else "Off"
@@ -1387,16 +1416,27 @@ private fun EditorBubblesCustomizationSection(
     icon = Icons.Outlined.BubbleChart,
     summary = summaryText,
     initiallyExpanded = false,
+    onExpandedChange = { expanded -> if (expanded) floatingController?.select(bubblesPreviewId) },
     contentPadding = 12.dp,
     modifier = Modifier.testTag("settings_editor_bubbles_section"),
   ) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-      InteractiveEditorBackgroundPreview(
-        settings = settings,
-        hasActiveBg = hasActiveBg,
-        bubbleController = previewBubbleController,
-        onPanDelta = { _, _ -> },
-      )
+    Column(
+      verticalArrangement = Arrangement.spacedBy(10.dp),
+      modifier = Modifier.activatePreviewOnTouch(bubblesPreviewId),
+    ) {
+      SettingsPreviewSlot(
+        id = bubblesPreviewId,
+        title = "Floating Bubbles",
+        shortLabel = "Bubbles",
+        order = 5,
+      ) {
+        InteractiveEditorBackgroundPreview(
+          settings = settings,
+          hasActiveBg = hasActiveBg,
+          bubbleController = previewBubbleController,
+          onPanDelta = { _, _ -> },
+        )
+      }
 
       if (cfg.enabled && cfg.tapToPop) {
         Text(
@@ -1419,7 +1459,7 @@ private fun EditorBubblesCustomizationSection(
 
       if (cfg.enabled) {
         Surface(
-          color = palette.editorBg,
+          color = palette.chromeSurface,
           shape = RoundedCornerShape(10.dp),
           border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.55f)),
           modifier = Modifier.fillMaxWidth(),

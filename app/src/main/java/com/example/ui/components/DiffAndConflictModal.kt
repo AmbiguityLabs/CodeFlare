@@ -412,7 +412,7 @@ private fun UnifiedDiffList(
         when (line.type) {
           DiffType.ADDED -> EmeraldLive
           DiffType.REMOVED -> RoseError
-          DiffType.UNCHANGED -> palette.textMuted
+          DiffType.UNCHANGED -> palette.editorTextMuted
         }
       val sign =
         when (line.type) {
@@ -438,7 +438,7 @@ private fun UnifiedDiffList(
         Text(
           text = styledLine,
           style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp),
-          color = palette.textPrimary,
+          color = palette.editorTextPrimary,
           softWrap = false,
         )
       }
@@ -528,7 +528,7 @@ private fun SideBySideCell(
     when (kind) {
       DiffCellKind.REMOVED -> RoseError
       DiffCellKind.ADDED -> EmeraldLive
-      else -> palette.textMuted
+      else -> palette.editorTextMuted
     }
   val prefix =
     when (kind) {
@@ -553,7 +553,7 @@ private fun SideBySideCell(
     Text(
       text = styledText,
       style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.sp),
-      color = palette.textPrimary,
+      color = palette.editorTextPrimary,
       softWrap = false,
     )
   }
@@ -719,7 +719,7 @@ fun ConflictResolverModal(
 
           HorizontalDivider(color = palette.border.copy(alpha = 0.35f))
 
-          Box(modifier = Modifier.weight(1f).fillMaxWidth().background(palette.editorBg)) {
+          Box(modifier = Modifier.weight(1f).fillMaxWidth().background(palette.chromeBg)) {
             if (showFullMergedPreview || activeFile.hunks.isEmpty()) {
               Column(
                 modifier =

@@ -367,7 +367,7 @@ fun DeployedWorkerPreviewPane(
               .weight(1f)
               .height(36.dp)
               .clip(RoundedCornerShape(8.dp))
-              .background(palette.editorBg)
+              .background(palette.chromeBg)
               .border(1.dp, palette.border.copy(alpha = 0.65f), RoundedCornerShape(8.dp))
               .edgeTextDropTarget(
                 targetSurfaceId = "Preview URL",
@@ -434,7 +434,7 @@ fun DeployedWorkerPreviewPane(
         Modifier
           .weight(1f)
           .fillMaxWidth()
-          .background(palette.editorBg),
+          .background(palette.chromeBg),
     ) {
       if (uiState.previewModeTab == 0) {
         val currentTarget = normalizeWorkerUrl(uiState.previewUrl)
@@ -600,7 +600,7 @@ fun DeployedWorkerPreviewPane(
             val errMsg = loadErrorMessage
             if (errMsg != null) {
               Box(
-                modifier = Modifier.fillMaxSize().background(palette.editorBg.copy(alpha = 0.96f)).padding(20.dp),
+                modifier = Modifier.fillMaxSize().background(palette.chromeBg.copy(alpha = 0.96f)).padding(20.dp),
                 contentAlignment = Alignment.Center,
               ) {
                 Surface(
@@ -770,7 +770,7 @@ fun DeployedWorkerPreviewPane(
       if (uiState.isPreviewConsoleExpanded) {
         HorizontalDivider(color = palette.border.copy(alpha = 0.35f))
         Box(
-          modifier = Modifier.fillMaxWidth().background(palette.editorBg),
+          modifier = Modifier.fillMaxWidth().background(palette.chromeBg),
         ) {
           if (uiState.previewConsoleEntries.isEmpty()) {
             Box(

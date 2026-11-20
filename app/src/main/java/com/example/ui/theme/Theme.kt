@@ -83,13 +83,8 @@ fun EdgeCodeTheme(
       )
     }
   val palette =
-    remember(basePalette, resolvedExpressiveScheme, uiStyle, codeStyle, codeStyleOverrideCanvas) {
-      val bridged = basePalette.bridgedTo(resolvedExpressiveScheme)
-      if (codeStyle != CodeStylePreset.THEME_DEFAULT && codeStyleOverrideCanvas) {
-        bridged.copy(textPrimary = basePalette.textPrimary)
-      } else {
-        bridged
-      }
+    remember(basePalette, resolvedExpressiveScheme) {
+      basePalette.bridgedTo(resolvedExpressiveScheme)
     }
   val colorScheme = resolvedExpressiveScheme
 

@@ -248,7 +248,7 @@ fun WorkerTestWindow(
             .weight(1f)
             .height(40.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(palette.editorBg)
+            .background(palette.chromeBg)
             .border(1.dp, palette.border.copy(alpha = 0.65f), RoundedCornerShape(10.dp))
             .edgeTextDropTarget(
               targetSurfaceId = "Worker URL",
@@ -823,7 +823,7 @@ fun WorkerTestWindow(
                   Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(8.dp))
-                    .background(palette.editorBg)
+                    .background(palette.chromeBg)
                     .border(0.5.dp, palette.border.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
                     .padding(horizontal = 8.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -949,7 +949,7 @@ fun WorkerTestWindow(
             }
 
             Surface(
-              color = palette.editorBg,
+              color = palette.chromeBg,
               shape = RoundedCornerShape(8.dp),
               border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.55f)),
               modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = if (responseExpanded) 520.dp else 320.dp),

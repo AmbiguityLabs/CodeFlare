@@ -68,84 +68,94 @@ fun FloatingBarCustomizerSection(
 ) {
   val palette = LocalIdePalette.current
   val globalLabelBehavior = LocalIconLabelBehavior.current
+  val floatingController = LocalFloatingPreviewController.current
   val cfg = config.normalized()
   var selectedPreviewIndex by remember { mutableIntStateOf(0) }
   val summaryText = "${cfg.heightDp}dp · ${cfg.widthPercent}% · ${(cfg.opacity * 100f).roundToInt()}%"
+  val previewId = "${tagPrefix}_live_preview"
 
   SettingsFoldableSection(
     title = title,
     icon = Icons.Outlined.Tune,
     summary = summaryText,
     initiallyExpanded = initiallyExpanded,
+    onExpandedChange = { expanded -> if (expanded) floatingController?.select(previewId) },
     contentPadding = 12.dp,
   ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-      Box(
-        modifier =
-          Modifier
-            .fillMaxWidth()
-            .height((cfg.heightDp + cfg.bottomMarginDp + 56).coerceAtLeast(126).dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(
-              Brush.linearGradient(
-                colors =
-                  if (palette.isDark) {
-                    listOf(Color(0xFF151923), Color(0xFF282034), Color(0xFF13222B))
-                  } else {
-                    listOf(Color(0xFFDCE6F4), Color(0xFFEBDFF2), Color(0xFFD8EBE8))
-                  },
-              ),
-            )
-            .border(0.75.dp, palette.border.copy(alpha = 0.55f), RoundedCornerShape(16.dp))
-            .testTag("${tagPrefix}_live_preview"),
+      SettingsPreviewSlot(
+        id = previewId,
+        title = title,
+        shortLabel = if (title.contains("Home")) "Home Bar" else "Editor Bar",
+        order = if (tagPrefix.startsWith("home")) 1 else 2,
       ) {
-        Row(
-          modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-          horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-          repeat(3) { idx ->
-            Box(
-              modifier =
-                Modifier
-                  .weight(1f)
-                  .height(44.dp)
-                  .clip(RoundedCornerShape(10.dp))
-                  .background(
-                    when (idx) {
-                      0 -> palette.activePillFg.copy(alpha = 0.24f)
-                      1 -> Color(0xFF38BDF8).copy(alpha = 0.22f)
-                      else -> Color(0xFFF59E0B).copy(alpha = 0.22f)
+        Box(
+          modifier =
+            Modifier
+              .fillMaxWidth()
+              .height((cfg.heightDp + cfg.bottomMarginDp + 56).coerceAtLeast(126).dp)
+              .clip(RoundedCornerShape(16.dp))
+              .background(
+                Brush.linearGradient(
+                  colors =
+                    if (palette.isDark) {
+                      listOf(Color(0xFF151923), Color(0xFF282034), Color(0xFF13222B))
+                    } else {
+                      listOf(Color(0xFFDCE6F4), Color(0xFFEBDFF2), Color(0xFFD8EBE8))
                     },
-                  ),
+                ),
+              )
+              .border(0.75.dp, palette.border.copy(alpha = 0.55f), RoundedCornerShape(16.dp))
+              .testTag("${tagPrefix}_live_preview"),
+        ) {
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+          ) {
+            repeat(3) { idx ->
+              Box(
+                modifier =
+                  Modifier
+                    .weight(1f)
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(
+                      when (idx) {
+                        0 -> palette.activePillFg.copy(alpha = 0.24f)
+                        1 -> Color(0xFF38BDF8).copy(alpha = 0.22f)
+                        else -> Color(0xFFF59E0B).copy(alpha = 0.22f)
+                      },
+                    ),
+              )
+            }
+          }
+
+          val dockPreviewItems =
+            previewItems.mapIndexed { idx, (label, icon, badge) ->
+              EdgeBottomDockItem(
+                label = label,
+                icon = icon,
+                selected = idx == selectedPreviewIndex,
+                testTag = "${tagPrefix}_preview_item_$idx",
+                badgeText = badge,
+                onClick = { selectedPreviewIndex = idx },
+              )
+            }
+
+          Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+            EdgeBottomDock(
+              items = dockPreviewItems,
+              barStyle = cfg,
             )
           }
-        }
-
-        val dockPreviewItems =
-          previewItems.mapIndexed { idx, (label, icon, badge) ->
-            EdgeBottomDockItem(
-              label = label,
-              icon = icon,
-              selected = idx == selectedPreviewIndex,
-              testTag = "${tagPrefix}_preview_item_$idx",
-              badgeText = badge,
-              onClick = { selectedPreviewIndex = idx },
-            )
-          }
-
-        Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
-          EdgeBottomDock(
-            items = dockPreviewItems,
-            barStyle = cfg,
-          )
         }
       }
 
       Surface(
-        color = palette.editorBg,
+        color = palette.chromeSurface,
         shape = RoundedCornerShape(12.dp),
         border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.5f)),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().activatePreviewOnTouch(previewId),
       ) {
         Column(
           modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
@@ -277,69 +287,79 @@ fun PopupMenuCustomizerSection(
   initiallyExpanded: Boolean = false,
 ) {
   val palette = LocalIdePalette.current
+  val floatingController = LocalFloatingPreviewController.current
   val cfg = config.normalized()
   val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   var selectedRowIdx by remember { mutableIntStateOf(0) }
   val summaryText = "${cfg.widthDp}dp · ${cfg.itemHeightDp}dp · ${(cfg.opacity * 100f).roundToInt()}%"
+  val previewId = "${tagPrefix}_live_preview"
 
   SettingsFoldableSection(
     title = title,
     icon = Icons.AutoMirrored.Outlined.MenuOpen,
     summary = summaryText,
     initiallyExpanded = initiallyExpanded,
+    onExpandedChange = { expanded -> if (expanded) floatingController?.select(previewId) },
     contentPadding = 12.dp,
   ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-      BoxWithConstraints(
-        modifier =
-          Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(
-              Brush.linearGradient(
-                colors =
-                  if (palette.isDark) {
-                    listOf(Color(0xFF141821), Color(0xFF231D2E), Color(0xFF121F24))
-                  } else {
-                    listOf(Color(0xFFDDE7F4), Color(0xFFECE2F4), Color(0xFFDAEBE6))
-                  },
-              ),
-            )
-            .border(0.75.dp, palette.border.copy(alpha = 0.55f), RoundedCornerShape(16.dp))
-            .padding(vertical = 14.dp, horizontal = 10.dp)
-            .testTag("${tagPrefix}_live_preview"),
-        contentAlignment = Alignment.Center,
+      SettingsPreviewSlot(
+        id = previewId,
+        title = title,
+        shortLabel = if (title.contains("Home")) "Home Menu" else "Editor Menu",
+        order = 3,
       ) {
-        val previewMaxWidth = (maxWidth - 4.dp).coerceAtLeast(164.dp)
-        val previewWidth = cfg.widthDp.dp.coerceAtMost(previewMaxWidth)
-        val borderColor =
-          if (isV2 && palette.isDark) Color.White.copy(alpha = cfg.borderOpacity)
-          else palette.glassBorderHighlight.copy(alpha = cfg.borderOpacity)
-
-        CompositionLocalProvider(LocalPopupMenuStyle provides cfg) {
-          Surface(
-            color = palette.chromeSurface.copy(alpha = cfg.opacity),
-            shape = RoundedCornerShape(cfg.cornerRadiusDp.dp),
-            shadowElevation = if (cfg.opacity > 0.45f) 8.dp else 3.dp,
-            border = if (cfg.borderOpacity > 0.01f) BorderStroke(if (isV2) 0.9.dp else 0.75.dp, borderColor) else null,
-            modifier = Modifier.widthIn(max = previewWidth).width(previewWidth),
-          ) {
-            Column(
-              modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 5.dp),
-              verticalArrangement = Arrangement.spacedBy(1.dp),
-            ) {
-              EdgeMenuHeader(
-                title = previewHeader,
-                badgeText = "${previewRows.size}",
+        BoxWithConstraints(
+          modifier =
+            Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(16.dp))
+              .background(
+                Brush.linearGradient(
+                  colors =
+                    if (palette.isDark) {
+                      listOf(Color(0xFF141821), Color(0xFF231D2E), Color(0xFF121F24))
+                    } else {
+                      listOf(Color(0xFFDDE7F4), Color(0xFFECE2F4), Color(0xFFDAEBE6))
+                    },
+                ),
               )
-              previewRows.forEachIndexed { idx, (label, icon, badge) ->
-                EdgeMenuItem(
-                  label = label,
-                  icon = icon,
-                  badgeText = badge,
-                  selected = idx == selectedRowIdx,
-                  onClick = { selectedRowIdx = idx },
+              .border(0.75.dp, palette.border.copy(alpha = 0.55f), RoundedCornerShape(16.dp))
+              .padding(vertical = 14.dp, horizontal = 10.dp)
+              .testTag("${tagPrefix}_live_preview"),
+          contentAlignment = Alignment.Center,
+        ) {
+          val previewMaxWidth = (maxWidth - 4.dp).coerceAtLeast(164.dp)
+          val previewWidth = cfg.widthDp.dp.coerceAtMost(previewMaxWidth)
+          val borderColor =
+            if (isV2 && palette.isDark) Color.White.copy(alpha = cfg.borderOpacity)
+            else palette.glassBorderHighlight.copy(alpha = cfg.borderOpacity)
+
+          CompositionLocalProvider(LocalPopupMenuStyle provides cfg) {
+            Surface(
+              color = palette.chromeSurface.copy(alpha = cfg.opacity),
+              shape = RoundedCornerShape(cfg.cornerRadiusDp.dp),
+              shadowElevation = if (cfg.opacity > 0.45f) 8.dp else 3.dp,
+              border = if (cfg.borderOpacity > 0.01f) BorderStroke(if (isV2) 0.9.dp else 0.75.dp, borderColor) else null,
+              modifier = Modifier.widthIn(max = previewWidth).width(previewWidth),
+            ) {
+              Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 5.dp),
+                verticalArrangement = Arrangement.spacedBy(1.dp),
+              ) {
+                EdgeMenuHeader(
+                  title = previewHeader,
+                  badgeText = "${previewRows.size}",
                 )
+                previewRows.forEachIndexed { idx, (label, icon, badge) ->
+                  EdgeMenuItem(
+                    label = label,
+                    icon = icon,
+                    badgeText = badge,
+                    selected = idx == selectedRowIdx,
+                    onClick = { selectedRowIdx = idx },
+                  )
+                }
               }
             }
           }
@@ -347,10 +367,10 @@ fun PopupMenuCustomizerSection(
       }
 
       Surface(
-        color = palette.editorBg,
+        color = palette.chromeSurface,
         shape = RoundedCornerShape(12.dp),
         border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.5f)),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().activatePreviewOnTouch(previewId),
       ) {
         Column(
           modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
