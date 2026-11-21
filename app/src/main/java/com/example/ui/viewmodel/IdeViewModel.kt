@@ -2574,7 +2574,7 @@ export default {
       return
     }
     val files = record.workingWorkspace.files
-    val projectName = record.scriptName
+    val projectName = record.workingWorkspace.scriptName
     viewModelScope.launch {
       val result =
         withContext(Dispatchers.IO) {
@@ -2619,7 +2619,7 @@ export default {
       }
       files = rec.workingWorkspace.files
       binaryAssets = emptyMap()
-      projectName = rec.scriptName
+      projectName = rec.workingWorkspace.scriptName
     } else {
       val ws = state.workspace
       if (ws == null) {
