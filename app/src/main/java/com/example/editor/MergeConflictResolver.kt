@@ -231,34 +231,37 @@ object MergeConflictResolver {
     localLabel: String = "LOCAL",
     remoteLabel: String = "REMOTE",
   ): ThreeWayMergeResult {
-    if (localContent == remoteContent) {
+    val normBase = normalizeNewlines(baseContent)
+    val normLocal = normalizeNewlines(localContent)
+    val normRemote = normalizeNewlines(remoteContent)
+    if (normLocal == normRemote) {
       return ThreeWayMergeResult(
         path = path,
-        mergedContent = localContent,
+        mergedContent = normLocal,
         hasConflicts = false,
         hunks = emptyList(),
       )
     }
-    if (localContent == baseContent) {
+    if (normLocal == normBase) {
       return ThreeWayMergeResult(
         path = path,
-        mergedContent = remoteContent,
+        mergedContent = normRemote,
         hasConflicts = false,
         hunks = emptyList(),
       )
     }
-    if (remoteContent == baseContent) {
+    if (normRemote == normBase) {
       return ThreeWayMergeResult(
         path = path,
-        mergedContent = localContent,
+        mergedContent = normLocal,
         hasConflicts = false,
         hunks = emptyList(),
       )
     }
 
-    val baseLines = splitLinesSafe(baseContent)
-    val localLines = splitLinesSafe(localContent)
-    val remoteLines = splitLinesSafe(remoteContent)
+    val baseLines = splitLinesSafe(normBase)
+    val localLines = splitLinesSafe(normLocal)
+    val remoteLines = splitLinesSafe(normRemote)
 
     val localHunks = extractEditHunks(baseLines, localLines)
     val remoteHunks = extractEditHunks(baseLines, remoteLines)
@@ -435,7 +438,11 @@ object MergeConflictResolver {
     return hunks
   }
 
+  private fun normalizeNewlines(text: String): String =
+    if ('\r' in text) text.replace("\r\n", "\n").replace('\r', '\n') else text
+
   private fun splitLinesSafe(text: String): List<String> {
-    return if (text.isEmpty()) emptyList() else text.split('\n')
+    val norm = normalizeNewlines(text)
+    return if (norm.isEmpty()) emptyList() else norm.split('\n')
   }
 }

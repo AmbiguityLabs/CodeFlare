@@ -582,16 +582,21 @@ fun DeployedWorkerPreviewPane(
                 if (webViewRef !== wv) {
                   webViewRef = wv
                 }
-                val desiredUa =
-                  if (uiState.isPreviewDesktopViewport) {
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-                  } else {
-                    null
-                  }
-                if (wv.settings.userAgentString != desiredUa && (uiState.isPreviewDesktopViewport || desiredUa == null)) {
+                val appliedDesktop = wv.tag as? Boolean
+                if (appliedDesktop != uiState.isPreviewDesktopViewport) {
+                  wv.tag = uiState.isPreviewDesktopViewport
+                  val desiredUa =
+                    if (uiState.isPreviewDesktopViewport) {
+                      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+                    } else {
+                      null
+                    }
                   wv.settings.userAgentString = desiredUa
                   wv.settings.useWideViewPort = true
                   wv.settings.loadWithOverviewMode = uiState.isPreviewDesktopViewport
+                  if (appliedDesktop != null && !wv.url.isNullOrBlank()) {
+                    wv.reload()
+                  }
                 }
               },
               modifier = Modifier.fillMaxSize().testTag("deployed_worker_webview"),

@@ -2210,6 +2210,7 @@ private fun ProjectConsoleModeWorkspace(
           LiveTailView(
             uiState = uiState,
             onToggleLiveTail = viewModel::toggleLiveTail,
+            onClearTailLogs = viewModel::clearTailLogs,
           )
 
         BottomPanelTab.PROBLEMS ->

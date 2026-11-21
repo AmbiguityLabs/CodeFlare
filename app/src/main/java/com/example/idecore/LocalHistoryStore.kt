@@ -91,9 +91,22 @@ class LocalHistoryStore(private val rootDir: File) {
   }
 
   private fun writeEntry(dir: File, id: Long, text: String, label: String) {
-    File(dir, "$id.txt").writeText(text, Charsets.UTF_8)
+    writeTextAtomic(File(dir, "$id.txt"), text)
     if (label.isNotBlank()) {
-      File(dir, "$id.meta").writeText(label, Charsets.UTF_8)
+      writeTextAtomic(File(dir, "$id.meta"), label)
+    }
+  }
+
+  private fun writeTextAtomic(target: File, content: String) {
+    target.parentFile?.let { if (!it.exists()) it.mkdirs() }
+    val tmp = File(target.parentFile, ".${target.name}.tmp")
+    tmp.writeText(content, Charsets.UTF_8)
+    if (!tmp.renameTo(target)) {
+      if (target.exists()) target.delete()
+      if (!tmp.renameTo(target)) {
+        target.writeText(content, Charsets.UTF_8)
+        tmp.delete()
+      }
     }
   }
 

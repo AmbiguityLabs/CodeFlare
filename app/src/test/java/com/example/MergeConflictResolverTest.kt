@@ -186,4 +186,27 @@ class MergeConflictResolverTest {
     assertEquals(DiffCellKind.ADDED, last.rightKind)
     assertEquals("d_extra", last.rightText)
   }
+
+  @Test
+  fun threeWayMergeNormalizesCrlfForFastForwardAndConflicts() {
+    val baseLf = "line1\nline2"
+    val localCrlf = "line1\r\nline2"
+    val remoteCrlf = "line1\r\nline2 updated"
+
+    val ff = MergeConflictResolver.threeWayMerge("index.ts", baseLf, localCrlf, remoteCrlf)
+    assertFalse(ff.hasConflicts)
+    assertFalse(ff.mergedContent.contains("\r"))
+    assertEquals("line1\nline2 updated", ff.mergedContent)
+
+    val conflicted =
+      MergeConflictResolver.threeWayMerge(
+        path = "config.ts",
+        baseContent = "mode = 1\r\nok = true",
+        localContent = "mode = 2\r\nok = true",
+        remoteContent = "mode = 3\r\nok = true",
+      )
+    assertTrue(conflicted.hasConflicts)
+    assertFalse(conflicted.mergedContent.contains("\r"))
+    assertEquals(1, conflicted.hunks.size)
+  }
 }

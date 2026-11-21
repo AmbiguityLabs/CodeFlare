@@ -832,7 +832,11 @@ object CodeAnalyzer {
     maskedLines.forEachIndexed { idx, lineText ->
       val lineNum = idx + 1
       val trimmed = lineText.trim()
-      if (trimmed.startsWith("const ") && !trimmed.startsWith("declare ")) {
+      if ((trimmed.startsWith("const ") || trimmed.startsWith("export const ")) &&
+        !trimmed.startsWith("declare ") &&
+        !trimmed.startsWith("export declare ") &&
+        !file.path.endsWith(".d.ts", ignoreCase = true)
+      ) {
         val simpleConst = Regex("""^(?:export\s+)?const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^=;]+)?;\s*$""").find(trimmed)
         if (simpleConst != null) {
           val colIdx = lineText.indexOf("const") + 1
@@ -848,7 +852,6 @@ object CodeAnalyzer {
           )
         }
       }
-      // Malformed import ... from ; (missing specifier string) — verify against unmasked raw source!
       val fromMatch = if (importFromPattern.containsMatchIn(lineText)) Regex("""\bfrom\b""").find(lineText) else null
       if (fromMatch != null) {
         val rawLine = rawLines.getOrElse(idx) { "" }
@@ -879,8 +882,7 @@ object CodeAnalyzer {
       }
     }
 
-    // 5. Detect 'await' inside non-async traditional function declarations/expressions
-    val nonAsyncFnPattern = Regex("""\bfunction\s+[A-Za-z_$][A-Za-z0-9_$]*\s*\([^)]*\)\s*\{""")
+    val nonAsyncFnPattern = Regex("""\bfunction\s+[A-Za-z_$][A-Za-z0-9_$]*\s*\([^)]*\)\s*(?::\s*[^({\n]+)?\{""")
     nonAsyncFnPattern.findAll(maskedCode).forEach { fnMatch ->
       val prefixStart = (fnMatch.range.first - 16).coerceAtLeast(0)
       val prefix = maskedCode.substring(prefixStart, fnMatch.range.first)
@@ -897,7 +899,6 @@ object CodeAnalyzer {
         }
         if (depth == 0) {
           val body = maskedCode.substring(openBraceIdx + 1, p - 1)
-          // Only flag if there is a top-level await in this function body (not nested inside an inner async function/arrow)
           if (!body.contains("async ") && !body.contains("function")) {
             val awaitMatch = Regex("""\bawait\b""").find(body)
             if (awaitMatch != null) {

@@ -24,6 +24,8 @@ object MultipartWorkerParser {
   fun inferModuleMimeType(path: String): String =
     when {
       path.endsWith(".json", ignoreCase = true) || path.endsWith(".jsonc", ignoreCase = true) -> "application/json"
+      path.endsWith(".wasm", ignoreCase = true) -> "application/wasm"
+      path.endsWith(".bin", ignoreCase = true) || path.endsWith(".dat", ignoreCase = true) -> "application/octet-stream"
       path.endsWith(".txt", ignoreCase = true) ||
         path.endsWith(".html", ignoreCase = true) ||
         path.endsWith(".htm", ignoreCase = true) ||
@@ -138,19 +140,24 @@ object MultipartWorkerParser {
     compatibilityDate: String,
     compatibilityFlags: List<String> = emptyList(),
   ): RequestBody {
-    // wrangler config files (wrangler.jsonc/json/toml) are local project config, not Worker modules.
-    // Uploading them as JS modules makes Cloudflare fail with "Uncaught SyntaxError ... at wrangler.jsonc".
     val editableFiles =
-      files.filter { f ->
-        val name = f.path.substringAfterLast('/').lowercase()
-        !f.isVirtualReadOnly && !(name.startsWith("wrangler.") && (name.endsWith(".jsonc") || name.endsWith(".json") || name.endsWith(".toml")))
-      }
+      files
+        .filter { f ->
+          val clean = normalizeModulePath(f.path)
+          val name = clean.substringAfterLast('/').lowercase()
+          !f.isVirtualReadOnly &&
+            clean.isNotEmpty() &&
+            !(name.startsWith("wrangler.") && (name.endsWith(".jsonc") || name.endsWith(".json") || name.endsWith(".toml")))
+        }
+        .map { it.copy(path = normalizeModulePath(it.path)) }
+        .distinctBy { it.path }
     require(editableFiles.isNotEmpty()) { "Worker must contain at least one module script." }
     val builder = MultipartBody.Builder().setType(MultipartBody.FORM)
+    val normalizedEntry = normalizeModulePath(entryModulePath)
 
     if (isEsModule || editableFiles.size > 1) {
       val resolvedEntry =
-        editableFiles.firstOrNull { it.path == entryModulePath }?.path
+        editableFiles.firstOrNull { it.path == normalizedEntry }?.path
           ?: editableFiles.firstOrNull { it.isEntryPoint }?.path
           ?: editableFiles.first().path
 
@@ -209,6 +216,9 @@ object MultipartWorkerParser {
 
     return builder.build()
   }
+
+  private fun normalizeModulePath(raw: String): String =
+    raw.trim().replace('\\', '/').trimStart('/').removePrefix("./")
 
   private fun escapeJson(s: String): String =
     s.replace("\\", "\\\\").replace("\"", "\\\"")

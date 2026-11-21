@@ -69,7 +69,7 @@ class DraftPersistenceManager(context: Context) {
         filesArr.put(obj)
       }
       root.put("files", filesArr)
-      draftFileForKey(workspaceKey).writeText(root.toString(), Charsets.UTF_8)
+      writeTextAtomic(draftFileForKey(workspaceKey), root.toString())
     }
   }
 
@@ -151,7 +151,22 @@ class DraftPersistenceManager(context: Context) {
         )
       }
       root.put("environmentProfiles", profilesArr)
-      apiTesterFile.writeText(root.toString(), Charsets.UTF_8)
+      writeTextAtomic(apiTesterFile, root.toString())
+    }
+  }
+
+  private fun writeTextAtomic(target: File, text: String) {
+    target.parentFile?.let { if (!it.exists()) it.mkdirs() }
+    val tmp = File(target.parentFile, ".${target.name}.tmp")
+    tmp.writeText(text, Charsets.UTF_8)
+    if (!tmp.renameTo(target)) {
+      if (target.exists()) {
+        target.delete()
+      }
+      if (!tmp.renameTo(target)) {
+        target.writeText(text, Charsets.UTF_8)
+        tmp.delete()
+      }
     }
   }
 

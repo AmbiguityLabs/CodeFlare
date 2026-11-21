@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.Api
 import androidx.compose.material.icons.outlined.CheckCircleOutline
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloseFullscreen
+import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Dvr
 import androidx.compose.material.icons.outlined.Http
 import androidx.compose.material.icons.outlined.Info
@@ -112,6 +113,7 @@ fun BottomPanel(
   onSwitchToCode: (() -> Unit)? = null,
   onLinkProjectFolder: (() -> Unit)? = null,
   onToggleViewport: (() -> Unit)? = null,
+  onClearTailLogs: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
@@ -291,7 +293,12 @@ fun BottomPanel(
         BottomPanelTab.PROBLEMS ->
           ProblemsView(uiState = uiState, onJumpToProblem = onJumpToProblem, onNotifyStatus = onNotifyStatus)
         BottomPanelTab.TAIL_LOGS ->
-          LiveTailView(uiState = uiState, onToggleLiveTail = onToggleLiveTail, onNotifyStatus = onNotifyStatus)
+          LiveTailView(
+            uiState = uiState,
+            onToggleLiveTail = onToggleLiveTail,
+            onClearTailLogs = onClearTailLogs,
+            onNotifyStatus = onNotifyStatus,
+          )
         BottomPanelTab.CONSOLE ->
           ConsoleView(uiState = uiState, onNotifyStatus = onNotifyStatus)
       }
@@ -551,9 +558,31 @@ fun ConsoleView(
 fun LiveTailView(
   uiState: IdeUiState,
   onToggleLiveTail: () -> Unit,
+  onClearTailLogs: () -> Unit = {},
   onNotifyStatus: (String) -> Unit = {},
 ) {
   val palette = LocalIdePalette.current
+  var tailFilter by remember { mutableStateOf("ALL") }
+  val filteredLogs =
+    remember(uiState.tailLogs, tailFilter) {
+      val rev = uiState.tailLogs.reversed()
+      when (tailFilter) {
+        "ERR" ->
+          rev.filter {
+            it.message.contains("[err]", ignoreCase = true) ||
+              it.message.contains("[error]", ignoreCase = true) ||
+              it.message.contains("[exception]", ignoreCase = true)
+          }
+        "LOGS" ->
+          rev.filter {
+            it.message.contains("[log]", ignoreCase = true) ||
+              it.message.contains("[info]", ignoreCase = true) ||
+              it.message.contains("[warn]", ignoreCase = true) ||
+              it.message.contains("[debug]", ignoreCase = true)
+          }
+        else -> rev
+      }
+    }
   Column(
     modifier = Modifier.fillMaxSize().background(palette.chromeBg),
   ) {
@@ -567,8 +596,9 @@ fun LiveTailView(
       horizontalArrangement = Arrangement.SpaceBetween,
     ) {
       Row(
+        modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
       ) {
         Surface(
           color =
@@ -598,24 +628,60 @@ fun LiveTailView(
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )
+        listOf("ALL", "LOGS", "ERR").forEach { key ->
+          val selected = tailFilter == key
+          Surface(
+            onClick = { tailFilter = key },
+            color = if (selected) palette.activePillBg else palette.chromeBg,
+            shape = RoundedCornerShape(6.dp),
+            border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.55f)),
+          ) {
+            Text(
+              text = key,
+              fontFamily = JetBrainsMono,
+              fontSize = 9.5.sp,
+              fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+              color = if (selected) palette.activePillFg else palette.textSecondary,
+              modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+            )
+          }
+        }
       }
 
-      IconRevealButton(
-        icon = if (uiState.isTailRunning) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
-        revealedLabel = if (uiState.isTailRunning) "Stop Tail" else "Start Tail",
-        active = uiState.isTailRunning,
-        onClick = {
-          if (!uiState.isLocalScratchpad && uiState.workspace != null) {
-            onToggleLiveTail()
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        if (uiState.tailLogs.isNotEmpty()) {
+          IconButton(
+            onClick = onClearTailLogs,
+            modifier = Modifier.size(30.dp).testTag("clear_live_tail_button"),
+          ) {
+            Icon(
+              imageVector = Icons.Outlined.DeleteSweep,
+              contentDescription = "Clear tail logs",
+              tint = palette.textSecondary,
+              modifier = Modifier.size(16.dp),
+            )
           }
-        },
-        height = 32.dp,
-        tag = "toggle_live_tail_button",
-      )
+        }
+        IconRevealButton(
+          icon = if (uiState.isTailRunning) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
+          revealedLabel = if (uiState.isTailRunning) "Stop Tail" else "Start Tail",
+          active = uiState.isTailRunning,
+          onClick = {
+            if (!uiState.isLocalScratchpad && uiState.workspace != null) {
+              onToggleLiveTail()
+            }
+          },
+          height = 32.dp,
+          tag = "toggle_live_tail_button",
+        )
+      }
     }
     HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.5.dp)
 
-    if (uiState.isLocalScratchpad || uiState.tailLogs.isEmpty()) {
+    if (uiState.isLocalScratchpad || filteredLogs.isEmpty()) {
       var showTailInfo by remember { mutableStateOf(false) }
       Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -632,6 +698,7 @@ fun LiveTailView(
               text =
                 when {
                   uiState.isLocalScratchpad -> "Sign in to Cloudflare to stream live logs."
+                  uiState.tailLogs.isNotEmpty() -> "No matching $tailFilter tail events."
                   uiState.isTailRunning -> "Listening for live events…"
                   else -> "Tap Start Tail to stream logs."
                 },
@@ -647,7 +714,11 @@ fun LiveTailView(
         contentPadding = PaddingValues(start = 8.dp, top = 8.dp, end = 8.dp, bottom = 68.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
       ) {
-        items(uiState.tailLogs.reversed()) { event ->
+        items(filteredLogs) { event ->
+          val isErrorEvent =
+            event.message.startsWith("[err]", ignoreCase = true) ||
+              event.message.startsWith("[exception]", ignoreCase = true) ||
+              event.message.contains("[error]", ignoreCase = true)
           val annotated =
             remember(event.message, palette) {
               SyntaxHighlighter.highlightResponse(event.message, null, palette)
@@ -658,7 +729,11 @@ fun LiveTailView(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(7.dp))
                 .background(palette.chromeSurface)
-                .border(0.5.dp, palette.border.copy(alpha = 0.4f), RoundedCornerShape(7.dp))
+                .border(
+                  0.5.dp,
+                  if (isErrorEvent) RoseError.copy(alpha = 0.5f) else palette.border.copy(alpha = 0.4f),
+                  RoundedCornerShape(7.dp),
+                )
                 .padding(horizontal = 9.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
           ) {
@@ -666,7 +741,7 @@ fun LiveTailView(
               text = event.timestamp,
               fontFamily = JetBrainsMono,
               fontSize = 10.sp,
-              color = EmeraldLive,
+              color = if (isErrorEvent) RoseError else EmeraldLive,
             )
             SmartDraggableText(
               text = event.message,

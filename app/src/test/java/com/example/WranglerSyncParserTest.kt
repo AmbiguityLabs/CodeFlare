@@ -242,5 +242,63 @@ class WranglerSyncParserTest {
     assertEquals("edge", prod.bindings.first { it.name == "APP_NAME" }.text)
     assertEquals("db_prod", prod.bindings.first { it.name == "DB" }.databaseId)
   }
+
+  @Test
+  fun parseToml_preservesHashesInsideStringsAndParsesMultilineAndSingleQuotedArrays() {
+    val raw =
+      """
+      name = "hash-worker"
+      main = 'src/index.ts'
+      compatibility_date = "2026-05-01"
+      compatibility_flags = [
+        'nodejs_compat',
+        "streams_enable_constructors"
+      ]
+
+      [vars]
+      COLOR = "#ff8800"
+      DOC_LINK = 'https://example.com/path#section'
+
+      [triggers]
+      crons = [
+        '*/10 * * * *',
+        "0 2 * * *"
+      ]
+      """.trimIndent()
+
+    val parsed = WranglerSyncParser.parse("wrangler.toml", raw).getOrThrow()
+    assertEquals("hash-worker", parsed.scriptName)
+    assertEquals("src/index.ts", parsed.main)
+    assertTrue(parsed.hasCompatibilityFlags)
+    assertEquals(listOf("nodejs_compat", "streams_enable_constructors"), parsed.compatibilityFlags)
+    assertTrue(parsed.hasCrons)
+    assertEquals(listOf("*/10 * * * *", "0 2 * * *"), parsed.crons)
+    val varsByName = parsed.bindings.associateBy { it.name }
+    assertEquals("#ff8800", varsByName["COLOR"]?.text)
+    assertEquals("https://example.com/path#section", varsByName["DOC_LINK"]?.text)
+  }
+
+  @Test
+  fun parse_tracksExplicitEmptyFlagsAndCronsSeparatelyFromOmittedKeys() {
+    val omittedJson = """{ "name": "omitted", "main": "index.js" }"""
+    val omitted = WranglerSyncParser.parse("wrangler.jsonc", omittedJson).getOrThrow()
+    assertFalse(omitted.hasCompatibilityFlags)
+    assertFalse(omitted.hasCrons)
+
+    val clearedJson =
+      """
+      {
+        "name": "cleared",
+        "main": "index.js",
+        "compatibility_flags": [],
+        "triggers": { "crons": [] }
+      }
+      """.trimIndent()
+    val cleared = WranglerSyncParser.parse("wrangler.jsonc", clearedJson).getOrThrow()
+    assertTrue(cleared.hasCompatibilityFlags)
+    assertTrue(cleared.compatibilityFlags.isEmpty())
+    assertTrue(cleared.hasCrons)
+    assertTrue(cleared.crons.isEmpty())
+  }
 }
 

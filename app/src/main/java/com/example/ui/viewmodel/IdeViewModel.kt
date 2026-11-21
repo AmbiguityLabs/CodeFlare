@@ -752,13 +752,18 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
       if (creds != null) {
         appendLog("INFO", "Restored encrypted Cloudflare session (${creds.method.name})")
       }
-      if (shouldReopenLast && lastPointer != null && lastPointer.isLocalScratchpad && !hasAttemptedAutoReopen && _uiState.value.workspace == null) {
-        hasAttemptedAutoReopen = true
-        val localDraft = restoredDrafts.firstOrNull { it.workspaceKey == lastPointer.workspaceKey }
-        if (localDraft != null && ramDb.hasWorkspace(localDraft.workspaceKey)) {
-          restoreLocalDraftIntoEditor(localDraft)
-        } else if (ramDb.hasWorkspace(lastPointer.workspaceKey)) {
-          openRamWorkspace(lastPointer.workspaceKey)
+      if (shouldReopenLast && lastPointer != null && !hasAttemptedAutoReopen && _uiState.value.workspace == null) {
+        if (lastPointer.isLocalScratchpad) {
+          hasAttemptedAutoReopen = true
+          val localDraft = restoredDrafts.firstOrNull { it.workspaceKey == lastPointer.workspaceKey }
+          if (localDraft != null && ramDb.hasWorkspace(localDraft.workspaceKey)) {
+            restoreLocalDraftIntoEditor(localDraft)
+          } else if (ramDb.hasWorkspace(lastPointer.workspaceKey)) {
+            openRamWorkspace(lastPointer.workspaceKey)
+          }
+        } else if (ramDb.hasWorkspace(lastPointer.workspaceKey) && (creds == null || !pendingCloudDrafts.containsKey(lastPointer.workspaceKey))) {
+          hasAttemptedAutoReopen = true
+          openRamWorkspaceInternal(lastPointer.workspaceKey)
         }
       }
       if (creds != null) {
@@ -1378,6 +1383,7 @@ export default {
         ramWorkspaces = ramDb.listWorkspaces(),
         previewUrl = resolvedPreview,
         previewHttpResult = null,
+        tailLogs = emptyList(),
         apiRequest =
           if (resolvedPreview.isNotBlank()) {
             ApiRequestUtils.applyDeployedWorkerUrl(state.apiRequest, resolvedPreview, forceReplace = false)
@@ -1859,6 +1865,7 @@ export default {
           previewUrl = resolvedPreview,
           previewHttpResult = null,
           previewReloadNonce = state.previewReloadNonce + 1L,
+          tailLogs = emptyList(),
           apiRequest =
             if (resolvedPreview.isNotBlank()) {
               ApiRequestUtils.applyDeployedWorkerUrl(state.apiRequest, resolvedPreview, forceReplace = false)
@@ -4731,67 +4738,128 @@ export default {
   ) {
     val stateSnapshot = _uiState.value
     val ramRecord = ramDb.getWorkspace(workspaceKey)
-    val ws =
+    val rawWs =
       if (activeWorkspaceKey(stateSnapshot) == workspaceKey) {
         stateSnapshot.workspace ?: ramRecord?.workingWorkspace
       } else {
         ramRecord?.workingWorkspace
       } ?: return
 
+    val dirtyWrangler =
+      rawWs.files.firstOrNull {
+        (it.path == "wrangler.jsonc" || it.path == "wrangler.json" || it.path == "wrangler.toml") && it.isDirty
+      }
+    var wranglerAutoSynced = false
+    val ws =
+      if (dirtyWrangler != null) {
+        val parsed = WranglerSyncParser.parse(dirtyWrangler.path, dirtyWrangler.content).getOrNull()
+        if (parsed != null) {
+          wranglerAutoSynced = true
+          val existingSecrets = rawWs.bindings.filter { it.type == "secret_text" }
+          val mergedBindings = (parsed.bindings + existingSecrets).distinctBy { it.name }
+          val nextCompatDate = parsed.compatibilityDate ?: rawWs.compatibilityDate
+          val nextFlags = if (parsed.hasCompatibilityFlags) parsed.compatibilityFlags else rawWs.compatibilityFlags
+          val nextWorkersDev = parsed.workersDev ?: rawWs.workersDevEnabled
+          val nextEntry = parsed.main?.takeIf { m -> rawWs.files.any { it.path == m } } ?: rawWs.entryModulePath
+          val nextSchedules =
+            if (parsed.hasCrons) parsed.crons.map { com.example.data.remote.CfCronSchedule(cron = it) }
+            else rawWs.schedules
+          rawWs.copy(
+            entryModulePath = nextEntry,
+            compatibilityDate = nextCompatDate,
+            compatibilityFlags = nextFlags,
+            workersDevEnabled = nextWorkersDev,
+            bindings = mergedBindings,
+            schedules = nextSchedules,
+            files = rawWs.files.map { f -> f.copy(isEntryPoint = f.path == nextEntry) },
+          )
+        } else {
+          rawWs
+        }
+      } else {
+        rawWs
+      }
+
+    val deployableModules =
+      ws.files.filterNot {
+        it.isVirtualReadOnly || it.path == "wrangler.jsonc" || it.path == "wrangler.json" || it.path == "wrangler.toml"
+      }
+    if (deployableModules.isEmpty()) {
+      _uiState.update {
+        it.copy(
+          isDeploying = false,
+          isDeployError = true,
+          statusMessage = null,
+          deployBannerMessage = "Cannot deploy '${ws.scriptName}': workspace has no deployable module files.",
+        )
+      }
+      return
+    }
+    val verifiedEntry =
+      if (deployableModules.any { it.path == ws.entryModulePath }) ws.entryModulePath
+      else deployableModules.first().path
+    val effectiveWs =
+      if (verifiedEntry == ws.entryModulePath) ws
+      else ws.copy(
+        entryModulePath = verifiedEntry,
+        files = ws.files.map { it.copy(isEntryPoint = it.path == verifiedEntry) },
+      )
+
     _uiState.update {
       it.copy(
         isDeploying = true,
         deployBannerMessage = null,
-        statusMessage = "Deploying '${ws.scriptName}' to Cloudflare…",
+        statusMessage = "Deploying '${effectiveWs.scriptName}' to Cloudflare…",
       )
     }
 
     repository
-      .deployWorkerWorkspace(accountId, ws)
+      .deployWorkerWorkspace(accountId, effectiveWs)
       .onSuccess {
         val pendingErrors = mutableListOf<String>()
         val shouldSyncConfig =
-          isNewWorker ||
+          wranglerAutoSynced ||
+            isNewWorker ||
             ramRecord?.hasPendingConfigSync == true ||
             ramRecord?.isNewUnexportedWorker == true ||
-            ws.hasModuleSetChanged
+            effectiveWs.hasModuleSetChanged
         if (shouldSyncConfig) {
           repository.saveBindingsAndCompat(
             accountId = accountId,
-            scriptName = ws.scriptName,
-            compatibilityDate = ws.compatibilityDate,
-            compatibilityFlags = ws.compatibilityFlags,
-            bindings = ws.bindings.filterNot { it.type == "secret_text" },
+            scriptName = effectiveWs.scriptName,
+            compatibilityDate = effectiveWs.compatibilityDate,
+            compatibilityFlags = effectiveWs.compatibilityFlags,
+            bindings = effectiveWs.bindings.filterNot { it.type == "secret_text" },
           ).onFailure { err -> pendingErrors.add("settings: ${err.localizedMessage}") }
         }
 
         val targetWorkersDev =
-          if (isNewWorker) _uiState.value.editorSettings.defaultWorkersDevEnabled || ws.workersDevEnabled
-          else ws.workersDevEnabled
+          if (isNewWorker) _uiState.value.editorSettings.defaultWorkersDevEnabled || effectiveWs.workersDevEnabled
+          else effectiveWs.workersDevEnabled
         var confirmedWorkersDev = targetWorkersDev
         if (shouldSyncConfig || targetWorkersDev) {
-          repository.toggleWorkersDev(accountId, ws.scriptName, targetWorkersDev)
+          repository.toggleWorkersDev(accountId, effectiveWs.scriptName, targetWorkersDev)
             .onSuccess { enabled -> confirmedWorkersDev = enabled }
             .onFailure { err -> pendingErrors.add("workers.dev: ${err.localizedMessage}") }
         }
 
-        if (shouldSyncConfig && (ws.schedules.isNotEmpty() || ramRecord?.hasPendingConfigSync == true)) {
-          repository.updateCronSchedules(accountId, ws.scriptName, ws.schedules.map { it.cron })
+        if (shouldSyncConfig && (effectiveWs.schedules.isNotEmpty() || ramRecord?.hasPendingConfigSync == true)) {
+          repository.updateCronSchedules(accountId, effectiveWs.scriptName, effectiveWs.schedules.map { it.cron })
             .onFailure { err -> pendingErrors.add("cron: ${err.localizedMessage}") }
         }
 
         ramRecord?.deletedSecrets?.forEach { secretName ->
-          repository.deleteSecret(accountId, ws.scriptName, secretName)
+          repository.deleteSecret(accountId, effectiveWs.scriptName, secretName)
             .onFailure { err -> pendingErrors.add("delete secret $secretName: ${err.localizedMessage}") }
         }
         ramRecord?.stagedSecrets?.forEach { (secretName, secretVal) ->
-          repository.putSecret(accountId, ws.scriptName, secretName, secretVal)
+          repository.putSecret(accountId, effectiveWs.scriptName, secretName, secretVal)
             .onFailure { err -> pendingErrors.add("put secret $secretName: ${err.localizedMessage}") }
         }
 
         val cachedSubdomain = ramDb.getInfraCache(accountId)?.subdomain.orEmpty()
         val resolvedSubdomain =
-          ws.accountSubdomain.ifBlank { cachedSubdomain }.ifBlank {
+          effectiveWs.accountSubdomain.ifBlank { cachedSubdomain }.ifBlank {
             repository.getAccountSubdomain(accountId)
           }
         if (resolvedSubdomain.isNotBlank()) {
@@ -4800,11 +4868,21 @@ export default {
           pendingErrors.add("workers.dev subdomain is not yet enabled on your Cloudflare account")
         }
 
-        val cleanFiles = ws.files.map { it.copy(originalContent = it.content) }
+        effectiveWs.files.filter { !it.isVirtualReadOnly && it.isDirty }.forEach { dirtyFile ->
+          localHistoryStore.recordSnapshot(
+            workspaceKey = workspaceKey,
+            filePath = dirtyFile.path,
+            before = dirtyFile.originalContent,
+            after = dirtyFile.content,
+            label = "Deployed",
+          )
+        }
+
+        val cleanFiles = effectiveWs.files.map { it.copy(originalContent = it.content) }
         val refreshedDeployments =
-          repository.listDeployments(accountId, ws.scriptName).getOrDefault(ws.deployments)
+          repository.listDeployments(accountId, effectiveWs.scriptName).getOrDefault(effectiveWs.deployments)
         val baseUpdatedWs =
-          ws.copy(
+          effectiveWs.copy(
             files = cleanFiles,
             deployments = refreshedDeployments,
             workersDevEnabled = confirmedWorkersDev,
@@ -4822,6 +4900,9 @@ export default {
           }
 
         ramDb.markExported(workspaceKey, updatedWs)
+        if (pendingErrors.isNotEmpty()) {
+          ramDb.updateWorkspace(workspaceKey) { it.copy(hasPendingConfigSync = true) }
+        }
         val updatedRec = ramDb.getWorkspace(workspaceKey)
         withContext(Dispatchers.IO) {
           if (updatedRec != null) {
@@ -4849,11 +4930,11 @@ export default {
           val banner =
             when {
               pendingErrors.isEmpty() && liveUrl.isNotBlank() ->
-                "Deployed '${ws.scriptName}' live: $liveUrl"
+                "Deployed '${effectiveWs.scriptName}' live: $liveUrl"
               pendingErrors.isEmpty() ->
-                "Deployed '${ws.scriptName}' to Cloudflare Edge"
+                "Deployed '${effectiveWs.scriptName}' to Cloudflare Edge"
               else ->
-                "Deployed '${ws.scriptName}' with warnings: ${pendingErrors.joinToString("; ")}"
+                "Deployed '${effectiveWs.scriptName}' with warnings: ${pendingErrors.joinToString("; ")}"
             }
           state.copy(
             accountSubdomain = resolvedSubdomain.ifBlank { state.accountSubdomain },
@@ -4861,7 +4942,7 @@ export default {
             restoredDraftBanner = null,
             isDeploying = false,
             isDeployError = pendingErrors.isNotEmpty(),
-            activeWorkspaceHasPendingConfig = false,
+            activeWorkspaceHasPendingConfig = pendingErrors.isNotEmpty(),
             ramDbStats = ramDb.computeStats(workspaceKey),
             ramWorkspaces = ramDb.listWorkspaces(),
             projectStorageSummary = summary,
@@ -4880,10 +4961,10 @@ export default {
         }
         appendLog(
           "DEPLOY",
-          "Deployed '${ws.scriptName}' (${cleanFiles.count { !it.isVirtualReadOnly }} files)" +
+          "Deployed '${effectiveWs.scriptName}' (${cleanFiles.count { !it.isVirtualReadOnly }} files)" +
             if (liveUrl.isNotBlank()) " -> $liveUrl" else "",
         )
-        appendPreviewConsoleEntry("DEPLOY", "LIVE", "Deployed '${ws.scriptName}' -> ${liveUrl.ifBlank { "Cloudflare Edge" }}")
+        appendPreviewConsoleEntry("DEPLOY", "LIVE", "Deployed '${effectiveWs.scriptName}' -> ${liveUrl.ifBlank { "Cloudflare Edge" }}")
         refreshWorkersInternal(accountId)
       }
       .onFailure { err ->
@@ -5883,6 +5964,7 @@ export default {
   }
 
   fun syncWranglerFileToWorkspace() {
+    flushActiveEditorBuffer()
     val ws = _uiState.value.workspace ?: return
     val cfgFile =
       ws.files.firstOrNull { it.path == "wrangler.jsonc" || it.path == "wrangler.json" || it.path == "wrangler.toml" }
@@ -5893,15 +5975,14 @@ export default {
         return
       }
 
-    // Preserve encrypted secrets that aren't serialized verbatim into wrangler.jsonc
     val existingSecrets = ws.bindings.filter { it.type == "secret_text" }
     val mergedBindings = (parsed.bindings + existingSecrets).distinctBy { it.name }
     val nextCompatDate = parsed.compatibilityDate ?: ws.compatibilityDate
-    val nextFlags = if (parsed.compatibilityFlags.isNotEmpty()) parsed.compatibilityFlags else ws.compatibilityFlags
+    val nextFlags = if (parsed.hasCompatibilityFlags) parsed.compatibilityFlags else ws.compatibilityFlags
     val nextWorkersDev = parsed.workersDev ?: ws.workersDevEnabled
     val nextEntry = parsed.main?.takeIf { m -> ws.files.any { it.path == m } } ?: ws.entryModulePath
     val nextSchedules =
-      if (parsed.crons.isNotEmpty()) parsed.crons.map { com.example.data.remote.CfCronSchedule(cron = it) }
+      if (parsed.hasCrons) parsed.crons.map { com.example.data.remote.CfCronSchedule(cron = it) }
       else ws.schedules
     val updatedFiles =
       ws.files.map { f ->
@@ -5917,6 +5998,8 @@ export default {
         schedules = nextSchedules,
         files = updatedFiles,
       )
+    val diags = rebuildDiagnosticsFull(updatedFiles)
+    val resolvedPreview = resolveDefaultPreviewUrl(nextWs)
     val ramKey = activeWorkspaceKey()
     if (ramKey != null) {
       ramDb.updateWorkspace(ramKey) { rec ->
@@ -5927,6 +6010,8 @@ export default {
     _uiState.update { state ->
       state.copy(
         workspace = nextWs,
+        diagnostics = diags,
+        previewUrl = resolvedPreview.ifBlank { state.previewUrl },
         activeWorkspaceHasPendingConfig = true,
         ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else state.ramDbStats,
         statusMessage = "Applied ${cfgFile.fileName} to RAM workspace (${mergedBindings.size} binding(s))",
@@ -6042,6 +6127,10 @@ export default {
     } else {
       runCatching { session.webSocket.close(1000, "Stopped") }
     }
+  }
+
+  fun clearTailLogs() {
+    _uiState.update { it.copy(tailLogs = emptyList()) }
   }
 
   // Comprehensive Cloudflare Workers Infra: Bindings (KV/D1/R2/Service), Custom Domains, D1, R2, DO, Queues
@@ -8471,6 +8560,7 @@ jobs:
   }
 
   fun openDiffReview(intent: DiffReviewIntent) {
+    flushActiveEditorBuffer()
     val state = _uiState.value
     val entries = buildDiffEntries(intent, state)
     _uiState.update {
@@ -8497,6 +8587,7 @@ jobs:
   }
 
   fun openConflictResolver() {
+    flushActiveEditorBuffer()
     val state = _uiState.value
     val existing = state.pendingMergeConflicts
     if (existing.isNotEmpty()) {
@@ -8912,6 +9003,20 @@ jobs:
                 activeFilePath = draft.activeFilePath,
                 entryModulePath = draft.entryModulePath,
               )
+            state.workspace?.files?.forEach { wf ->
+              if (!wf.isVirtualReadOnly) {
+                val liveText = state.editorFieldValues[wf.path]?.text ?: wf.content
+                if (liveText != wf.originalContent) {
+                  localHistoryStore.recordSnapshot(
+                    workspaceKey = draft.workspaceKey,
+                    filePath = wf.path,
+                    before = wf.originalContent,
+                    after = liveText,
+                    label = "AutoSave",
+                  )
+                }
+              }
+            }
             noteEmblemActivity()
           }
           if (activeKey != null) {

@@ -361,7 +361,7 @@ object ApiRequestUtils {
         append(" -H \"${k.replace("\"", "\\\"")}: ${v.replace("\"", "\\\"")}\"")
       }
       if (body.isNotEmpty() && request.method.uppercase() in setOf("POST", "PUT", "PATCH", "DELETE")) {
-        append(" -d '${body.replace("'", "\\'")}'")
+        append(" -d '${body.replace("'", "'\\''")}'")
       }
       append(" \"$url\"")
     }

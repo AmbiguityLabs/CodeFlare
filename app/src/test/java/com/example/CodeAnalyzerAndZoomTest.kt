@@ -231,4 +231,38 @@ class CodeAnalyzerAndZoomTest {
     assertFalse(diags.any { it.filePath == "src/index.js" && it.message.contains("env.OPTIONAL_VAR") })
     assertFalse(diags.any { it.filePath == "src/index.js" && it.message.contains("env.MAYBE_KV") })
   }
+
+  @Test
+  fun catchesExportedUninitializedConstAndTypedNonAsyncAwaitWhileIgnoringAmbientDeclarations() {
+    val tsFile =
+      WorkerFile(
+        path = "src/handler.ts",
+        content =
+          """
+          export const missingValue;
+          export declare const AMBIENT_TOKEN: string;
+          function typedSync(req: Request): Promise<Response> {
+            return await fetch(req);
+          }
+          """.trimIndent(),
+        originalContent = "",
+        contentType = "application/typescript",
+        isEntryPoint = true,
+      )
+    val diags = CodeAnalyzer.analyzeFile(tsFile)
+    assertTrue(diags.any { it.line == 1 && it.message.contains("must be initialized") })
+    assertFalse(diags.any { it.line == 2 })
+    assertTrue(diags.any { it.line == 4 && it.message.contains("only valid inside an 'async' function") })
+
+    val dtsFile =
+      WorkerFile(
+        path = "src/env.d.ts",
+        content = "export const BUILD_HASH: string;\ndeclare const FLAG;\n",
+        originalContent = "",
+        contentType = "application/typescript",
+        isEntryPoint = false,
+      )
+    val dtsDiags = CodeAnalyzer.analyzeFile(dtsFile)
+    assertFalse(dtsDiags.any { it.message.contains("must be initialized") })
+  }
 }

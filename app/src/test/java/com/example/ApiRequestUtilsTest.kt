@@ -72,4 +72,22 @@ class ApiRequestUtilsTest {
       )
     assertEquals(deployed, customExternalReplacedOnNewDeploy.url)
   }
+
+  @Test
+  fun toCurlSnippetEscapesSingleQuotesUsingPosixClosingSequence() {
+    val snippet =
+      ApiRequestUtils.toCurlSnippet(
+        request =
+          ApiTesterRequest(
+            method = "POST",
+            url = "https://worker.example.workers.dev/greet",
+            bodyType = com.example.data.remote.ApiBodyType.JSON,
+            rawBody = """{"msg":"it's edge-ready"}""",
+          ),
+        envVars = emptyList(),
+        workerBaseUrl = null,
+      )
+    assertEquals(true, snippet.contains("it'\\''s edge-ready"))
+    assertEquals(false, snippet.contains("it\\'s"))
+  }
 }

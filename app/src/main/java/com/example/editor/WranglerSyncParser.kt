@@ -14,6 +14,8 @@ data class ParsedWranglerEnv(
   val workersDev: Boolean? = null,
   val bindings: List<CfWorkerBinding> = emptyList(),
   val crons: List<String> = emptyList(),
+  val hasCompatibilityFlags: Boolean = false,
+  val hasCrons: Boolean = false,
 )
 
 data class ParsedWranglerConfig(
@@ -25,6 +27,8 @@ data class ParsedWranglerConfig(
   val bindings: List<CfWorkerBinding> = emptyList(),
   val crons: List<String> = emptyList(),
   val environments: Map<String, ParsedWranglerEnv> = emptyMap(),
+  val hasCompatibilityFlags: Boolean = false,
+  val hasCrons: Boolean = false,
 )
 
 data class CodeSymbol(
@@ -62,14 +66,22 @@ object WranglerSyncParser {
     val mergedBindings = linkedMapOf<String, CfWorkerBinding>()
     base.bindings.forEach { mergedBindings[it.name] = it }
     envOverride.bindings.forEach { mergedBindings[it.name] = it }
+    val resolvedFlags =
+      if (envOverride.hasCompatibilityFlags) envOverride.compatibilityFlags
+      else base.compatibilityFlags
+    val resolvedCrons =
+      if (envOverride.hasCrons) envOverride.crons
+      else base.crons
     return base.copy(
       scriptName = envOverride.scriptName ?: base.scriptName,
       main = envOverride.main ?: base.main,
       compatibilityDate = envOverride.compatibilityDate ?: base.compatibilityDate,
-      compatibilityFlags = envOverride.compatibilityFlags.ifEmpty { base.compatibilityFlags },
+      compatibilityFlags = resolvedFlags,
       workersDev = envOverride.workersDev ?: base.workersDev,
       bindings = mergedBindings.values.toList(),
-      crons = envOverride.crons.ifEmpty { base.crons },
+      crons = resolvedCrons,
+      hasCompatibilityFlags = base.hasCompatibilityFlags || envOverride.hasCompatibilityFlags,
+      hasCrons = base.hasCrons || envOverride.hasCrons,
     )
   }
 
@@ -114,7 +126,6 @@ object WranglerSyncParser {
       i++
     }
 
-    // Remove trailing commas outside strings
     val cleaned = noComments.toString()
     val out = StringBuilder(cleaned.length)
     inString = false
@@ -156,6 +167,7 @@ object WranglerSyncParser {
   private fun extractJsoncSection(json: JSONObject): ParsedWranglerEnv {
     val bindings = mutableListOf<CfWorkerBinding>()
     val flags = mutableListOf<String>()
+    val hasFlagsKey = json.has("compatibility_flags") && json.optJSONArray("compatibility_flags") != null
     json.optJSONArray("compatibility_flags")?.let { arr ->
       for (i in 0 until arr.length()) {
         val f = arr.optString(i).trim()
@@ -257,7 +269,9 @@ object WranglerSyncParser {
     }
 
     val crons = mutableListOf<String>()
-    json.optJSONObject("triggers")?.optJSONArray("crons")?.let { arr ->
+    val triggersObj = json.optJSONObject("triggers")
+    val hasCronsKey = triggersObj != null && triggersObj.has("crons") && triggersObj.optJSONArray("crons") != null
+    triggersObj?.optJSONArray("crons")?.let { arr ->
       for (i in 0 until arr.length()) {
         val expr = arr.optString(i).trim()
         if (expr.isNotEmpty()) crons.add(expr)
@@ -272,6 +286,8 @@ object WranglerSyncParser {
       workersDev = if (json.has("workers_dev")) json.optBoolean("workers_dev") else null,
       bindings = bindings,
       crons = crons,
+      hasCompatibilityFlags = hasFlagsKey,
+      hasCrons = hasCronsKey,
     )
   }
 
@@ -299,6 +315,8 @@ object WranglerSyncParser {
       bindings = root.bindings,
       crons = root.crons,
       environments = environments,
+      hasCompatibilityFlags = root.hasCompatibilityFlags,
+      hasCrons = root.hasCrons,
     )
   }
 
@@ -307,9 +325,11 @@ object WranglerSyncParser {
     var main: String? = null
     var compatDate: String? = null
     val compatFlags = mutableListOf<String>()
+    var hasCompatFlags: Boolean = false
     var workersDev: Boolean? = null
     val bindings = mutableListOf<CfWorkerBinding>()
     val crons = mutableListOf<String>()
+    var hasCrons: Boolean = false
 
     fun toEnv() =
       ParsedWranglerEnv(
@@ -320,6 +340,8 @@ object WranglerSyncParser {
         workersDev = workersDev,
         bindings = bindings.toList(),
         crons = crons.toList(),
+        hasCompatibilityFlags = hasCompatFlags,
+        hasCrons = hasCrons,
       )
   }
 
@@ -332,6 +354,108 @@ object WranglerSyncParser {
     } else {
       rest.substring(0, dot).trim().takeIf { it.isNotEmpty() } to rest.substring(dot + 1).trim()
     }
+  }
+
+  private fun stripTomlCommentOutsideQuotes(rawLine: String): String {
+    var inDouble = false
+    var inSingle = false
+    var i = 0
+    while (i < rawLine.length) {
+      val ch = rawLine[i]
+      if (inDouble) {
+        if (ch == '\\' && i + 1 < rawLine.length) {
+          i += 2
+          continue
+        }
+        if (ch == '"') inDouble = false
+      } else if (inSingle) {
+        if (ch == '\'') inSingle = false
+      } else {
+        when (ch) {
+          '"' -> inDouble = true
+          '\'' -> inSingle = true
+          '#' -> return rawLine.substring(0, i).trim()
+        }
+      }
+      i++
+    }
+    return rawLine.trim()
+  }
+
+  private fun bracketBalanceDelta(text: String): Int {
+    var delta = 0
+    var inDouble = false
+    var inSingle = false
+    var i = 0
+    while (i < text.length) {
+      val ch = text[i]
+      if (inDouble) {
+        if (ch == '\\' && i + 1 < text.length) {
+          i += 2
+          continue
+        }
+        if (ch == '"') inDouble = false
+      } else if (inSingle) {
+        if (ch == '\'') inSingle = false
+      } else {
+        when (ch) {
+          '"' -> inDouble = true
+          '\'' -> inSingle = true
+          '[' -> delta++
+          ']' -> delta--
+        }
+      }
+      i++
+    }
+    return delta
+  }
+
+  private fun extractTomlArrayStrings(rawVal: String): List<String> {
+    val result = mutableListOf<String>()
+    var i = 0
+    while (i < rawVal.length) {
+      val ch = rawVal[i]
+      if (ch == '"' || ch == '\'') {
+        val quote = ch
+        val sb = StringBuilder()
+        i++
+        while (i < rawVal.length) {
+          val c = rawVal[i]
+          if (quote == '"' && c == '\\' && i + 1 < rawVal.length) {
+            sb.append(rawVal[i + 1])
+            i += 2
+            continue
+          }
+          if (c == quote) {
+            i++
+            break
+          }
+          sb.append(c)
+          i++
+        }
+        val value = sb.toString()
+        if (value.isNotEmpty()) result.add(value)
+      } else {
+        i++
+      }
+    }
+    return result
+  }
+
+  private fun unquoteTomlScalar(rawVal: String): String {
+    val trimmed = rawVal.trim()
+    if (trimmed.length >= 2 && trimmed.startsWith("\"") && trimmed.endsWith("\"")) {
+      val inner = trimmed.substring(1, trimmed.length - 1)
+      return inner
+        .replace("\\\"", "\"")
+        .replace("\\n", "\n")
+        .replace("\\t", "\t")
+        .replace("\\\\", "\\")
+    }
+    if (trimmed.length >= 2 && trimmed.startsWith("'") && trimmed.endsWith("'")) {
+      return trimmed.substring(1, trimmed.length - 1)
+    }
+    return trimmed
   }
 
   private fun parseToml(content: String): ParsedWranglerConfig {
@@ -391,9 +515,59 @@ object WranglerSyncParser {
       pendingEnv = null
     }
 
+    var accumKey: String? = null
+    val accumVal = StringBuilder()
+    var accumDepth = 0
+
+    fun applyKeyValue(key: String, rawVal: String) {
+      val unquoted = unquoteTomlScalar(rawVal)
+      if (pendingType.isNotEmpty()) {
+        pendingProps[key] = unquoted
+        return
+      }
+      val (envName, subSection) = splitEnvSection(currentSection)
+      val target = scopeFor(envName)
+      when (subSection) {
+        "" ->
+          when (key) {
+            "name" -> target.scriptName = unquoted
+            "main" -> target.main = unquoted.removePrefix("./")
+            "compatibility_date" -> target.compatDate = unquoted
+            "workers_dev" -> target.workersDev = unquoted.toBooleanStrictOrNull()
+            "compatibility_flags" -> {
+              target.hasCompatFlags = true
+              target.compatFlags.clear()
+              target.compatFlags.addAll(extractTomlArrayStrings(rawVal))
+            }
+          }
+        "vars" -> target.bindings.add(CfWorkerBinding(name = key, type = "plain_text", text = unquoted))
+        "ai" -> if (key == "binding" && unquoted.isNotBlank()) {
+          target.bindings.add(CfWorkerBinding(name = unquoted, type = "ai"))
+        }
+        "triggers" -> if (key == "crons") {
+          target.hasCrons = true
+          target.crons.clear()
+          target.crons.addAll(extractTomlArrayStrings(rawVal))
+        }
+      }
+    }
+
     for (rawLine in content.lines()) {
-      val line = rawLine.substringBefore('#').trim()
+      val line = stripTomlCommentOutsideQuotes(rawLine)
       if (line.isEmpty()) continue
+      if (accumKey != null) {
+        accumVal.append(' ').append(line)
+        accumDepth += bracketBalanceDelta(line)
+        if (accumDepth <= 0) {
+          val k = accumKey
+          val v = accumVal.toString().trim()
+          accumKey = null
+          accumVal.clear()
+          accumDepth = 0
+          applyKeyValue(k, v)
+        }
+        continue
+      }
       if (line.startsWith("[[") && line.endsWith("]]")) {
         flushPendingTable()
         val rawSec = line.removePrefix("[[").removeSuffix("]]").trim()
@@ -410,36 +584,20 @@ object WranglerSyncParser {
       }
       val eq = line.indexOf('=')
       if (eq <= 0) continue
-      val key = line.substring(0, eq).trim()
+      val key = unquoteTomlScalar(line.substring(0, eq).trim())
       val rawVal = line.substring(eq + 1).trim()
-      val unquoted = rawVal.removeSurrounding("\"").removeSurrounding("'")
-
-      if (pendingType.isNotEmpty()) {
-        pendingProps[key] = unquoted
+      val depth = bracketBalanceDelta(rawVal)
+      if (depth > 0) {
+        accumKey = key
+        accumVal.clear()
+        accumVal.append(rawVal)
+        accumDepth = depth
         continue
       }
-
-      val (envName, subSection) = splitEnvSection(currentSection)
-      val target = scopeFor(envName)
-      when (subSection) {
-        "" ->
-          when (key) {
-            "name" -> target.scriptName = unquoted
-            "main" -> target.main = unquoted.removePrefix("./")
-            "compatibility_date" -> target.compatDate = unquoted
-            "workers_dev" -> target.workersDev = unquoted.toBooleanStrictOrNull()
-            "compatibility_flags" -> {
-              Regex(""""([^"]+)"""").findAll(rawVal).forEach { target.compatFlags.add(it.groupValues[1]) }
-            }
-          }
-        "vars" -> target.bindings.add(CfWorkerBinding(name = key, type = "plain_text", text = unquoted))
-        "ai" -> if (key == "binding" && unquoted.isNotBlank()) {
-          target.bindings.add(CfWorkerBinding(name = unquoted, type = "ai"))
-        }
-        "triggers" -> if (key == "crons") {
-          Regex(""""([^"]+)"""").findAll(rawVal).forEach { target.crons.add(it.groupValues[1]) }
-        }
-      }
+      applyKeyValue(key, rawVal)
+    }
+    if (accumKey != null) {
+      applyKeyValue(accumKey, accumVal.toString().trim())
     }
     flushPendingTable()
 
@@ -452,6 +610,8 @@ object WranglerSyncParser {
       bindings = root.bindings,
       crons = root.crons,
       environments = envScopes.mapValues { it.value.toEnv() },
+      hasCompatibilityFlags = root.hasCompatFlags,
+      hasCrons = root.hasCrons,
     )
   }
 

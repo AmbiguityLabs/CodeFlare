@@ -79,6 +79,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response as OkHttpResponse
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import okio.ByteString
+import org.json.JSONObject
 import retrofit2.Response
 
 enum class WorkerTemplate(val id: String, val title: String, val subtitle: String, val code: String) {
@@ -1010,7 +1012,12 @@ class CloudflareRepository(
               }
 
               override fun onMessage(webSocket: WebSocket, text: String) {
-                onTailEvent(text)
+                formatTailTracePayload(text).forEach(onTailEvent)
+              }
+
+              override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                val decoded = bytes.utf8()
+                formatTailTracePayload(decoded).forEach(onTailEvent)
               }
 
               override fun onFailure(webSocket: WebSocket, t: Throwable, response: OkHttpResponse?) {
@@ -1025,6 +1032,55 @@ class CloudflareRepository(
         ActiveTailSession(tailId = tail.id, webSocket = ws)
       }
     }
+
+  internal fun formatTailTracePayload(rawPayload: String): List<String> =
+    formatTailTraceEvents(rawPayload)
+
+  companion object {
+    fun formatTailTraceEvents(rawPayload: String): List<String> {
+      val trimmed = rawPayload.trim()
+      if (trimmed.isEmpty()) return emptyList()
+      if (!trimmed.startsWith("{")) return listOf(trimmed)
+      val json = runCatching { JSONObject(trimmed) }.getOrNull() ?: return listOf(trimmed)
+      val lines = mutableListOf<String>()
+      val outcome = json.optString("outcome").trim()
+      val reqObj = json.optJSONObject("event")?.optJSONObject("request")
+      val reqMethod = reqObj?.optString("method")?.trim().orEmpty()
+      val reqUrl = reqObj?.optString("url")?.trim().orEmpty()
+      if (reqMethod.isNotEmpty() || reqUrl.isNotEmpty() || outcome.isNotEmpty()) {
+        val statusTag = if (outcome.isNotEmpty()) outcome.uppercase() else "EVENT"
+        val reqLabel = listOf(reqMethod, reqUrl).filter { it.isNotEmpty() }.joinToString(" ")
+        lines.add(if (reqLabel.isNotEmpty()) "[$statusTag] $reqLabel" else "[$statusTag]")
+      }
+      val logsArr = json.optJSONArray("logs")
+      if (logsArr != null) {
+        for (i in 0 until logsArr.length()) {
+          val entry = logsArr.optJSONObject(i) ?: continue
+          val lvl = entry.optString("level", "log").uppercase()
+          val msgArr = entry.optJSONArray("message")
+          val msgText =
+            if (msgArr != null) {
+              (0 until msgArr.length()).joinToString(" ") { idx -> msgArr.opt(idx)?.toString().orEmpty() }.trim()
+            } else {
+              entry.optString("message").trim()
+            }
+          if (msgText.isNotEmpty()) {
+            lines.add("[$lvl] $msgText")
+          }
+        }
+      }
+      val exArr = json.optJSONArray("exceptions")
+      if (exArr != null) {
+        for (i in 0 until exArr.length()) {
+          val ex = exArr.optJSONObject(i) ?: continue
+          val name = ex.optString("name", "Error").trim()
+          val message = ex.optString("message").trim()
+          lines.add(if (message.isNotEmpty()) "[ERR] $name: $message" else "[ERR] $name")
+        }
+      }
+      return if (lines.isNotEmpty()) lines else listOf(trimmed)
+    }
+  }
 
   suspend fun stopLiveTail(accountId: String, scriptName: String, session: ActiveTailSession) {
     withContext(Dispatchers.IO) {
@@ -2065,11 +2121,11 @@ class CloudflareRepository(
     buildString {
       appendLine("// EdgeCode Wrangler configuration (editable & two-way synced)")
       appendLine("{")
-      appendLine("  \"name\": \"$scriptName\",")
-      appendLine("  \"main\": \"$entryModule\",")
-      appendLine("  \"compatibility_date\": \"$compatDate\",")
+      appendLine("  \"name\": ${JSONObject.quote(scriptName)},")
+      appendLine("  \"main\": ${JSONObject.quote(entryModule)},")
+      appendLine("  \"compatibility_date\": ${JSONObject.quote(compatDate)},")
       if (compatFlags.isNotEmpty()) {
-        val flags = compatFlags.joinToString(", ") { "\"$it\"" }
+        val flags = compatFlags.joinToString(", ") { JSONObject.quote(it) }
         appendLine("  \"compatibility_flags\": [$flags],")
       }
       appendLine("  \"workers_dev\": $workersDev,")
@@ -2078,7 +2134,7 @@ class CloudflareRepository(
         appendLine("  \"vars\": {")
         vars.forEachIndexed { idx, v ->
           val comma = if (idx < vars.lastIndex) "," else ""
-          appendLine("    \"${v.name}\": \"${v.text.orEmpty()}\"$comma")
+          appendLine("    ${JSONObject.quote(v.name)}: ${JSONObject.quote(v.text.orEmpty())}$comma")
         }
         appendLine("  },")
       }
@@ -2087,7 +2143,7 @@ class CloudflareRepository(
         appendLine("  \"kv_namespaces\": [")
         kvs.forEachIndexed { idx, kv ->
           val comma = if (idx < kvs.lastIndex) "," else ""
-          appendLine("    { \"binding\": \"${kv.name}\", \"id\": \"${kv.namespaceId.orEmpty()}\" }$comma")
+          appendLine("    { \"binding\": ${JSONObject.quote(kv.name)}, \"id\": ${JSONObject.quote(kv.namespaceId.orEmpty())} }$comma")
         }
         appendLine("  ],")
       }
@@ -2096,7 +2152,7 @@ class CloudflareRepository(
         appendLine("  \"d1_databases\": [")
         d1s.forEachIndexed { idx, d1 ->
           val comma = if (idx < d1s.lastIndex) "," else ""
-          appendLine("    { \"binding\": \"${d1.name}\", \"database_id\": \"${d1.databaseId.orEmpty()}\" }$comma")
+          appendLine("    { \"binding\": ${JSONObject.quote(d1.name)}, \"database_id\": ${JSONObject.quote(d1.databaseId.orEmpty())} }$comma")
         }
         appendLine("  ],")
       }
@@ -2105,7 +2161,7 @@ class CloudflareRepository(
         appendLine("  \"r2_buckets\": [")
         r2s.forEachIndexed { idx, r2 ->
           val comma = if (idx < r2s.lastIndex) "," else ""
-          appendLine("    { \"binding\": \"${r2.name}\", \"bucket_name\": \"${r2.bucketName.orEmpty()}\" }$comma")
+          appendLine("    { \"binding\": ${JSONObject.quote(r2.name)}, \"bucket_name\": ${JSONObject.quote(r2.bucketName.orEmpty())} }$comma")
         }
         appendLine("  ],")
       }
@@ -2114,14 +2170,14 @@ class CloudflareRepository(
         appendLine("  \"services\": [")
         services.forEachIndexed { idx, svc ->
           val comma = if (idx < services.lastIndex) "," else ""
-          val envPart = svc.environment?.let { ", \"environment\": \"$it\"" }.orEmpty()
-          appendLine("    { \"binding\": \"${svc.name}\", \"service\": \"${svc.service.orEmpty()}\"$envPart }$comma")
+          val envPart = svc.environment?.let { ", \"environment\": ${JSONObject.quote(it)}" }.orEmpty()
+          appendLine("    { \"binding\": ${JSONObject.quote(svc.name)}, \"service\": ${JSONObject.quote(svc.service.orEmpty())}$envPart }$comma")
         }
         appendLine("  ],")
       }
       val ai = bindings.firstOrNull { it.type == "ai" }
       if (ai != null) {
-        appendLine("  \"ai\": { \"binding\": \"${ai.name}\" },")
+        appendLine("  \"ai\": { \"binding\": ${JSONObject.quote(ai.name)} },")
       }
       val dos = bindings.filter { it.type == "durable_object_namespace" }
       if (dos.isNotEmpty()) {
@@ -2129,8 +2185,8 @@ class CloudflareRepository(
         appendLine("    \"bindings\": [")
         dos.forEachIndexed { idx, d ->
           val comma = if (idx < dos.lastIndex) "," else ""
-          val scriptPart = d.scriptName?.let { ", \"script_name\": \"$it\"" }.orEmpty()
-          appendLine("      { \"name\": \"${d.name}\", \"class_name\": \"${d.className.orEmpty()}\"$scriptPart }$comma")
+          val scriptPart = d.scriptName?.let { ", \"script_name\": ${JSONObject.quote(it)}" }.orEmpty()
+          appendLine("      { \"name\": ${JSONObject.quote(d.name)}, \"class_name\": ${JSONObject.quote(d.className.orEmpty())}$scriptPart }$comma")
         }
         appendLine("    ]")
         appendLine("  },")
@@ -2141,13 +2197,13 @@ class CloudflareRepository(
         appendLine("    \"producers\": [")
         queues.forEachIndexed { idx, q ->
           val comma = if (idx < queues.lastIndex) "," else ""
-          appendLine("      { \"binding\": \"${q.name}\", \"queue\": \"${q.queueName.orEmpty()}\" }$comma")
+          appendLine("      { \"binding\": ${JSONObject.quote(q.name)}, \"queue\": ${JSONObject.quote(q.queueName.orEmpty())} }$comma")
         }
         appendLine("    ]")
         appendLine("  },")
       }
       if (schedules.isNotEmpty()) {
-        val crons = schedules.joinToString(", ") { "\"${it.cron}\"" }
+        val crons = schedules.joinToString(", ") { JSONObject.quote(it.cron) }
         appendLine("  \"triggers\": { \"crons\": [$crons] },")
       }
       appendLine("  \"secrets_count\": ${bindings.count { it.type == "secret_text" }}")
