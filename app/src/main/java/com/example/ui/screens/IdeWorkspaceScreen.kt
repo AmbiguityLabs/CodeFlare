@@ -624,9 +624,9 @@ fun IdeWorkspaceScreen(
         viewModel.setProjectMode(ProjectMode.CODE)
         val hook = insertSnippetHook
         if (hook != null) {
-          hook(expanded.text, expanded.cursorBack)
+          hook(expanded.text, expanded.cursorBackOffset)
         } else {
-          viewModel.insertTextAtCursor(expanded.text, expanded.cursorBack)
+          viewModel.insertTextAtCursor(expanded.text, expanded.cursorBackOffset)
         }
       },
       onAddCustomSnippet = viewModel::addCustomSnippet,
@@ -1027,8 +1027,8 @@ fun IdeWorkspaceScreen(
           val expanded = CodeSnippetRegistry.expandSnippet(snippet)
           viewModel.setProjectMode(ProjectMode.CODE)
           val hook = insertSnippetHook
-          if (hook != null) hook(expanded.text, expanded.cursorBack)
-          else viewModel.insertTextAtCursor(expanded.text, expanded.cursorBack)
+          if (hook != null) hook(expanded.text, expanded.cursorBackOffset)
+          else viewModel.insertTextAtCursor(expanded.text, expanded.cursorBackOffset)
         },
         onCloseDrawerIfCompact = {
           if (!isExpanded) scope.launch { drawerState.close() }

@@ -609,7 +609,7 @@ fun CodeEditorPane(
                 minimal = true,
                 onClick = {
                   val text = editorController.currentCharSequence()
-                  val offset = hudHolder.telemetry.selectionEnd.coerceIn(0, text.length)
+                  val offset = hudHolder.telemetry.cursorOffset.coerceIn(0, text.length)
                   flushThen { onGoToDefinition(activeFile.path, text, offset) }
                 },
                 height = 24.dp,

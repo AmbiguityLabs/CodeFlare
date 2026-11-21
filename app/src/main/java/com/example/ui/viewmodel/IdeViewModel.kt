@@ -9367,7 +9367,7 @@ jobs:
       removeSavedEditorBackground(path)
       return
     }
-    updateEditorSettings { cur ->
+    updateSettings { cur ->
       val updatedGallery =
         (listOf(path) + cur.editorBgSavedPaths.filter { it != path })
           .take(EditorSettings.MAX_SAVED_BG_PATHS)
@@ -9406,7 +9406,7 @@ jobs:
   }
 
   fun clearCustomEditorBackground() {
-    updateEditorSettings { cur ->
+    updateSettings { cur ->
       cur.copy(
         editorBgPreset = "NONE",
         editorBgImagePath = "",
@@ -10070,7 +10070,7 @@ jobs:
         description = description.trim(),
         isCustom = true,
       )
-    updateEditorSettings { cur ->
+    updateSettings { cur ->
       val deduped = cur.customSnippets.filterNot { it.abbrev.equals(cleanAbbrev, ignoreCase = true) }
       cur.copy(customSnippets = listOf(newItem) + deduped)
     }
@@ -10078,7 +10078,7 @@ jobs:
   }
 
   fun deleteCustomSnippet(snippetId: String) {
-    updateEditorSettings { cur ->
+    updateSettings { cur ->
       cur.copy(customSnippets = cur.customSnippets.filterNot { it.id == snippetId })
     }
     _uiState.update { it.copy(statusMessage = "Deleted custom snippet") }
