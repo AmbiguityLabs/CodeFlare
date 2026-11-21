@@ -490,45 +490,55 @@ fun LocalScriptRunPane(
         }
       }
 
-      Row(
-        modifier =
-          Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(start = 8.dp, end = 8.dp, bottom = 5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-      ) {
-        IconSegmentTab(
-          icon = if (result.isHtmlBody) Icons.Outlined.Visibility else Icons.Outlined.Code,
-          label = if (result.isHtmlBody) "Preview" else "Output",
-          selected = resultViewTab == 0,
-          onClick = { resultViewTab = 0 },
-          tag = "local_run_tab_output",
-        )
-        IconSegmentTab(
-          icon = Icons.Outlined.Terminal,
-          label = "Logs",
-          selected = resultViewTab == 1,
-          badgeText = result.logs.size.takeIf { it > 0 }?.toString(),
-          onClick = { resultViewTab = 1 },
-          tag = "local_run_tab_logs",
-        )
-        IconSegmentTab(
-          icon = Icons.Outlined.DataObject,
-          label = "Headers",
-          selected = resultViewTab == 2,
-          badgeText = result.headers.size.takeIf { it > 0 }?.toString(),
-          onClick = { resultViewTab = 2 },
-          tag = "local_run_tab_headers",
-        )
-        IconSegmentTab(
-          icon = Icons.Outlined.Dvr,
-          label = "Unified",
-          selected = resultViewTab == 3,
-          onClick = { resultViewTab = 3 },
-          tag = "local_run_tab_unified",
-        )
+      LiquidGlassIconScrubStrip(
+        itemCount = 4,
+        onCommitItem = { idx -> if (idx in 0..3) resultViewTab = idx },
+        modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 5.dp),
+      ) { scrubState ->
+        Row(
+          modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          IconSegmentTab(
+            icon = if (result.isHtmlBody) Icons.Outlined.Visibility else Icons.Outlined.Code,
+            label = if (result.isHtmlBody) "Preview" else "Output",
+            selected = resultViewTab == 0,
+            onClick = { resultViewTab = 0 },
+            tag = "local_run_tab_output",
+            scrubState = scrubState,
+            scrubIndex = 0,
+          )
+          IconSegmentTab(
+            icon = Icons.Outlined.Terminal,
+            label = "Logs",
+            selected = resultViewTab == 1,
+            badgeText = result.logs.size.takeIf { it > 0 }?.toString(),
+            onClick = { resultViewTab = 1 },
+            tag = "local_run_tab_logs",
+            scrubState = scrubState,
+            scrubIndex = 1,
+          )
+          IconSegmentTab(
+            icon = Icons.Outlined.DataObject,
+            label = "Headers",
+            selected = resultViewTab == 2,
+            badgeText = result.headers.size.takeIf { it > 0 }?.toString(),
+            onClick = { resultViewTab = 2 },
+            tag = "local_run_tab_headers",
+            scrubState = scrubState,
+            scrubIndex = 2,
+          )
+          IconSegmentTab(
+            icon = Icons.Outlined.Dvr,
+            label = "Unified",
+            selected = resultViewTab == 3,
+            onClick = { resultViewTab = 3 },
+            tag = "local_run_tab_unified",
+            scrubState = scrubState,
+            scrubIndex = 3,
+          )
+        }
       }
 
       AnimatedVisibility(visible = showOutputSearch) {

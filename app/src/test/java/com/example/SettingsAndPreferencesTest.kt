@@ -12,6 +12,8 @@ import com.example.data.security.IconLabelBehavior
 import com.example.data.security.PopupMenuStyleConfig
 import com.example.data.security.SelectionDragConfig
 import com.example.data.security.SmartSelectionHoldMode
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.TextFieldValue
 import com.example.data.remote.WorkerFile
@@ -26,7 +28,9 @@ import com.example.ui.theme.bridgedTo
 import com.example.ui.theme.computeLiquidGlassParams
 import com.example.ui.theme.expressiveColorScheme
 import com.example.ui.theme.expressiveColorSchemeFromSeed
+import com.example.ui.theme.findScrubItemIndexAtOffset
 import com.example.ui.theme.paletteFor
+import com.example.ui.viewmodel.SplitViewMode
 import com.example.ui.viewmodel.hasAnyNonSpacingWorkspaceDiff
 import com.example.ui.viewmodel.isSpacingOnlyChange
 import com.example.ui.viewmodel.shouldAutoSaveEdit
@@ -772,5 +776,53 @@ class SettingsAndPreferencesTest {
     assertTrue(clearDark)
     // Bright underlying backdrop flips glass polarity automatically to light glass even on dark theme
     assertFalse(brightPolarityDark)
+  }
+
+  @Test
+  fun liquidGlassScrubHitSolverTracksIconsAcrossGapsAndCancelsOutsideVertically() {
+    val bounds =
+      mapOf(
+        0 to Rect(left = 10f, top = 10f, right = 90f, bottom = 90f),
+        1 to Rect(left = 110f, top = 10f, right = 190f, bottom = 90f),
+        2 to Rect(left = 210f, top = 10f, right = 290f, bottom = 90f),
+      )
+
+    // Direct hits on each icon
+    assertEquals(0, findScrubItemIndexAtOffset(bounds, Offset(50f, 50f), verticalCancelSlopPx = 80f))
+    assertEquals(1, findScrubItemIndexAtOffset(bounds, Offset(150f, 50f), verticalCancelSlopPx = 80f))
+    assertEquals(2, findScrubItemIndexAtOffset(bounds, Offset(250f, 50f), verticalCancelSlopPx = 80f))
+
+    // Sliding across gap between icon 0 (center 50) and icon 1 (center 150) snaps to nearest icon
+    assertEquals(0, findScrubItemIndexAtOffset(bounds, Offset(94f, 50f), verticalCancelSlopPx = 80f))
+    assertEquals(1, findScrubItemIndexAtOffset(bounds, Offset(106f, 50f), verticalCancelSlopPx = 80f))
+
+    // Slight vertical drift within slop stays locked on icon 1
+    assertEquals(1, findScrubItemIndexAtOffset(bounds, Offset(150f, 150f), verticalCancelSlopPx = 80f))
+
+    // Drifting outside vertical slop or far past horizontal slop cancels cleanly (-1)
+    assertEquals(-1, findScrubItemIndexAtOffset(bounds, Offset(150f, 200f), verticalCancelSlopPx = 80f))
+    assertEquals(-1, findScrubItemIndexAtOffset(bounds, Offset(150f, -90f), verticalCancelSlopPx = 80f))
+    assertEquals(-1, findScrubItemIndexAtOffset(bounds, Offset(400f, 50f), verticalCancelSlopPx = 80f, horizontalGapSlopPx = 28f))
+    assertEquals(-1, findScrubItemIndexAtOffset(emptyMap(), Offset(50f, 50f), verticalCancelSlopPx = 80f))
+  }
+
+  @Test
+  fun paletteEditorCanvasTextHelpersAndSplitViewModesWorkCleanly() {
+    val lightIdeDarkCanvas =
+      paletteFor(
+        darkTheme = false,
+        preset = EditorThemePreset.LIGHT_PAPER,
+        codeStyle = CodeStylePreset.NEON_QUERY,
+        codeStyleOverrideCanvas = true,
+      )
+    // Light UI theme with dark code canvas must still expose legible bright editor text & contrast accent
+    assertNotEquals(lightIdeDarkCanvas.editorBg, lightIdeDarkCanvas.editorTextPrimary)
+    assertNotEquals(lightIdeDarkCanvas.editorBg, lightIdeDarkCanvas.editorTextMuted)
+    assertNotEquals(Color.Transparent, lightIdeDarkCanvas.canvasAccent())
+
+    assertEquals(3, SplitViewMode.entries.size)
+    assertTrue(SplitViewMode.NONE in SplitViewMode.entries)
+    assertTrue(SplitViewMode.CODE_PREVIEW in SplitViewMode.entries)
+    assertTrue(SplitViewMode.DUAL_FILE in SplitViewMode.entries)
   }
 }

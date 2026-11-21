@@ -63,9 +63,13 @@ import com.example.ui.theme.LocalEditorSettings
 import com.example.ui.theme.LocalIconLabelBehavior
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.UiStyleVersion
+import com.example.ui.theme.LiquidGlassScrubLensOverlay
+import com.example.ui.theme.liquidGlassScrubHost
+import com.example.ui.theme.liquidGlassScrubItem
 import com.example.ui.theme.liquidGlassSurface
 import com.example.ui.theme.liquidGlassTouchGlow
 import com.example.ui.theme.rememberLiquidGlassAdaptiveColors
+import com.example.ui.theme.rememberLiquidGlassScrubState
 
 data class EdgeBottomDockItem(
   val label: String,
@@ -191,6 +195,8 @@ private fun LiquidGlassFloatingDock(
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+      val dockScrubState = rememberLiquidGlassScrubState()
+      val innerCorner = (cfg.cornerRadiusDp - 3).coerceAtLeast(10).dp
       Box(
         modifier =
           Modifier
@@ -221,6 +227,11 @@ private fun LiquidGlassFloatingDock(
                     else Modifier,
                   )
               },
+            )
+            .liquidGlassScrubHost(
+              state = dockScrubState,
+              itemCount = items.size,
+              onCommitItem = { idx -> items.getOrNull(idx)?.onClick?.invoke() },
             ),
       ) {
         if (sheenAlpha > 0.005f) {
@@ -247,11 +258,11 @@ private fun LiquidGlassFloatingDock(
             verticalAlignment = Alignment.CenterVertically,
           ) {
             val itemHeight = (cfg.heightDp - 8).coerceAtLeast(36).dp
-            val innerCorner = (cfg.cornerRadiusDp - 3).coerceAtLeast(10).dp
             val innerShape = RoundedCornerShape(innerCorner)
 
-            items.forEach { item ->
+            items.forEachIndexed { index, item ->
               val interactionSource = remember(item.testTag) { MutableInteractionSource() }
+              val scrubHovered = dockScrubState.isItemScrubHovered(index)
               val active = item.selected
               val activeBgTarget =
                 if (active) {
@@ -267,17 +278,22 @@ private fun LiquidGlassFloatingDock(
               val iconTint by animateColorAsState(
                 targetValue =
                   when {
-                    active -> palette.activePillFg
+                    scrubHovered || active -> palette.activePillFg
                     liquidEnabled -> adaptiveGlass.foregroundSecondary
                     isDark -> Color.White.copy(alpha = 0.76f)
                     else -> palette.textSecondary
                   },
-                animationSpec = tween(durationMillis = 170),
+                animationSpec = tween(durationMillis = 150),
                 label = "v2_dock_icon_tint",
               )
               val iconScale by animateFloatAsState(
-                targetValue = if (active) 1.07f else 1f,
-                animationSpec = tween(durationMillis = 190, easing = FastOutSlowInEasing),
+                targetValue =
+                  when {
+                    scrubHovered -> 1.16f
+                    active -> 1.07f
+                    else -> 1f
+                  },
+                animationSpec = tween(durationMillis = 160, easing = FastOutSlowInEasing),
                 label = "v2_dock_icon_scale",
               )
 
@@ -300,6 +316,7 @@ private fun LiquidGlassFloatingDock(
               Box(
                 modifier =
                   Modifier
+                    .liquidGlassScrubItem(dockScrubState, index)
                     .height(itemHeight)
                     .clip(innerShape)
                     .background(pillBg)
@@ -367,7 +384,7 @@ private fun LiquidGlassFloatingDock(
                     DockInlineCounterBadge(
                       text = item.badgeText,
                       customColor = item.badgeColor,
-                      active = active,
+                      active = active || scrubHovered,
                       isV2Glass = true,
                     )
                   }
@@ -376,6 +393,13 @@ private fun LiquidGlassFloatingDock(
             }
           }
         }
+
+        LiquidGlassScrubLensOverlay(
+          state = dockScrubState,
+          cornerRadius = innerCorner,
+          thickness = 1.45f,
+          modifier = Modifier.fillMaxSize(),
+        )
       }
 
       if (onHideDock != null) {
@@ -453,8 +477,16 @@ private fun ClassicDockedBar(
           .padding(horizontal = 8.dp, vertical = 5.dp),
       verticalAlignment = Alignment.CenterVertically,
     ) {
+      val classicScrubState = rememberLiquidGlassScrubState()
       Box(
-        modifier = Modifier.weight(1f),
+        modifier =
+          Modifier
+            .weight(1f)
+            .liquidGlassScrubHost(
+              state = classicScrubState,
+              itemCount = items.size,
+              onCommitItem = { idx -> items.getOrNull(idx)?.onClick?.invoke() },
+            ),
         contentAlignment = Alignment.Center,
       ) {
         Row(
@@ -463,8 +495,9 @@ private fun ClassicDockedBar(
           verticalAlignment = Alignment.CenterVertically,
         ) {
           val labelBehavior = LocalIconLabelBehavior.current
-          items.forEach { item ->
+          items.forEachIndexed { index, item ->
             val interactionSource = remember(item.testTag) { MutableInteractionSource() }
+            val scrubHovered = classicScrubState.isItemScrubHovered(index)
             val active = item.selected
             val showLabel =
               when {
@@ -480,19 +513,25 @@ private fun ClassicDockedBar(
               label = "dock_pill_bg",
             )
             val iconTint by animateColorAsState(
-              targetValue = if (active) palette.activePillFg else palette.textSecondary,
-              animationSpec = tween(durationMillis = 160),
+              targetValue = if (scrubHovered || active) palette.activePillFg else palette.textSecondary,
+              animationSpec = tween(durationMillis = 150),
               label = "dock_icon_tint",
             )
             val iconScale by animateFloatAsState(
-              targetValue = if (active) 1.06f else 1f,
-              animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
+              targetValue =
+                when {
+                  scrubHovered -> 1.14f
+                  active -> 1.06f
+                  else -> 1f
+                },
+              animationSpec = tween(durationMillis = 160, easing = FastOutSlowInEasing),
               label = "dock_icon_scale",
             )
 
             Box(
               modifier =
                 Modifier
+                  .liquidGlassScrubItem(classicScrubState, index)
                   .height((cfg.heightDp - 12).coerceIn(36, 52).dp)
                   .clip(RoundedCornerShape(cfg.cornerRadiusDp.dp))
                   .liquidGlassTouchGlow(glowColor = palette.activePillFg)
@@ -555,7 +594,7 @@ private fun ClassicDockedBar(
                     DockInlineCounterBadge(
                       text = item.badgeText,
                       customColor = item.badgeColor,
-                      active = active,
+                      active = active || scrubHovered,
                       isV2Glass = false,
                     )
                   }
@@ -564,6 +603,12 @@ private fun ClassicDockedBar(
             }
           }
         }
+        LiquidGlassScrubLensOverlay(
+          state = classicScrubState,
+          cornerRadius = cfg.cornerRadiusDp.dp,
+          thickness = 1.35f,
+          modifier = Modifier.matchParentSize(),
+        )
       }
 
       if (onHideDock != null) {
