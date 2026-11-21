@@ -12,6 +12,16 @@
 # JSON/API models and Retrofit services (accessed by reflection / generic signatures)
 -keep class com.example.data.remote.** { *; }
 -keep class com.example.data.auth.** { *; }
+-keep class com.example.data.local.Cached*Envelope { *; }
+-keep class *JsonAdapter {
+    public <init>(com.squareup.moshi.Moshi);
+    public <init>(com.squareup.moshi.Moshi, java.lang.reflect.Type[]);
+}
+
+# ViewModels instantiated via default ViewModelProvider reflection
+-keepclassmembers class * extends androidx.lifecycle.AndroidViewModel {
+    public <init>(android.app.Application);
+}
 
 # Retrofit / OkHttp optional dependencies
 -dontwarn javax.annotation.**
