@@ -417,9 +417,6 @@ data class EditorSettings(
   val codeStylePreset: String = CODE_STYLE_DEFAULT,
   val codeStyleOverrideCanvas: Boolean = true,
   val uiStyleVersion: String = "V1",
-  val liquidGlassEnabled: Boolean = true,
-  val liquidGlassTint: Float = 0.25f,
-  val liquidGlassMotionHighlights: Boolean = true,
   val iconLabelBehavior: IconLabelBehavior = IconLabelBehavior.REVEAL_ON_TAP,
   val reopenLastProject: Boolean = true,
   val editorBgPreset: String = "NONE",
@@ -634,9 +631,6 @@ class AuthPreferencesStore(private val context: Context) {
     val CODE_STYLE_PRESET = stringPreferencesKey("editor_code_style_preset")
     val CODE_STYLE_OVERRIDE_CANVAS = booleanPreferencesKey("editor_code_style_override_canvas")
     val UI_STYLE_VERSION = stringPreferencesKey("editor_ui_style_version")
-    val LIQUID_GLASS_ENABLED = booleanPreferencesKey("ui_liquid_glass_enabled")
-    val LIQUID_GLASS_TINT = floatPreferencesKey("ui_liquid_glass_tint")
-    val LIQUID_GLASS_MOTION_HIGHLIGHTS = booleanPreferencesKey("ui_liquid_glass_motion_highlights")
     val ICON_LABEL_BEHAVIOR = stringPreferencesKey("ui_icon_label_behavior")
     val REOPEN_LAST_PROJECT = booleanPreferencesKey("app_reopen_last_project")
     val EDITOR_BG_PRESET = stringPreferencesKey("editor_bg_preset")
@@ -769,9 +763,6 @@ class AuthPreferencesStore(private val context: Context) {
         codeStylePreset = prefs[Keys.CODE_STYLE_PRESET]?.takeIf { it.isNotBlank() }?.uppercase() ?: EditorSettings.CODE_STYLE_DEFAULT,
         codeStyleOverrideCanvas = prefs[Keys.CODE_STYLE_OVERRIDE_CANVAS] ?: true,
         uiStyleVersion = prefs[Keys.UI_STYLE_VERSION]?.takeIf { it.isNotBlank() } ?: "V1",
-        liquidGlassEnabled = prefs[Keys.LIQUID_GLASS_ENABLED] ?: true,
-        liquidGlassTint = (prefs[Keys.LIQUID_GLASS_TINT] ?: 0.25f).coerceIn(0f, 1f),
-        liquidGlassMotionHighlights = prefs[Keys.LIQUID_GLASS_MOTION_HIGHLIGHTS] ?: true,
         iconLabelBehavior = IconLabelBehavior.fromKey(prefs[Keys.ICON_LABEL_BEHAVIOR]),
         reopenLastProject = prefs[Keys.REOPEN_LAST_PROJECT] ?: true,
         editorBgPreset = prefs[Keys.EDITOR_BG_PRESET]?.takeIf { it.isNotBlank() } ?: "NONE",
@@ -999,8 +990,6 @@ class AuthPreferencesStore(private val context: Context) {
         accentColor = rawNext.accentColor or 0xFF000000L,
         themePreset = resolvedPreset,
         codeStylePreset = rawNext.normalizedCodeStylePreset(),
-        codeStyleOverrideCanvas = rawNext.codeStyleOverrideCanvas,
-        liquidGlassTint = rawNext.liquidGlassTint.coerceIn(0f, 1f),
         codeFont = rawNext.normalizedCodeFont(),
         caretStyle = rawNext.normalizedCaretStyle(),
         editorBubbles = rawNext.editorBubbles.normalized(),
@@ -1041,9 +1030,6 @@ class AuthPreferencesStore(private val context: Context) {
       prefs[Keys.CODE_STYLE_PRESET] = next.codeStylePreset
       prefs[Keys.CODE_STYLE_OVERRIDE_CANVAS] = next.codeStyleOverrideCanvas
       prefs[Keys.UI_STYLE_VERSION] = next.uiStyleVersion.ifBlank { "V1" }
-      prefs[Keys.LIQUID_GLASS_ENABLED] = next.liquidGlassEnabled
-      prefs[Keys.LIQUID_GLASS_TINT] = next.liquidGlassTint.coerceIn(0f, 1f)
-      prefs[Keys.LIQUID_GLASS_MOTION_HIGHLIGHTS] = next.liquidGlassMotionHighlights
       prefs[Keys.ICON_LABEL_BEHAVIOR] = next.iconLabelBehavior.name
       prefs[Keys.REOPEN_LAST_PROJECT] = next.reopenLastProject
       prefs[Keys.EDITOR_BG_PRESET] = next.editorBgPreset.ifBlank { "NONE" }

@@ -3,7 +3,6 @@ package com.example.ui.theme
 import androidx.annotation.DrawableRes
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import com.example.R
@@ -209,26 +208,26 @@ enum class CodeStylePreset(
   }
 }
 
-// Core Olive-Obsidian tokens (modern ultra-thin flat tones)
-val OliveBg = Color(0xFF11130E)
-val OliveSurfaceLow = Color(0xFF161913)
-val OliveSurface = Color(0xFF1D2119)
-val OliveSurfaceHigh = Color(0xFF252A20)
-val OliveSelectedRow = Color(0xFF293022)
-val OliveActivePill = Color(0xFF333F16)
+// Core Olive-Obsidian tokens (true OLED black dark surface polarity)
+val OliveBg = Color(0xFF000000)
+val OliveSurfaceLow = Color(0xFF080907)
+val OliveSurface = Color(0xFF10120E)
+val OliveSurfaceHigh = Color(0xFF181B14)
+val OliveSelectedRow = Color(0xFF1F2619)
+val OliveActivePill = Color(0xFF2B3611)
 val OliveLimeText = Color(0xFFD2F063)
 val OliveCtaBg = Color(0xFFCDE959)
 val OliveCtaFg = Color(0xFF161E04)
-val OliveBorder = Color(0xFF262B20)
+val OliveBorder = Color(0xFF22261D)
 
-val FeaturedResumeDarkBg = Color(0xFF271F33)
+val FeaturedResumeDarkBg = Color(0xFF20182C)
 val FeaturedResumeDarkFg = Color(0xFFF3EBFF)
 val FeaturedResumeDarkMuted = Color(0xFFCBBADF)
 
-val SlateEditorBg = Color(0xFF14171D)
-val SlateEditorGutter = Color(0xFF14171D)
-val SlateActiveLine = Color(0xFF1E222B)
-val SlateGutterDivider = Color(0xFF252934)
+val SlateEditorBg = Color(0xFF000000)
+val SlateEditorGutter = Color(0xFF000000)
+val SlateActiveLine = Color(0xFF101319)
+val SlateGutterDivider = Color(0xFF1F232C)
 
 val BadgeJs = Color(0xFFE0A43E)
 val BadgeTs = Color(0xFF38BDF8)
@@ -274,6 +273,10 @@ data class IdePalette(
   val textPrimary: Color,
   val textSecondary: Color,
   val textMuted: Color,
+  // Isolated editor-canvas text ink tokens (independent from UI chrome textPrimary when code style overrides canvas)
+  val editorTextPrimary: Color = textPrimary,
+  val editorTextMuted: Color = textMuted,
+  val hasEditorCanvasOverride: Boolean = false,
   // Search match highlights
   val searchMatchBg: Color,
   val searchActiveMatchBg: Color,
@@ -288,38 +291,30 @@ data class IdePalette(
   val syntaxProperty: Color,
   val syntaxOperator: Color,
 ) {
-  val editorTextPrimary: Color
-    get() =
-      if (editorBg.luminance() < 0.40f) {
-        if (textPrimary.luminance() > 0.45f) textPrimary else Color(0xFFECEEE6)
-      } else {
-        if (textPrimary.luminance() < 0.45f) textPrimary else Color(0xFF181A14)
-      }
-
-  val editorTextMuted: Color
-    get() =
-      if (editorBg.luminance() < 0.40f) {
-        if (!isDark) Color(0xFF8E95A5) else textMuted
-      } else {
-        if (isDark) Color(0xFF6B7280) else textMuted
-      }
-
-  fun canvasAccent(): Color =
-    if (editorBg.luminance() < 0.40f && ctaBg.luminance() < 0.28f) activePillFg else ctaBg
+  /** Accent color guaranteed to contrast cleanly on [editorBg], even when Light UI hosts a Dark code style. */
+  fun canvasAccent(): Color {
+    val canvasIsDark = editorBg.luminance() < 0.35f
+    val uiMatchesCanvas = canvasIsDark == isDark
+    return when {
+      uiMatchesCanvas -> activePillFg
+      canvasIsDark -> syntaxFunction
+      else -> ctaBg
+    }
+  }
 }
 
 val DarkIdePalette =
   IdePalette(
     isDark = true,
     preset = EditorThemePreset.OLIVE_OBSIDIAN,
-    chromeBg = OliveBg,
+    chromeBg = Color(0xFF000000),
     chromeSurface = OliveSurfaceLow,
     chromePill = OliveSurface,
-    glassSurface = Color(0xFF161913),
-    glassElevated = Color(0xFF1C2018),
-    glassDockBg = Color(0xFF131610),
-    glassBorderHighlight = Color(0xFF2D3326),
-    glassBorderSubtle = Color(0xFF23281E),
+    glassSurface = Color(0xFF0B0C0A),
+    glassElevated = Color(0xFF131511),
+    glassDockBg = Color(0xFF060705),
+    glassBorderHighlight = Color(0xFF262A20),
+    glassBorderSubtle = Color(0xFF1B1E17),
     activePillBg = OliveActivePill,
     activePillFg = OliveLimeText,
     ctaBg = OliveCtaBg,
@@ -328,16 +323,18 @@ val DarkIdePalette =
     featuredCardFg = FeaturedResumeDarkFg,
     featuredCardMuted = FeaturedResumeDarkMuted,
     selectedRowBg = OliveSelectedRow,
-    editorBg = SlateEditorBg,
-    editorGutterBg = SlateEditorGutter,
+    editorBg = Color(0xFF000000),
+    editorGutterBg = Color(0xFF000000),
     editorActiveLineBg = SlateActiveLine,
-    tabBarBg = OliveBg,
-    tabActiveBg = SlateEditorBg,
+    tabBarBg = Color(0xFF000000),
+    tabActiveBg = OliveSurfaceLow,
     border = OliveBorder,
-    treeLine = Color(0xFF282D22),
-    textPrimary = Color(0xFFECEEE6),
-    textSecondary = Color(0xFFA3A89C),
-    textMuted = Color(0xFF6F7567),
+    treeLine = Color(0xFF22261C),
+    textPrimary = Color(0xFFF3F5EE),
+    textSecondary = Color(0xFFA9AEA2),
+    textMuted = Color(0xFF72786B),
+    editorTextPrimary = Color(0xFFECEEE6),
+    editorTextMuted = Color(0xFF72786B),
     searchMatchBg = Color(0x40FBBF24),
     searchActiveMatchBg = Color(0x8CF59E0B),
     syntaxKeyword = Color(0xFFC084FC),
@@ -354,32 +351,34 @@ val DarkIdePalette =
 val SlateDarkIdePalette =
   DarkIdePalette.copy(
     preset = EditorThemePreset.SLATE_CARBON,
-    chromeBg = Color(0xFF0E1117),
-    chromeSurface = Color(0xFF131720),
-    chromePill = Color(0xFF1A202C),
-    glassSurface = Color(0xFF131720),
-    glassElevated = Color(0xFF191F2B),
-    glassDockBg = Color(0xFF10141C),
-    glassBorderHighlight = Color(0xFF2A3346),
-    glassBorderSubtle = Color(0xFF202736),
+    chromeBg = Color(0xFF000000),
+    chromeSurface = Color(0xFF080A0F),
+    chromePill = Color(0xFF10151F),
+    glassSurface = Color(0xFF0A0D13),
+    glassElevated = Color(0xFF121722),
+    glassDockBg = Color(0xFF05070A),
+    glassBorderHighlight = Color(0xFF232C3D),
+    glassBorderSubtle = Color(0xFF1A202E),
     activePillBg = Color(0xFF1B3352),
     activePillFg = Color(0xFF7DD3FC),
     ctaBg = Color(0xFF60A5FA),
     ctaFg = Color(0xFF071324),
-    featuredCardBg = Color(0xFF172235),
+    featuredCardBg = Color(0xFF131D2E),
     featuredCardFg = Color(0xFFE8F1FF),
     featuredCardMuted = Color(0xFF9DB6D9),
-    selectedRowBg = Color(0xFF1E293B),
-    editorBg = Color(0xFF0F131A),
-    editorGutterBg = Color(0xFF0F131A),
-    editorActiveLineBg = Color(0xFF181F2C),
-    tabBarBg = Color(0xFF0E1117),
-    tabActiveBg = Color(0xFF0F131A),
-    border = Color(0xFF222A3A),
-    treeLine = Color(0xFF232C3D),
-    textPrimary = Color(0xFFE6ECF5),
-    textSecondary = Color(0xFF98A4B8),
-    textMuted = Color(0xFF647085),
+    selectedRowBg = Color(0xFF192233),
+    editorBg = Color(0xFF000000),
+    editorGutterBg = Color(0xFF000000),
+    editorActiveLineBg = Color(0xFF111621),
+    tabBarBg = Color(0xFF000000),
+    tabActiveBg = Color(0xFF0D111A),
+    border = Color(0xFF1F2636),
+    treeLine = Color(0xFF202838),
+    textPrimary = Color(0xFFEAF0FA),
+    textSecondary = Color(0xFF9FABC0),
+    textMuted = Color(0xFF6C788E),
+    editorTextPrimary = Color(0xFFE6ECF5),
+    editorTextMuted = Color(0xFF6C788E),
     syntaxKeyword = Color(0xFF7DD3FC),
     syntaxControl = Color(0xFFC4B5FD),
     syntaxString = Color(0xFF86EFAC),
@@ -392,32 +391,34 @@ val SlateDarkIdePalette =
 val NoirDarkIdePalette =
   DarkIdePalette.copy(
     preset = EditorThemePreset.MIDNIGHT_NOIR,
-    chromeBg = Color(0xFF090A0D),
-    chromeSurface = Color(0xFF101217),
-    chromePill = Color(0xFF171A21),
-    glassSurface = Color(0xFF101217),
-    glassElevated = Color(0xFF161920),
-    glassDockBg = Color(0xFF0C0E12),
-    glassBorderHighlight = Color(0xFF272B36),
-    glassBorderSubtle = Color(0xFF1E212B),
+    chromeBg = Color(0xFF000000),
+    chromeSurface = Color(0xFF08090C),
+    chromePill = Color(0xFF111319),
+    glassSurface = Color(0xFF0A0B0F),
+    glassElevated = Color(0xFF12141B),
+    glassDockBg = Color(0xFF040507),
+    glassBorderHighlight = Color(0xFF252834),
+    glassBorderSubtle = Color(0xFF1A1D26),
     activePillBg = Color(0xFF2B2147),
     activePillFg = Color(0xFFD8B4FE),
     ctaBg = Color(0xFFC084FC),
     ctaFg = Color(0xFF180A2B),
-    featuredCardBg = Color(0xFF1B1629),
+    featuredCardBg = Color(0xFF171224),
     featuredCardFg = Color(0xFFF5ECFF),
     featuredCardMuted = Color(0xFFC2B0D9),
-    selectedRowBg = Color(0xFF1E1B2E),
-    editorBg = Color(0xFF0B0C10),
-    editorGutterBg = Color(0xFF0B0C10),
-    editorActiveLineBg = Color(0xFF151821),
-    tabBarBg = Color(0xFF090A0D),
-    tabActiveBg = Color(0xFF0B0C10),
-    border = Color(0xFF1E212B),
-    treeLine = Color(0xFF222633),
-    textPrimary = Color(0xFFF0F1F5),
-    textSecondary = Color(0xFF9CA0B0),
-    textMuted = Color(0xFF666B7D),
+    selectedRowBg = Color(0xFF191627),
+    editorBg = Color(0xFF000000),
+    editorGutterBg = Color(0xFF000000),
+    editorActiveLineBg = Color(0xFF10121A),
+    tabBarBg = Color(0xFF000000),
+    tabActiveBg = Color(0xFF0C0E14),
+    border = Color(0xFF1C1F29),
+    treeLine = Color(0xFF202430),
+    textPrimary = Color(0xFFF4F5FA),
+    textSecondary = Color(0xFFA3A7B8),
+    textMuted = Color(0xFF6E7385),
+    editorTextPrimary = Color(0xFFF0F1F5),
+    editorTextMuted = Color(0xFF6E7385),
     syntaxKeyword = Color(0xFFD8B4FE),
     syntaxControl = Color(0xFFF0ABFC),
     syntaxString = Color(0xFFFDE68A),
@@ -430,32 +431,34 @@ val NoirDarkIdePalette =
 val DuskDarkIdePalette =
   DarkIdePalette.copy(
     preset = EditorThemePreset.AMBER_DUSK,
-    chromeBg = Color(0xFF13110F),
-    chromeSurface = Color(0xFF1A1714),
-    chromePill = Color(0xFF231F1B),
-    glassSurface = Color(0xFF1A1714),
-    glassElevated = Color(0xFF221E1A),
-    glassDockBg = Color(0xFF161310),
-    glassBorderHighlight = Color(0xFF352E27),
-    glassBorderSubtle = Color(0xFF2B251F),
+    chromeBg = Color(0xFF000000),
+    chromeSurface = Color(0xFF0A0807),
+    chromePill = Color(0xFF14110E),
+    glassSurface = Color(0xFF0C0A08),
+    glassElevated = Color(0xFF161310),
+    glassDockBg = Color(0xFF050403),
+    glassBorderHighlight = Color(0xFF2D2720),
+    glassBorderSubtle = Color(0xFF211C17),
     activePillBg = Color(0xFF472A12),
     activePillFg = Color(0xFFFDBA74),
     ctaBg = Color(0xFFF59E42),
     ctaFg = Color(0xFF241103),
-    featuredCardBg = Color(0xFF2B1D14),
+    featuredCardBg = Color(0xFF241810),
     featuredCardFg = Color(0xFFFFF3E6),
     featuredCardMuted = Color(0xFFDCC0A6),
-    selectedRowBg = Color(0xFF2D231A),
-    editorBg = Color(0xFF151311),
-    editorGutterBg = Color(0xFF151311),
-    editorActiveLineBg = Color(0xFF211D18),
-    tabBarBg = Color(0xFF13110F),
-    tabActiveBg = Color(0xFF151311),
-    border = Color(0xFF2C2620),
-    treeLine = Color(0xFF302922),
-    textPrimary = Color(0xFFF2ECE4),
-    textSecondary = Color(0xFFB0A496),
-    textMuted = Color(0xFF7B7064),
+    selectedRowBg = Color(0xFF241B14),
+    editorBg = Color(0xFF000000),
+    editorGutterBg = Color(0xFF000000),
+    editorActiveLineBg = Color(0xFF16130F),
+    tabBarBg = Color(0xFF000000),
+    tabActiveBg = Color(0xFF100E0C),
+    border = Color(0xFF26201B),
+    treeLine = Color(0xFF2A241E),
+    textPrimary = Color(0xFFF5EFE7),
+    textSecondary = Color(0xFFB5A99B),
+    textMuted = Color(0xFF7E7367),
+    editorTextPrimary = Color(0xFFF2ECE4),
+    editorTextMuted = Color(0xFF7E7367),
     syntaxKeyword = Color(0xFFFDBA74),
     syntaxControl = Color(0xFFFCA5A5),
     syntaxString = Color(0xFFA7F3D0),
@@ -495,6 +498,8 @@ val LightIdePalette =
     textPrimary = Color(0xFF181A14),
     textSecondary = Color(0xFF4F5546),
     textMuted = Color(0xFF838A78),
+    editorTextPrimary = Color(0xFF181A14),
+    editorTextMuted = Color(0xFF838A78),
     searchMatchBg = Color(0x4DF59E0B),
     searchActiveMatchBg = Color(0x99F59E0B),
     syntaxKeyword = Color(0xFF7C3AED),
@@ -575,31 +580,33 @@ fun paletteFor(
       basePalette.copy(
         uiStyle = UiStyleVersion.V2_MINIMAL_OLED,
         chromeBg = Color(0xFF000000),
-        chromeSurface = Color(0xFF141416),
-        chromePill = Color(0xFF1C1C1F),
-        glassSurface = Color(0xFF141416),
-        glassElevated = Color(0xFF1B1B1E),
-        glassDockBg = Color(0xFF070708),
-        glassBorderHighlight = Color(0xFF2B2B30),
-        glassBorderSubtle = Color(0xFF1F1F23),
-        activePillBg = Color(0xFF242428),
+        chromeSurface = Color(0xFF08080A),
+        chromePill = Color(0xFF111115),
+        glassSurface = Color(0xFF08080A),
+        glassElevated = Color(0xFF111115),
+        glassDockBg = Color(0xFF020203),
+        glassBorderHighlight = Color(0xFF26262C),
+        glassBorderSubtle = Color(0xFF1A1A20),
+        activePillBg = Color(0xFF202026),
         activePillFg = Color(0xFFF4F4F5),
         ctaBg = Color(0xFFF4F4F5),
         ctaFg = Color(0xFF09090B),
-        featuredCardBg = Color(0xFF141416),
+        featuredCardBg = Color(0xFF0C0C0F),
         featuredCardFg = Color(0xFFF4F4F5),
         featuredCardMuted = Color(0xFFA1A1AA),
-        selectedRowBg = Color(0xFF1D1D21),
+        selectedRowBg = Color(0xFF18181D),
         editorBg = Color(0xFF000000),
-        editorGutterBg = Color(0xFF040405),
-        editorActiveLineBg = Color(0xFF141416),
+        editorGutterBg = Color(0xFF000000),
+        editorActiveLineBg = Color(0xFF0E0E12),
         tabBarBg = Color(0xFF000000),
-        tabActiveBg = Color(0xFF141416),
-        border = Color(0xFF242428),
-        treeLine = Color(0xFF222226),
+        tabActiveBg = Color(0xFF0E0E12),
+        border = Color(0xFF202026),
+        treeLine = Color(0xFF1E1E24),
         textPrimary = Color(0xFFF4F4F5),
         textSecondary = Color(0xFFA1A1AA),
         textMuted = Color(0xFF71717A),
+        editorTextPrimary = Color(0xFFF4F4F5),
+        editorTextMuted = Color(0xFF71717A),
       )
     } else {
       basePalette.copy(
@@ -630,6 +637,8 @@ fun paletteFor(
         textPrimary = Color(0xFF111113),
         textSecondary = Color(0xFF52525B),
         textMuted = Color(0xFF8E8E93),
+        editorTextPrimary = Color(0xFF111113),
+        editorTextMuted = Color(0xFF8E8E93),
       )
     }
 
@@ -664,7 +673,9 @@ fun applyCodeStylePreset(
     editorBg = if (overrideCanvas) codeStyle.canvasBg else palette.editorBg,
     editorGutterBg = if (overrideCanvas) codeStyle.canvasGutterBg else palette.editorGutterBg,
     editorActiveLineBg = if (overrideCanvas) codeStyle.canvasActiveLineBg else palette.editorActiveLineBg,
-    textPrimary = if (overrideCanvas) codeStyle.canvasTextPrimary else palette.textPrimary,
+    editorTextPrimary = if (overrideCanvas) codeStyle.canvasTextPrimary else palette.editorTextPrimary,
+    editorTextMuted = if (overrideCanvas) codeStyle.canvasTextPrimary.copy(alpha = 0.56f) else palette.editorTextMuted,
+    hasEditorCanvasOverride = overrideCanvas,
     syntaxKeyword = token(codeStyle.keyword),
     syntaxControl = token(codeStyle.control),
     syntaxString = token(codeStyle.string),
@@ -677,47 +688,46 @@ fun applyCodeStylePreset(
   )
 }
 
-fun IdePalette.bridgedTo(
-  scheme: androidx.compose.material3.ColorScheme,
-  preserveEditorCanvas: Boolean = false,
-): IdePalette {
-  val isV2 = uiStyle == UiStyleVersion.V2_MINIMAL_OLED
-  val resolvedChromeBg = if (isV2) chromeBg else scheme.background
-  val resolvedChromeSurface =
-    if (isV2) lerp(chromeSurface, scheme.surfaceContainerLow, 0.42f) else scheme.surfaceContainerLow
-  val resolvedChromePill =
-    if (isV2) lerp(chromePill, scheme.surfaceContainer, 0.48f) else scheme.surfaceContainer
-  val resolvedGlassSurface =
-    if (isV2) lerp(glassSurface, scheme.surfaceContainer, 0.42f) else scheme.surfaceContainer
-  val resolvedGlassElevated =
-    if (isV2) lerp(glassElevated, scheme.surfaceContainerHigh, 0.48f) else scheme.surfaceContainerHigh
-  val resolvedDockBg =
-    if (isV2) lerp(glassDockBg, scheme.surfaceContainerLow, 0.40f) else scheme.surfaceContainerLow
-  val resolvedEditorBg =
-    when {
-      preserveEditorCanvas -> editorBg
-      isV2 -> editorBg
-      else -> scheme.surfaceContainerLowest
-    }
-  val resolvedGutterBg =
-    when {
-      preserveEditorCanvas -> editorGutterBg
-      isV2 -> lerp(editorGutterBg, scheme.surfaceContainerLow, 0.35f)
-      else -> scheme.surfaceContainerLow
-    }
-  val resolvedActiveLineBg =
-    when {
-      preserveEditorCanvas -> editorActiveLineBg
-      else -> scheme.primary.copy(alpha = if (isDark) 0.11f else 0.08f).compositeOver(resolvedEditorBg)
-    }
-
+fun IdePalette.bridgedTo(scheme: androidx.compose.material3.ColorScheme): IdePalette {
+  val nextEditorText = if (hasEditorCanvasOverride) editorTextPrimary else scheme.onSurface
+  val nextEditorMuted = if (hasEditorCanvasOverride) editorTextMuted else scheme.outline
+  if (uiStyle == UiStyleVersion.V2_MINIMAL_OLED) {
+    val pureDarkBg = if (isDark) Color(0xFF000000) else lerp(chromeBg, scheme.background, 0.72f)
+    return copy(
+      chromeBg = pureDarkBg,
+      chromeSurface = lerp(chromeSurface, scheme.surfaceContainerLow, 0.85f),
+      chromePill = lerp(chromePill, scheme.surfaceContainer, 0.85f),
+      glassSurface = lerp(glassSurface, scheme.surfaceContainer, 0.85f),
+      glassElevated = lerp(glassElevated, scheme.surfaceContainerHigh, 0.85f),
+      glassDockBg = if (isDark) Color(0xFF030304) else lerp(glassDockBg, scheme.surfaceContainerLow, 0.85f),
+      glassBorderHighlight = scheme.outline,
+      glassBorderSubtle = scheme.outlineVariant,
+      activePillBg = scheme.primaryContainer,
+      activePillFg = scheme.onPrimaryContainer,
+      ctaBg = scheme.primary,
+      ctaFg = scheme.onPrimary,
+      featuredCardBg = scheme.tertiaryContainer,
+      featuredCardFg = scheme.onTertiaryContainer,
+      featuredCardMuted = scheme.onTertiaryContainer.copy(alpha = 0.74f),
+      selectedRowBg = scheme.surfaceContainerHighest,
+      tabBarBg = pureDarkBg,
+      tabActiveBg = lerp(tabActiveBg, scheme.surfaceContainerLow, 0.85f),
+      border = scheme.outlineVariant,
+      treeLine = scheme.outlineVariant.copy(alpha = 0.7f),
+      textPrimary = scheme.onSurface,
+      textSecondary = scheme.onSurfaceVariant,
+      textMuted = scheme.outline,
+      editorTextPrimary = nextEditorText,
+      editorTextMuted = nextEditorMuted,
+    )
+  }
   return copy(
-    chromeBg = resolvedChromeBg,
-    chromeSurface = resolvedChromeSurface,
-    chromePill = resolvedChromePill,
-    glassSurface = resolvedGlassSurface,
-    glassElevated = resolvedGlassElevated,
-    glassDockBg = resolvedDockBg,
+    chromeBg = if (isDark) Color(0xFF000000) else scheme.background,
+    chromeSurface = scheme.surfaceContainerLow,
+    chromePill = scheme.surfaceContainer,
+    glassSurface = scheme.surfaceContainer,
+    glassElevated = scheme.surfaceContainerHigh,
+    glassDockBg = scheme.surfaceContainerLow,
     glassBorderHighlight = scheme.outline,
     glassBorderSubtle = scheme.outlineVariant,
     activePillBg = scheme.primaryContainer,
@@ -727,17 +737,16 @@ fun IdePalette.bridgedTo(
     featuredCardBg = scheme.tertiaryContainer,
     featuredCardFg = scheme.onTertiaryContainer,
     featuredCardMuted = scheme.onTertiaryContainer.copy(alpha = 0.74f),
-    selectedRowBg = if (isV2) lerp(selectedRowBg, scheme.surfaceContainerHighest, 0.55f) else scheme.surfaceContainerHighest,
-    editorBg = resolvedEditorBg,
-    editorGutterBg = resolvedGutterBg,
-    editorActiveLineBg = resolvedActiveLineBg,
-    tabBarBg = resolvedChromeBg,
-    tabActiveBg = if (isV2) lerp(tabActiveBg, scheme.surfaceContainer, 0.55f) else scheme.surfaceContainer,
+    selectedRowBg = scheme.surfaceContainerHighest,
+    tabBarBg = if (isDark) Color(0xFF000000) else scheme.background,
+    tabActiveBg = scheme.surfaceContainerLow,
     border = scheme.outlineVariant,
     treeLine = scheme.outlineVariant.copy(alpha = 0.7f),
-    textPrimary = if (preserveEditorCanvas) textPrimary else scheme.onSurface,
+    textPrimary = scheme.onSurface,
     textSecondary = scheme.onSurfaceVariant,
     textMuted = scheme.outline,
+    editorTextPrimary = nextEditorText,
+    editorTextMuted = nextEditorMuted,
   )
 }
 
@@ -753,24 +762,26 @@ data class IdeSelectionColors(
 
 fun selectionColorsFor(palette: IdePalette): IdeSelectionColors {
   val isDarkCanvas = palette.editorBg.luminance() < 0.35f
-  val rail = palette.ctaBg
+  val accentRail = palette.ctaBg
+  val spanContrastFg =
+    if (accentRail.luminance() > 0.52f) Color(0xFF10130C) else Color(0xFFFFFFFF)
   return if (isDarkCanvas) {
     IdeSelectionColors(
-      canvasFill = rail.copy(alpha = 0.30f),
-      canvasMoveFill = rail.copy(alpha = 0.15f),
-      canvasOutline = rail,
-      handleFill = rail,
-      spanBg = rail,
-      spanFg = palette.ctaFg,
+      canvasFill = accentRail.copy(alpha = 0.28f),
+      canvasMoveFill = accentRail.copy(alpha = 0.15f),
+      canvasOutline = accentRail,
+      handleFill = accentRail,
+      spanBg = accentRail,
+      spanFg = spanContrastFg,
     )
   } else {
     IdeSelectionColors(
-      canvasFill = rail.copy(alpha = 0.22f),
-      canvasMoveFill = rail.copy(alpha = 0.12f),
-      canvasOutline = rail,
-      handleFill = rail,
-      spanBg = rail,
-      spanFg = palette.ctaFg,
+      canvasFill = accentRail.copy(alpha = 0.22f),
+      canvasMoveFill = accentRail.copy(alpha = 0.12f),
+      canvasOutline = accentRail,
+      handleFill = accentRail,
+      spanBg = accentRail,
+      spanFg = spanContrastFg,
     )
   }
 }

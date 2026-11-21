@@ -6,34 +6,27 @@ import com.example.data.remote.CloudflareClientFactory
 import com.example.data.repository.CloudflareRepository
 import com.example.data.security.AuthPreferencesStore
 import com.example.data.security.DefaultEditorDragPolicy
+import com.example.data.security.EditorBubbleColorStyle
+import com.example.data.security.EditorBubbleConfig
 import com.example.data.security.EditorSettings
 import com.example.data.security.FloatingBarStyleConfig
 import com.example.data.security.IconLabelBehavior
 import com.example.data.security.PopupMenuStyleConfig
 import com.example.data.security.SelectionDragConfig
 import com.example.data.security.SmartSelectionHoldMode
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.input.TextFieldValue
-import com.example.data.remote.WorkerFile
-import com.example.editor.canvas.computeSelectionToolbarTopPx
 import com.example.editor.selection.SmartSelectionInitialDepth
 import com.example.ui.screens.settings.parseHexColor
 import com.example.ui.theme.CaAccent
 import com.example.ui.theme.CodeStylePreset
 import com.example.ui.theme.EditorThemePreset
 import com.example.ui.theme.UiStyleVersion
+import com.example.ui.theme.applyCodeStylePreset
 import com.example.ui.theme.bridgedTo
-import com.example.ui.theme.computeLiquidGlassParams
 import com.example.ui.theme.expressiveColorScheme
 import com.example.ui.theme.expressiveColorSchemeFromSeed
-import com.example.ui.theme.findScrubItemIndexAtOffset
 import com.example.ui.theme.paletteFor
-import com.example.ui.viewmodel.SplitViewMode
-import com.example.ui.viewmodel.hasAnyNonSpacingWorkspaceDiff
-import com.example.ui.viewmodel.isSpacingOnlyChange
-import com.example.ui.viewmodel.shouldAutoSaveEdit
+import com.example.ui.theme.selectionColorsFor
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -590,239 +583,123 @@ class SettingsAndPreferencesTest {
   }
 
   @Test
-  fun autoSaveIgnoresSpacingOnlyChangesAndSavesNonSpacingChangesImmediately() {
-    // Pure whitespace/newline/tab changes are ignored
-    assertTrue(isSpacingOnlyChange("const a = 1;", "  const a = 1;\n\t"))
-    assertTrue(isSpacingOnlyChange("let x=2;", "let   x=2;"))
-    assertTrue(isSpacingOnlyChange("foo\n\nbar", "foo\r\nbar"))
-    assertFalse(isSpacingOnlyChange("const a = 1;", "const a = 2;"))
-    assertFalse(isSpacingOnlyChange("", "a"))
-    assertTrue(isSpacingOnlyChange("  \n\t ", ""))
+  fun dynamicAndCustomSchemesBridgeUniversallyAcrossV1AndV2Palettes() {
+    val greenSchemeDark = expressiveColorSchemeFromSeed(Color(0xFF22C55EL), dark = true)
+    val violetSchemeDark = expressiveColorSchemeFromSeed(Color(0xFF8B5CF6L), dark = true)
 
-    // Baseline comparison catches transition from spacing edit back to non-spacing edit
-    assertFalse(shouldAutoSaveEdit("const x = 1;", "const x = 1;", "const x = 1;\n  "))
-    assertTrue(shouldAutoSaveEdit("const x = 1;", "const x = 1;\n  ", "const x = 1;\n  y"))
-    assertFalse(shouldAutoSaveEdit("const x = 1;", "const x = 1;\n", "const x = 1;"))
+    val v1Base = paletteFor(darkTheme = true, preset = EditorThemePreset.OLIVE_OBSIDIAN, uiStyle = UiStyleVersion.V1_DEFAULT)
+    val v2Base = paletteFor(darkTheme = true, preset = EditorThemePreset.OLIVE_OBSIDIAN, uiStyle = UiStyleVersion.V2_MINIMAL_OLED)
 
-    // Workspace diff filter checks only non-virtual files against saved baseline
-    val files =
-      listOf(
-        WorkerFile(path = "src/index.js", content = "const x = 1;", originalContent = "const x = 1;"),
-        WorkerFile(path = "wrangler.jsonc", content = "{}", originalContent = "{}"),
+    val v1Green = v1Base.bridgedTo(greenSchemeDark)
+    val v2Green = v2Base.bridgedTo(greenSchemeDark)
+    val v2Violet = v2Base.bridgedTo(violetSchemeDark)
+
+    assertEquals(greenSchemeDark.primary, v1Green.ctaBg)
+    assertEquals(greenSchemeDark.primary, v2Green.ctaBg)
+    assertEquals(greenSchemeDark.primaryContainer, v2Green.activePillBg)
+    assertEquals(greenSchemeDark.onPrimaryContainer, v2Green.activePillFg)
+    assertEquals(greenSchemeDark.tertiaryContainer, v2Green.featuredCardBg)
+
+    assertNotEquals(v2Base.ctaBg, v2Green.ctaBg)
+    assertNotEquals(v2Green.ctaBg, v2Violet.ctaBg)
+    assertNotEquals(v2Green.chromeSurface, v2Violet.chromeSurface)
+
+    // V2 keeps deep OLED editor canvas untouched while chrome and selection accents adapt universally
+    assertEquals(Color(0xFF000000), v2Green.editorBg)
+    assertEquals(v2Green.ctaBg, selectionColorsFor(v2Green).handleFill)
+    assertEquals(v2Violet.ctaBg, selectionColorsFor(v2Violet).handleFill)
+  }
+
+  @Test
+  fun editorBubbleConfigPersistsNormalizesAndDecodesCleanly() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val store = AuthPreferencesStore(context)
+
+    val defaults = EditorSettings().editorBubbles
+    assertFalse(defaults.enabled)
+    assertEquals(14, defaults.count)
+    assertEquals(12, defaults.minSizeDp)
+    assertEquals(34, defaults.maxSizeDp)
+    assertEquals(6.0f, defaults.minDurationSec, 0.001f)
+    assertEquals(13.0f, defaults.maxDurationSec, 0.001f)
+    assertEquals(0.30f, defaults.opacity, 0.001f)
+    assertEquals(EditorBubbleColorStyle.FLARE_HEAT, defaults.colorStyle)
+    assertTrue(defaults.tapToPop)
+    assertTrue(defaults.popBurstEnabled)
+
+    val custom =
+      EditorBubbleConfig(
+        enabled = true,
+        count = 24,
+        minSizeDp = 16,
+        maxSizeDp = 48,
+        minDurationSec = 4.5f,
+        maxDurationSec = 15.5f,
+        opacity = 0.45f,
+        colorStyle = EditorBubbleColorStyle.AURORA,
+        tapToPop = true,
+        popBurstEnabled = false,
       )
-    val spacingOnlyLive = mapOf("src/index.js" to TextFieldValue("const x = 1;\n   "))
-    assertFalse(hasAnyNonSpacingWorkspaceDiff("ws1", files, spacingOnlyLive, emptyMap()))
+    store.updateEditorSettings { it.copy(editorBubbles = custom) }
+    val loaded = store.editorSettingsFlow.first().editorBubbles
+    assertEquals(custom, loaded)
 
-    val realEditLive = mapOf("src/index.js" to TextFieldValue("const x = 42;"))
-    assertTrue(hasAnyNonSpacingWorkspaceDiff("ws1", files, realEditLive, emptyMap()))
-    // Once saved baseline matches live non-spacing text, further spacing edits do not re-trigger save
-    assertFalse(
-      hasAnyNonSpacingWorkspaceDiff(
-        workspaceKey = "ws1",
-        files = files,
-        liveValues = mapOf("src/index.js" to TextFieldValue("const x = 42;\n\t")),
-        lastSavedFileTexts = mapOf("ws1::src/index.js" to "const x = 42;"),
-      ),
+    val outOfBounds =
+      EditorBubbleConfig(
+        enabled = true,
+        count = 999,
+        minSizeDp = 2,
+        maxSizeDp = 3,
+        minDurationSec = 0.2f,
+        maxDurationSec = 0.5f,
+        opacity = 1.9f,
+        colorStyle = EditorBubbleColorStyle.PASTEL,
+        tapToPop = false,
+        popBurstEnabled = true,
+      ).normalized()
+    assertEquals(32, outOfBounds.count)
+    assertEquals(6, outOfBounds.minSizeDp)
+    assertEquals(10, outOfBounds.maxSizeDp)
+    assertEquals(2.5f, outOfBounds.minDurationSec, 0.001f)
+    assertEquals(3.5f, outOfBounds.maxDurationSec, 0.001f)
+    assertEquals(0.80f, outOfBounds.opacity, 0.001f)
+
+    assertEquals(EditorBubbleConfig.DEFAULT, EditorBubbleConfig.decode("broken|payload"))
+    assertEquals(
+      EditorBubbleColorStyle.FLARE_HEAT,
+      EditorBubbleColorStyle.fromKey("does_not_exist"),
+    )
+    assertEquals(
+      EditorBubbleColorStyle.MONO_GLASS,
+      EditorBubbleColorStyle.fromKey("mono_glass"),
     )
   }
 
   @Test
-  fun dynamicColorSchemeAppliesUniversallyAcrossV1AndV2Styles() {
-    val limeScheme = expressiveColorScheme(CaAccent.LIME, dark = true)
-    val violetScheme = expressiveColorScheme(CaAccent.VIOLET, dark = true)
+  fun darkModeUsesPureBlackOledAndLightUiDecouplesDarkCodeStyleCanvas() {
+    val darkScheme = expressiveColorSchemeFromSeed(seed = Color(0xFF6366F1), dark = true)
+    assertEquals(Color(0xFF000000), darkScheme.background)
+    assertEquals(Color(0xFF000000), darkScheme.surface)
 
-    val baseV2Dark = paletteFor(darkTheme = true, preset = EditorThemePreset.MIDNIGHT_NOIR, uiStyle = UiStyleVersion.V2_MINIMAL_OLED)
-    val v2Lime = baseV2Dark.bridgedTo(limeScheme, preserveEditorCanvas = true)
-    val v2Violet = baseV2Dark.bridgedTo(violetScheme, preserveEditorCanvas = true)
-    assertNotEquals(v2Lime.ctaBg, v2Violet.ctaBg)
-    assertNotEquals(v2Lime.activePillFg, v2Violet.activePillFg)
-    assertNotEquals(v2Lime.activePillBg, v2Violet.activePillBg)
+    val darkV1 =
+      paletteFor(darkTheme = true, preset = EditorThemePreset.OLIVE_OBSIDIAN, uiStyle = UiStyleVersion.V1_DEFAULT)
+        .bridgedTo(darkScheme)
+    assertEquals(Color(0xFF000000), darkV1.chromeBg)
+    assertEquals(Color(0xFF000000), darkV1.tabBarBg)
 
-    val baseV1Light = paletteFor(darkTheme = false, preset = EditorThemePreset.LIGHT_PAPER, uiStyle = UiStyleVersion.V1_DEFAULT)
-    val v1Lime = baseV1Light.bridgedTo(expressiveColorScheme(CaAccent.LIME, dark = false), preserveEditorCanvas = false)
-    val v1Violet = baseV1Light.bridgedTo(expressiveColorScheme(CaAccent.VIOLET, dark = false), preserveEditorCanvas = false)
-    assertNotEquals(v1Lime.ctaBg, v1Violet.ctaBg)
-    assertNotEquals(v1Lime.chromeSurface, v1Violet.chromeSurface)
-  }
-
-  @Test
-  fun selectionToolbarPinsAtTopForSelectAllInsteadOfOverlappingBottomCode() {
-    val viewportH = 1200f
-    // Normal selection in mid-screen floats cleanly above selection start
-    val midTop =
-      computeSelectionToolbarTopPx(
-        anchorY = 320f,
-        anchorBottomY = 360f,
-        viewportHeightPx = viewportH,
-        toolbarAboveOffsetPx = 92f,
-        minBelowAnchorPx = 60f,
-        belowSelectionGapPx = 28f,
-        minTopPx = 16f,
-        toolbarReserveBottomPx = 112f,
-        isFullDocumentSelected = false,
-      )
-    assertEquals(228, midTop)
-
-    // Short first-line selection near top places bar safely right below line
-    val firstLineBelow =
-      computeSelectionToolbarTopPx(
-        anchorY = 10f,
-        anchorBottomY = 54f,
-        viewportHeightPx = viewportH,
-        toolbarAboveOffsetPx = 92f,
-        minBelowAnchorPx = 60f,
-        belowSelectionGapPx = 28f,
-        minTopPx = 16f,
-        toolbarReserveBottomPx = 112f,
-        isFullDocumentSelected = false,
-      )
-    assertEquals(82, firstLineBelow)
-
-    // Select All spanning full document stays pinned cleanly at minTopPx (never jumps down over bottom code)
-    val selectAllTop =
-      computeSelectionToolbarTopPx(
-        anchorY = 8f,
-        anchorBottomY = 1190f,
-        viewportHeightPx = viewportH,
-        toolbarAboveOffsetPx = 92f,
-        minBelowAnchorPx = 60f,
-        belowSelectionGapPx = 28f,
-        minTopPx = 16f,
-        toolbarReserveBottomPx = 112f,
-        isFullDocumentSelected = true,
-      )
-    assertEquals(16, selectAllTop)
-
-    // Even multi-screen partial selection exceeding bottom viewport stays at top instead of overlapping bottom text
-    val tallPartialTop =
-      computeSelectionToolbarTopPx(
-        anchorY = 8f,
-        anchorBottomY = 1160f,
-        viewportHeightPx = viewportH,
-        toolbarAboveOffsetPx = 92f,
-        minBelowAnchorPx = 60f,
-        belowSelectionGapPx = 28f,
-        minTopPx = 16f,
-        toolbarReserveBottomPx = 112f,
-        isFullDocumentSelected = false,
-      )
-    assertEquals(16, tallPartialTop)
-  }
-
-  @Test
-  fun liquidGlassSettingsPersistClampAndSolveOpticsAcrossClearTintedAndLuminance() = runBlocking {
-    val context = ApplicationProvider.getApplicationContext<Context>()
-    val store = AuthPreferencesStore(context)
-
-    val defaults = EditorSettings()
-    assertTrue(defaults.liquidGlassEnabled)
-    assertEquals(0.25f, defaults.liquidGlassTint, 0.001f)
-    assertTrue(defaults.liquidGlassMotionHighlights)
-
-    store.updateEditorSettings {
-      it.copy(
-        liquidGlassEnabled = false,
-        liquidGlassTint = 2.5f,
-        liquidGlassMotionHighlights = false,
-      )
-    }
-    val clampedHigh = store.editorSettingsFlow.first()
-    assertFalse(clampedHigh.liquidGlassEnabled)
-    assertEquals(1f, clampedHigh.liquidGlassTint, 0.001f)
-    assertFalse(clampedHigh.liquidGlassMotionHighlights)
-
-    store.updateEditorSettings {
-      it.copy(
-        liquidGlassEnabled = true,
-        liquidGlassTint = -0.4f,
-        liquidGlassMotionHighlights = true,
-      )
-    }
-    val clampedLow = store.editorSettingsFlow.first()
-    assertTrue(clampedLow.liquidGlassEnabled)
-    assertEquals(0f, clampedLow.liquidGlassTint, 0.001f)
-    assertTrue(clampedLow.liquidGlassMotionHighlights)
-
-    // Clear (tint=0) bends stronger than Tinted (tint=1); thick menus (1.65x) bend stronger than pills (1.0x)
-    val (clearLens, clearDark) =
-      computeLiquidGlassParams(
-        tintFraction = 0f,
-        thickness = 1.0f,
-        backdropLuminance = 0.12f,
-        contentDensity = 0.5f,
-        paletteIsDark = true,
-        emergenceProgress = 1f,
-      )
-    val (tintedLens, _) =
-      computeLiquidGlassParams(
-        tintFraction = 1.0f,
-        thickness = 1.0f,
-        backdropLuminance = 0.12f,
-        contentDensity = 0.5f,
-        paletteIsDark = true,
-        emergenceProgress = 1f,
-      )
-    val (menuLens, brightPolarityDark) =
-      computeLiquidGlassParams(
-        tintFraction = 0f,
-        thickness = 1.65f,
-        backdropLuminance = 0.88f,
-        contentDensity = 0.5f,
-        paletteIsDark = true,
-        emergenceProgress = 1f,
-      )
-    assertTrue(clearLens > tintedLens)
-    assertTrue(menuLens > clearLens)
-    assertTrue(clearDark)
-    // Bright underlying backdrop flips glass polarity automatically to light glass even on dark theme
-    assertFalse(brightPolarityDark)
-  }
-
-  @Test
-  fun liquidGlassScrubHitSolverTracksIconsAcrossGapsAndCancelsOutsideVertically() {
-    val bounds =
-      mapOf(
-        0 to Rect(left = 10f, top = 10f, right = 90f, bottom = 90f),
-        1 to Rect(left = 110f, top = 10f, right = 190f, bottom = 90f),
-        2 to Rect(left = 210f, top = 10f, right = 290f, bottom = 90f),
-      )
-
-    // Direct hits on each icon
-    assertEquals(0, findScrubItemIndexAtOffset(bounds, Offset(50f, 50f), verticalCancelSlopPx = 80f))
-    assertEquals(1, findScrubItemIndexAtOffset(bounds, Offset(150f, 50f), verticalCancelSlopPx = 80f))
-    assertEquals(2, findScrubItemIndexAtOffset(bounds, Offset(250f, 50f), verticalCancelSlopPx = 80f))
-
-    // Sliding across gap between icon 0 (center 50) and icon 1 (center 150) snaps to nearest icon
-    assertEquals(0, findScrubItemIndexAtOffset(bounds, Offset(94f, 50f), verticalCancelSlopPx = 80f))
-    assertEquals(1, findScrubItemIndexAtOffset(bounds, Offset(106f, 50f), verticalCancelSlopPx = 80f))
-
-    // Slight vertical drift within slop stays locked on icon 1
-    assertEquals(1, findScrubItemIndexAtOffset(bounds, Offset(150f, 150f), verticalCancelSlopPx = 80f))
-
-    // Drifting outside vertical slop or far past horizontal slop cancels cleanly (-1)
-    assertEquals(-1, findScrubItemIndexAtOffset(bounds, Offset(150f, 200f), verticalCancelSlopPx = 80f))
-    assertEquals(-1, findScrubItemIndexAtOffset(bounds, Offset(150f, -90f), verticalCancelSlopPx = 80f))
-    assertEquals(-1, findScrubItemIndexAtOffset(bounds, Offset(400f, 50f), verticalCancelSlopPx = 80f, horizontalGapSlopPx = 28f))
-    assertEquals(-1, findScrubItemIndexAtOffset(emptyMap(), Offset(50f, 50f), verticalCancelSlopPx = 80f))
-  }
-
-  @Test
-  fun paletteEditorCanvasTextHelpersAndSplitViewModesWorkCleanly() {
-    val lightIdeDarkCanvas =
-      paletteFor(
-        darkTheme = false,
-        preset = EditorThemePreset.LIGHT_PAPER,
+    val lightScheme = expressiveColorSchemeFromSeed(seed = Color(0xFF6366F1), dark = false)
+    val lightWithDarkCanvas =
+      applyCodeStylePreset(
+        paletteFor(darkTheme = false, preset = EditorThemePreset.OLIVE_OBSIDIAN, uiStyle = UiStyleVersion.V1_DEFAULT),
         codeStyle = CodeStylePreset.NEON_QUERY,
-        codeStyleOverrideCanvas = true,
-      )
-    // Light UI theme with dark code canvas must still expose legible bright editor text & contrast accent
-    assertNotEquals(lightIdeDarkCanvas.editorBg, lightIdeDarkCanvas.editorTextPrimary)
-    assertNotEquals(lightIdeDarkCanvas.editorBg, lightIdeDarkCanvas.editorTextMuted)
-    assertNotEquals(Color.Transparent, lightIdeDarkCanvas.canvasAccent())
+        overrideCanvas = true,
+      ).bridgedTo(lightScheme)
 
-    assertEquals(3, SplitViewMode.entries.size)
-    assertTrue(SplitViewMode.NONE in SplitViewMode.entries)
-    assertTrue(SplitViewMode.CODE_PREVIEW in SplitViewMode.entries)
-    assertTrue(SplitViewMode.DUAL_FILE in SplitViewMode.entries)
+    // UI textPrimary must remain dark ink matching Light UI chrome, while editor canvas ink gets NEON_QUERY light text
+    assertEquals(lightScheme.onSurface, lightWithDarkCanvas.textPrimary)
+    assertEquals(CodeStylePreset.NEON_QUERY.canvasTextPrimary, lightWithDarkCanvas.editorTextPrimary)
+    assertEquals(CodeStylePreset.NEON_QUERY.canvasBg, lightWithDarkCanvas.editorBg)
+    assertNotEquals(lightWithDarkCanvas.textPrimary, lightWithDarkCanvas.editorTextPrimary)
+    assertTrue(lightWithDarkCanvas.hasEditorCanvasOverride)
   }
 }

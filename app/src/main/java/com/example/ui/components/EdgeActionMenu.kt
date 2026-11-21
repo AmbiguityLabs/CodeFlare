@@ -51,30 +51,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.graphicsLayer
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.BadgeTs
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
-import com.example.ui.theme.LiquidGlassScrubLensOverlay
-import com.example.ui.theme.LocalEditorSettings
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.LocalPopupMenuStyle
 import com.example.ui.theme.RoseError
 import com.example.ui.theme.UiStyleVersion
-import com.example.ui.theme.liquidGlassScrubHost
-import com.example.ui.theme.liquidGlassScrubItem
-import com.example.ui.theme.liquidGlassSurface
-import com.example.ui.theme.liquidGlassTouchGlow
-import com.example.ui.theme.rememberLiquidGlassAdaptiveColors
-import com.example.ui.theme.rememberLiquidGlassScrubState
 
 enum class EdgeMenuTone {
   DEFAULT,
@@ -132,69 +116,30 @@ fun EdgeMenu(
   content: @Composable ColumnScope.() -> Unit,
 ) {
   val palette = LocalIdePalette.current
-  val settings = LocalEditorSettings.current
   val menuStyle = LocalPopupMenuStyle.current.normalized()
   val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   val resolvedMax = menuStyle.widthDp.dp
   val resolvedMin = (menuStyle.widthDp - 40).coerceAtLeast(160).dp
-  val liquidEnabled = settings.liquidGlassEnabled
-  val adaptive =
-    rememberLiquidGlassAdaptiveColors(
-      palette = palette,
-      tintFraction = settings.liquidGlassTint,
-      thickness = 1.65f,
-      surfaceOpacityMultiplier = (menuStyle.opacity / 0.85f).coerceIn(0.6f, 1.25f),
-    )
-
   val borderColor =
-    if (liquidEnabled) adaptive.specularHighlight.copy(alpha = 0.56f)
-    else if (isV2 && palette.isDark) Color.White.copy(alpha = menuStyle.borderOpacity)
+    if (isV2 && palette.isDark) Color.White.copy(alpha = menuStyle.borderOpacity)
     else palette.glassBorderHighlight.copy(alpha = menuStyle.borderOpacity)
   val borderStroke =
-    if (menuStyle.borderOpacity > 0.01f) BorderStroke(if (liquidEnabled || isV2) 0.95.dp else 0.75.dp, borderColor)
+    if (menuStyle.borderOpacity > 0.01f) BorderStroke(if (isV2) 0.9.dp else 0.75.dp, borderColor)
     else null
-
-  val containerColor =
-    if (liquidEnabled) {
-      adaptive.bodyBottomTint.copy(alpha = (adaptive.bodyBottomTint.alpha.coerceAtLeast(0.74f) * menuStyle.opacity).coerceIn(0.55f, 0.96f))
-    } else {
-      palette.chromeSurface.copy(alpha = menuStyle.opacity)
-    }
 
   DropdownMenu(
     expanded = expanded,
     onDismissRequest = onDismissRequest,
     offset = offset,
     shape = RoundedCornerShape(menuStyle.cornerRadiusDp.dp),
-    containerColor = containerColor,
+    containerColor = palette.chromeSurface.copy(alpha = menuStyle.opacity),
     tonalElevation = 0.dp,
-    shadowElevation =
-      if (liquidEnabled) adaptive.shadowElevationDp
-      else if (menuStyle.opacity > 0.45f) 10.dp else 4.dp,
+    shadowElevation = if (menuStyle.opacity > 0.45f) 10.dp else 4.dp,
     border = borderStroke,
     modifier = modifier.widthIn(min = resolvedMin, max = resolvedMax),
   ) {
     Column(
-      modifier =
-        Modifier
-          .fillMaxWidth()
-          .then(
-            if (liquidEnabled) {
-              Modifier.background(
-                Brush.verticalGradient(
-                  colors =
-                    listOf(
-                      adaptive.specularHighlight.copy(alpha = 0.10f),
-                      Color.Transparent,
-                      adaptive.chromaticCoolRim.copy(alpha = 0.08f),
-                    ),
-                ),
-              )
-            } else {
-              Modifier
-            },
-          )
-          .padding(horizontal = 5.dp, vertical = 2.dp),
+      modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 2.dp),
       verticalArrangement = Arrangement.spacedBy(1.dp),
       content = content,
     )
@@ -215,20 +160,10 @@ fun EdgeFloatingMenuPopup(
 ) {
   if (!expanded) return
   val palette = LocalIdePalette.current
-  val settings = LocalEditorSettings.current
   val menuStyle = LocalPopupMenuStyle.current.normalized()
   val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   val resolvedMax = menuStyle.widthDp.dp
   val resolvedMin = (menuStyle.widthDp - 40).coerceAtLeast(160).dp
-  val liquidEnabled = settings.liquidGlassEnabled
-  var emerged by remember { mutableStateOf(false) }
-  LaunchedEffect(Unit) { emerged = true }
-  val emergeProgress by animateFloatAsState(
-    targetValue = if (emerged) 1f else 0f,
-    animationSpec = tween(durationMillis = if (liquidEnabled) 240 else 130),
-    label = "popup_emerge",
-  )
-
   val borderColor =
     if (isV2 && palette.isDark) Color.White.copy(alpha = menuStyle.borderOpacity)
     else palette.glassBorderHighlight.copy(alpha = menuStyle.borderOpacity)
@@ -241,58 +176,23 @@ fun EdgeFloatingMenuPopup(
     onDismissRequest = onDismissRequest,
     properties = PopupProperties(focusable = true),
   ) {
-    val menuShape = RoundedCornerShape(menuStyle.cornerRadiusDp.dp)
-    if (liquidEnabled) {
-      Box(
+    Surface(
+      color = palette.chromeSurface.copy(alpha = menuStyle.opacity),
+      shape = RoundedCornerShape(menuStyle.cornerRadiusDp.dp),
+      tonalElevation = 0.dp,
+      shadowElevation = if (menuStyle.opacity > 0.45f) 10.dp else 4.dp,
+      border = borderStroke,
+      modifier = Modifier.padding(top = 4.dp).widthIn(min = resolvedMin, max = resolvedMax),
+    ) {
+      Column(
         modifier =
           Modifier
-            .padding(top = 4.dp)
-            .widthIn(min = resolvedMin, max = resolvedMax)
-            .graphicsLayer {
-              val s = 0.92f + 0.08f * emergeProgress
-              scaleX = s
-              scaleY = s
-              alpha = emergeProgress.coerceIn(0f, 1f)
-            }
-            .liquidGlassSurface(
-              shape = menuShape,
-              cornerRadius = menuStyle.cornerRadiusDp.dp,
-              thickness = 1.65f,
-              emergenceProgress = emergeProgress,
-              surfaceOpacityMultiplier = (menuStyle.opacity / 0.85f).coerceIn(0.6f, 1.25f),
-              borderOpacityMultiplier = (menuStyle.borderOpacity / 0.35f).coerceIn(0f, 1.4f),
-              drawShadow = true,
-            ),
-      ) {
-        Column(
-          modifier =
-            Modifier
-              .fillMaxWidth()
-              .verticalScroll(rememberScrollState())
-              .padding(horizontal = 5.dp, vertical = 6.dp),
-          verticalArrangement = Arrangement.spacedBy(1.dp),
-          content = content,
-        )
-      }
-    } else {
-      Surface(
-        color = palette.chromeSurface.copy(alpha = menuStyle.opacity),
-        shape = menuShape,
-        tonalElevation = 0.dp,
-        shadowElevation = if (menuStyle.opacity > 0.45f) 10.dp else 4.dp,
-        border = borderStroke,
-        modifier = Modifier.padding(top = 4.dp).widthIn(min = resolvedMin, max = resolvedMax),
-      ) {
-        Column(
-          modifier =
-            Modifier
-              .fillMaxWidth()
-              .verticalScroll(rememberScrollState())
-              .padding(horizontal = 5.dp, vertical = 6.dp),
-          verticalArrangement = Arrangement.spacedBy(1.dp),
-          content = content,
-        )
-      }
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 5.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(1.dp),
+        content = content,
+      )
     }
   }
 }
@@ -391,115 +291,74 @@ fun EdgeMenuQuickActionRow(
   if (actions.isEmpty()) return
   val palette = LocalIdePalette.current
   val menuStyle = LocalPopupMenuStyle.current.normalized()
-  val scrubState = rememberLiquidGlassScrubState()
-
-  Box(
-    modifier =
-      Modifier
-        .fillMaxWidth()
-        .liquidGlassScrubHost(
-          state = scrubState,
-          itemCount = actions.size,
-          onCommitItem = { idx -> actions.getOrNull(idx)?.onClick?.invoke() },
-        ),
+  Row(
+    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+    horizontalArrangement = Arrangement.spacedBy((menuStyle.iconSpacingDp / 2).coerceIn(4, 12).dp),
   ) {
-    Row(
-      modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
-      horizontalArrangement = Arrangement.spacedBy((menuStyle.iconSpacingDp / 2).coerceIn(4, 12).dp),
-    ) {
-      actions.forEachIndexed { index, action ->
-        val scrubHovered = scrubState.isItemScrubHovered(index)
-        val iconScale by animateFloatAsState(
-          targetValue = if (scrubHovered) 1.15f else 1f,
-          animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
-          label = "quick_action_scrub_scale",
-        )
-        val (bg, borderColor, iconTint, labelColor) =
-          when {
-            scrubHovered ->
-              QuadStyle(
-                bg = palette.activePillBg.copy(alpha = 0.72f),
-                border = palette.activePillFg.copy(alpha = 0.45f),
-                icon = palette.activePillFg,
-                label = palette.activePillFg,
-              )
-            action.active || action.tone == EdgeMenuTone.ACCENT ->
-              QuadStyle(
-                bg = palette.activePillBg.copy(alpha = 0.85f),
-                border = palette.activePillFg.copy(alpha = 0.35f),
-                icon = palette.activePillFg,
-                label = palette.activePillFg,
-              )
-            action.tone == EdgeMenuTone.WARNING ->
-              QuadStyle(
-                bg = AmberWarn.copy(alpha = 0.12f),
-                border = AmberWarn.copy(alpha = 0.30f),
-                icon = AmberWarn,
-                label = AmberWarn,
-              )
-            action.tone == EdgeMenuTone.DANGER ->
-              QuadStyle(
-                bg = RoseError.copy(alpha = 0.12f),
-                border = RoseError.copy(alpha = 0.30f),
-                icon = RoseError,
-                label = RoseError,
-              )
-            else ->
-              QuadStyle(
-                bg = palette.chromePill.copy(alpha = 0.75f),
-                border = palette.border.copy(alpha = 0.75f),
-                icon = palette.textPrimary,
-                label = palette.textSecondary,
-              )
-          }
-
-        Column(
-          modifier =
-            Modifier
-              .weight(1f)
-              .liquidGlassScrubItem(scrubState, index)
-              .heightIn(min = (menuStyle.itemHeightDp + 8).coerceAtLeast(44).dp)
-              .clip(RoundedCornerShape(9.dp))
-              .background(bg)
-              .border(0.75.dp, borderColor, RoundedCornerShape(9.dp))
-              .liquidGlassTouchGlow(glowColor = iconTint)
-              .clickable(onClick = action.onClick)
-              .then(if (action.testTag != null) Modifier.testTag(action.testTag) else Modifier)
-              .padding(horizontal = 6.dp, vertical = 7.dp),
-          horizontalAlignment = Alignment.CenterHorizontally,
-          verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
-        ) {
-          Icon(
-            imageVector = action.icon,
-            contentDescription = action.label,
-            tint = iconTint,
-            modifier =
-              Modifier
-                .size(menuStyle.iconSizeDp.dp)
-                .graphicsLayer {
-                  scaleX = iconScale
-                  scaleY = iconScale
-                },
-          )
-          Text(
-            text = action.label,
-            style = MaterialTheme.typography.labelSmall,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = labelColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-          )
+    actions.forEach { action ->
+      val (bg, borderColor, iconTint, labelColor) =
+        when {
+          action.active || action.tone == EdgeMenuTone.ACCENT ->
+            QuadStyle(
+              bg = palette.activePillBg.copy(alpha = 0.85f),
+              border = palette.activePillFg.copy(alpha = 0.35f),
+              icon = palette.activePillFg,
+              label = palette.activePillFg,
+            )
+          action.tone == EdgeMenuTone.WARNING ->
+            QuadStyle(
+              bg = AmberWarn.copy(alpha = 0.12f),
+              border = AmberWarn.copy(alpha = 0.30f),
+              icon = AmberWarn,
+              label = AmberWarn,
+            )
+          action.tone == EdgeMenuTone.DANGER ->
+            QuadStyle(
+              bg = RoseError.copy(alpha = 0.12f),
+              border = RoseError.copy(alpha = 0.30f),
+              icon = RoseError,
+              label = RoseError,
+            )
+          else ->
+            QuadStyle(
+              bg = palette.chromePill.copy(alpha = 0.75f),
+              border = palette.border.copy(alpha = 0.75f),
+              icon = palette.textPrimary,
+              label = palette.textSecondary,
+            )
         }
+
+      Column(
+        modifier =
+          Modifier
+            .weight(1f)
+            .heightIn(min = (menuStyle.itemHeightDp + 8).coerceAtLeast(44).dp)
+            .clip(RoundedCornerShape(9.dp))
+            .background(bg)
+            .border(0.75.dp, borderColor, RoundedCornerShape(9.dp))
+            .clickable(onClick = action.onClick)
+            .then(if (action.testTag != null) Modifier.testTag(action.testTag) else Modifier)
+            .padding(horizontal = 6.dp, vertical = 7.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
+      ) {
+        Icon(
+          imageVector = action.icon,
+          contentDescription = action.label,
+          tint = iconTint,
+          modifier = Modifier.size(menuStyle.iconSizeDp.dp),
+        )
+        Text(
+          text = action.label,
+          style = MaterialTheme.typography.labelSmall,
+          fontSize = 10.sp,
+          fontWeight = FontWeight.SemiBold,
+          color = labelColor,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
       }
     }
-
-    LiquidGlassScrubLensOverlay(
-      state = scrubState,
-      cornerRadius = 9.dp,
-      thickness = 1.45f,
-      modifier = Modifier.matchParentSize(),
-    )
   }
 }
 
@@ -816,7 +675,6 @@ fun EdgeMenuItem(
           if (rowBorder != Color.Transparent) Modifier.border(0.75.dp, rowBorder, shape)
           else Modifier
         )
-        .liquidGlassTouchGlow(glowColor = labelTint, enabled = enabled)
         .clickable(enabled = enabled, onClick = onClick)
         .then(if (testTag != null) Modifier.testTag(testTag) else Modifier)
         .padding(horizontal = 8.dp, vertical = if (subtitle != null) 5.dp else 6.dp),
@@ -936,7 +794,6 @@ fun EdgeMenuCompactItem(
           if (selected) Modifier.border(0.75.dp, activeTint.copy(alpha = 0.28f), shape)
           else Modifier
         )
-        .liquidGlassTouchGlow(glowColor = activeTint)
         .clickable(onClick = onClick)
         .then(if (testTag != null) Modifier.testTag(testTag) else Modifier)
         .padding(horizontal = 9.dp, vertical = 6.dp),

@@ -32,11 +32,11 @@ import com.example.data.local.RamWorkspaceDatabase
 import com.example.data.local.RamWorkspaceRecord
 import com.example.data.local.RawPickedAsset
 import com.example.data.local.WorkerTestRunRecord
-import com.example.data.local.WorkspaceZipExporter
 import com.example.data.local.ZipImportPlan
 import com.example.data.local.ZipImportTargetMode
 import com.example.data.local.ZipPreviewState
 import com.example.data.local.ZipWorkspaceImporter
+import com.example.data.local.WorkspaceZipExporter
 import com.example.data.remote.ApiAssertionResult
 import com.example.data.remote.ApiCollectionImporter
 import com.example.data.remote.ApiEnvVar
@@ -139,6 +139,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -154,10 +155,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 enum class HomeTab {
   PROJECTS,
@@ -312,6 +316,9 @@ data class IdeUiState(
   val isEditorTopChromeHidden: Boolean = false,
   val isBottomDockHidden: Boolean = false,
   val isEditorBottomBarsHidden: Boolean = false,
+  val splitViewMode: SplitViewMode = SplitViewMode.NONE,
+  val secondaryFilePath: String? = null,
+  val isRunningDenoCheck: Boolean = false,
   val showHomeGitHubHub: Boolean = false,
   val showHomeSettings: Boolean = false,
   val isTestingCfCredentials: Boolean = false,
@@ -400,11 +407,8 @@ data class IdeUiState(
   val lastUndoableFileOpLabel: String? = null,
   val zipImportPreview: ZipPreviewState? = null,
   val pendingUnsavedWarning: PendingUnsavedWarning? = null,
-  val splitViewMode: SplitViewMode = SplitViewMode.NONE,
-  val secondaryFilePath: String? = null,
-  val isRunningDenoCheck: Boolean = false,
-  val emblemActivityNonce: Long = 0L,
   val statusMessage: String? = null,
+  val emblemActivityNonce: Long = 0L,
 ) {
   val activeFile: WorkerFile?
     get() = workspace?.files?.firstOrNull { it.path == activeFilePath }
@@ -481,60 +485,6 @@ data class IdeUiState(
     }
 }
 
-internal fun isSpacingOnlyChange(before: String, after: String): Boolean {
-  if (before == after) return false
-  val minLen = minOf(before.length, after.length)
-  var prefix = 0
-  while (prefix < minLen && before[prefix] == after[prefix]) {
-    prefix++
-  }
-  var suffixBefore = before.length
-  var suffixAfter = after.length
-  while (
-    suffixBefore > prefix &&
-      suffixAfter > prefix &&
-      before[suffixBefore - 1] == after[suffixAfter - 1]
-  ) {
-    suffixBefore--
-    suffixAfter--
-  }
-  for (i in prefix until suffixBefore) {
-    if (!before[i].isWhitespace()) return false
-  }
-  for (i in prefix until suffixAfter) {
-    if (!after[i].isWhitespace()) return false
-  }
-  return true
-}
-
-internal fun shouldAutoSaveEdit(
-  savedBaseline: String,
-  previousText: String,
-  nextText: String,
-): Boolean {
-  if (nextText == savedBaseline) return false
-  return !isSpacingOnlyChange(previousText, nextText) &&
-    !isSpacingOnlyChange(savedBaseline, nextText)
-}
-
-internal fun hasAnyNonSpacingWorkspaceDiff(
-  workspaceKey: String,
-  files: List<WorkerFile>,
-  fieldValues: Map<String, TextFieldValue>,
-  lastSavedFileTexts: Map<String, String>,
-): Boolean {
-  for (file in files) {
-    if (file.isVirtualReadOnly) continue
-    val liveText = fieldValues[file.path]?.text ?: file.content
-    val savedKey = "$workspaceKey::${file.path}"
-    val baseline = lastSavedFileTexts[savedKey] ?: file.originalContent
-    if (liveText != baseline && !isSpacingOnlyChange(baseline, liveText)) {
-      return true
-    }
-  }
-  return false
-}
-
 class IdeViewModel(application: Application) : AndroidViewModel(application) {
   private val prefsStore = AuthPreferencesStore(application)
   private val clientFactory = CloudflareClientFactory(prefsStore)
@@ -564,6 +514,7 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
 
   private var oauthJob: Job? = null
   private var activeOAuthSession: CloudflareOAuthManager.PkceSession? = null
+  @Volatile private var oauthFlowGeneration: Long = 0L
   private var gitHubOAuthJob: Job? = null
   private var draftSaveJob: Job? = null
   private var periodicAutoSaveJob: Job? = null
@@ -576,17 +527,34 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   private val undoStacks = mutableMapOf<String, ArrayDeque<TextFieldValue>>()
   private val redoStacks = mutableMapOf<String, ArrayDeque<TextFieldValue>>()
   private val fileDiagnosticsCache = ConcurrentHashMap<String, List<DiagnosticItem>>()
+  private val autoSaveWriteMutex = Mutex()
   private val lastPersistedDraftDigests = ConcurrentHashMap<String, Int>()
-  private val lastLocallySavedFileTexts = ConcurrentHashMap<String, String>()
-  private var immediateLocalSaveJob: Job? = null
+  private val lastPersistedNonSpacingDigests = ConcurrentHashMap<String, Int>()
   private val pendingCloudDrafts = ConcurrentHashMap<String, AutoSavedWorkspaceDraft>()
   private var pendingRestoreSessionPointer: AutoSaveSessionPointer? = null
   private var hasAttemptedAutoReopen = false
+  private val lastEmblemActivityMs = AtomicLong(0L)
+  private val lastStorageRefreshMs = AtomicLong(0L)
+  private val lastFileEventPublishMs = ConcurrentHashMap<String, Long>()
 
-  private fun seedSavedFileBaselines(wsKey: String, ws: WorkerWorkspace) {
-    ws.files.filterNot { it.isVirtualReadOnly }.forEach { f ->
-      lastLocallySavedFileTexts["$wsKey::${f.path}"] = f.content
-    }
+  fun noteEmblemActivity(@Suppress("UNUSED_PARAMETER") force: Boolean = false) {
+    lastEmblemActivityMs.set(System.currentTimeMillis())
+  }
+
+  private fun clearLocalAutoSaveTrackingForWorkspace(workspaceKey: String) {
+    lastPersistedDraftDigests.remove(workspaceKey)
+    lastPersistedNonSpacingDigests.remove(workspaceKey)
+  }
+
+  private fun seedLocalAutoSaveBaseline(workspaceKey: String, record: RamWorkspaceRecord) {
+    val editable = record.workingWorkspace.files.filterNot { it.isVirtualReadOnly }
+    lastPersistedNonSpacingDigests[workspaceKey] =
+      AutoSaveDraftStore.computeNonSpacingContentDigest(
+        files = editable,
+        openTabs = record.openTabPaths,
+        activeFilePath = record.activeFilePath,
+        entryModulePath = record.workingWorkspace.entryModulePath,
+      )
   }
 
   private fun activeWorkspaceKey(state: IdeUiState = _uiState.value): String? {
@@ -634,10 +602,16 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
         }
         is WorkspaceEvent.FileDeleted -> {
           ideCoreIndexExecutor.execute { memberUsageIndexer.removeFile(event.path) }
+          noteEmblemActivity()
         }
         is WorkspaceEvent.FilesRefactored -> {
           val ws = _uiState.value.workspace
           ideCoreIndexExecutor.execute { memberUsageIndexer.indexWorkspace(ws) }
+          noteEmblemActivity()
+        }
+        is WorkspaceEvent.FileCreated,
+        is WorkspaceEvent.FileRenamed -> {
+          noteEmblemActivity()
         }
         else -> Unit
       }
@@ -710,64 +684,78 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     viewModelScope.launch {
-      val (diskWorkspaces, initialSummary, restoredDrafts, lastPointer) =
+      val (diskWorkspaces, restoredDrafts, lastPointer) =
         withContext(Dispatchers.IO) {
           projectDirManager.refreshRootDirectoryAndMigrate()
           val diskList = projectDirManager.loadAllWorkspaces()
           val drafts = autoSaveStore.loadAllDrafts()
           val pointer = autoSaveStore.loadLastSessionPointer()
-          val summary = projectDirManager.computeStorageSummary()
-          Quadruple(diskList, summary, drafts, pointer)
+          Triple(diskList, drafts, pointer)
         }
-      // Phone directory files on disk are the primary source of truth
-      diskWorkspaces.forEach { rec ->
-        ramDb.restoreRecord(rec, setActive = false)
-        seedSavedFileBaselines(rec.key, rec.workingWorkspace)
-      }
-      pendingRestoreSessionPointer = lastPointer
-      restoredDrafts.forEach { draft ->
-        lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
-        if (draft.isLocalScratchpad || draft.workspaceKey.startsWith("local_")) {
-          // Only materialize from AutoSaveDraftStore if no folder exists on disk yet
-          if (!ramDb.hasWorkspace(draft.workspaceKey)) {
-            val ws = draft.toWorkspace()
-            val record =
-              ramDb.importWorkspace(
-                key = draft.workspaceKey,
-                workspace = ws,
-                defaultTabs = draft.openTabs,
-                defaultActivePath = draft.activeFilePath,
-                isNewUnexported = false,
-              )
-            val selections = draft.toFieldValues()
-            val finalRecord =
-              if (selections.isNotEmpty()) {
-                ramDb.updateWorkspace(draft.workspaceKey) { rec ->
-                  rec.copy(fieldValues = selections)
-                } ?: record
-              } else {
-                record
-              }
-            autoSaveIoScope.launch { projectDirManager.saveWorkspaceRecord(finalRecord) }
+      val (shouldReopenLast, creds) =
+        withContext(Dispatchers.Default) {
+          // Restore RAM workspace index and compute baseline digests off the Main thread
+          diskWorkspaces.forEach { rec ->
+            ramDb.restoreRecord(rec, setActive = false)
+            seedLocalAutoSaveBaseline(rec.key, rec)
           }
-        } else {
-          pendingCloudDrafts[draft.workspaceKey] = draft
+          pendingRestoreSessionPointer = lastPointer
+          restoredDrafts.forEach { draft ->
+            lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
+            lastPersistedNonSpacingDigests[draft.workspaceKey] =
+              AutoSaveDraftStore.computeNonSpacingContentDigest(
+                files = draft.files,
+                openTabs = draft.openTabs,
+                activeFilePath = draft.activeFilePath,
+                entryModulePath = draft.entryModulePath,
+              )
+            if (draft.isLocalScratchpad || draft.workspaceKey.startsWith("local_")) {
+              if (!ramDb.hasWorkspace(draft.workspaceKey)) {
+                val ws = draft.toWorkspace()
+                val record =
+                  ramDb.importWorkspace(
+                    key = draft.workspaceKey,
+                    workspace = ws,
+                    defaultTabs = draft.openTabs,
+                    defaultActivePath = draft.activeFilePath,
+                    isNewUnexported = false,
+                  )
+                val selections = draft.toFieldValues()
+                val finalRecord =
+                  if (selections.isNotEmpty()) {
+                    ramDb.updateWorkspace(draft.workspaceKey) { rec ->
+                      rec.copy(fieldValues = selections)
+                    } ?: record
+                  } else {
+                    record
+                  }
+                seedLocalAutoSaveBaseline(draft.workspaceKey, finalRecord)
+                autoSaveIoScope.launch {
+                  autoSaveWriteMutex.withLock { projectDirManager.saveWorkspaceRecord(finalRecord) }
+                }
+              }
+            } else {
+              pendingCloudDrafts[draft.workspaceKey] = draft
+            }
+          }
+          val reopen = runCatching { prefsStore.editorSettingsFlow.first().reopenLastProject }.getOrDefault(true)
+          val storedCreds = prefsStore.credentialsFlow.first()
+          reopen to storedCreds
         }
-      }
+
       _uiState.update {
         it.copy(
           ramWorkspaces = ramDb.listWorkspaces(),
           ramDbStats = ramDb.computeStats(null),
-          projectStorageSummary = initialSummary,
+          credentials = creds ?: it.credentials,
+          isBootstrapping = false,
         )
       }
-
-      val shouldReopenLast = runCatching { prefsStore.editorSettingsFlow.first().reopenLastProject }.getOrDefault(true)
-      val creds = prefsStore.credentialsFlow.first()
       if (creds != null) {
-        _uiState.update { it.copy(credentials = creds, isBootstrapping = false) }
         appendLog("INFO", "Restored encrypted Cloudflare session (${creds.method.name})")
-        if (shouldReopenLast && lastPointer != null && lastPointer.isLocalScratchpad && !hasAttemptedAutoReopen && _uiState.value.workspace == null) {
+      }
+      if (shouldReopenLast && lastPointer != null && !hasAttemptedAutoReopen && _uiState.value.workspace == null) {
+        if (lastPointer.isLocalScratchpad) {
           hasAttemptedAutoReopen = true
           val localDraft = restoredDrafts.firstOrNull { it.workspaceKey == lastPointer.workspaceKey }
           if (localDraft != null && ramDb.hasWorkspace(localDraft.workspaceKey)) {
@@ -775,18 +763,19 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
           } else if (ramDb.hasWorkspace(lastPointer.workspaceKey)) {
             openRamWorkspace(lastPointer.workspaceKey)
           }
+        } else if (ramDb.hasWorkspace(lastPointer.workspaceKey) && (creds == null || !pendingCloudDrafts.containsKey(lastPointer.workspaceKey))) {
+          hasAttemptedAutoReopen = true
+          openRamWorkspaceInternal(lastPointer.workspaceKey)
         }
+      }
+      if (creds != null) {
         bootstrapAccountAndWorkers(creds)
-      } else {
-        _uiState.update { it.copy(isBootstrapping = false) }
-        if (shouldReopenLast && lastPointer != null && lastPointer.isLocalScratchpad && !hasAttemptedAutoReopen && _uiState.value.workspace == null) {
-          hasAttemptedAutoReopen = true
-          val localDraft = restoredDrafts.firstOrNull { it.workspaceKey == lastPointer.workspaceKey }
-          if (localDraft != null && ramDb.hasWorkspace(localDraft.workspaceKey)) {
-            restoreLocalDraftIntoEditor(localDraft)
-          } else if (ramDb.hasWorkspace(lastPointer.workspaceKey)) {
-            openRamWorkspace(lastPointer.workspaceKey)
-          }
+      }
+      // Compute folder summary after interactive UI has already unlocked
+      viewModelScope.launch(Dispatchers.IO) {
+        val summary = projectDirManager.computeStorageSummary()
+        _uiState.update { state ->
+          if (state.projectStorageSummary != summary) state.copy(projectStorageSummary = summary) else state
         }
       }
     }
@@ -865,7 +854,9 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun startOAuthSignIn(onLaunchBrowser: (String) -> Unit) {
+    val flowGen = ++oauthFlowGeneration
     oauthJob?.cancel()
+    CloudflareOAuthManager.closeActiveListener()
     val session = CloudflareOAuthManager.createPkceSession()
     activeOAuthSession = session
     _uiState.update {
@@ -876,15 +867,28 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
       )
     }
     appendLog("INFO", "Starting Cloudflare OAuth2 PKCE flow on localhost:${CloudflareOAuthManager.REDIRECT_PORT}")
-    onLaunchBrowser(session.authorizationUrl)
 
     oauthJob =
       viewModelScope.launch {
+        val preboundSocket =
+          runCatching {
+            withContext(Dispatchers.IO) { CloudflareOAuthManager.openLoopbackListener() }
+          }.getOrNull()
+        if (oauthFlowGeneration != flowGen) {
+          runCatching { preboundSocket?.close() }
+          return@launch
+        }
+        withContext(Dispatchers.Main) {
+          onLaunchBrowser(session.authorizationUrl)
+        }
         repository
-          .completeOAuthSession(session)
+          .completeOAuthSession(session, preboundSocket)
           .onSuccess { accounts ->
-            activeOAuthSession = null
-            val creds = prefsStore.getCurrentCredentials()
+            if (oauthFlowGeneration != flowGen) return@onSuccess
+            if (activeOAuthSession === session) {
+              activeOAuthSession = null
+            }
+            val creds = prefsStore.getCachedOrCurrentCredentials()
             val chosen = accounts.firstOrNull()
             _uiState.update {
               it.copy(
@@ -901,6 +905,10 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
             chosen?.let { refreshWorkersInternal(it.id) }
           }
           .onFailure { err ->
+            if (oauthFlowGeneration != flowGen) return@onFailure
+            if (activeOAuthSession === session) {
+              activeOAuthSession = null
+            }
             _uiState.update {
               it.copy(
                 isAuthenticating = false,
@@ -913,20 +921,28 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
       }
   }
 
-  fun submitOAuthCallbackUrl(callbackUrl: String) {
-    val session = activeOAuthSession ?: run {
-      _uiState.update { it.copy(authError = "Start OAuth sign-in first before pasting callback URL.") }
-      return
-    }
+  fun submitOAuthCallbackUrl(rawUrlOrCode: String) {
+    val session = activeOAuthSession ?: return
+    val clean = rawUrlOrCode.trim()
+    if (clean.isEmpty()) return
+    val flowGen = ++oauthFlowGeneration
     oauthJob?.cancel()
+    oauthJob = null
+    _uiState.update {
+      it.copy(
+        isAuthenticating = true,
+        isWaitingOAuthCallback = true,
+        authError = null,
+      )
+    }
     oauthJob =
       viewModelScope.launch {
-        _uiState.update { it.copy(isAuthenticating = true, authError = null) }
         repository
-          .completeOAuthWithRedirect(session, callbackUrl)
+          .completeOAuthWithRedirect(session, clean)
           .onSuccess { accounts ->
+            if (oauthFlowGeneration != flowGen) return@onSuccess
             activeOAuthSession = null
-            val creds = prefsStore.getCurrentCredentials()
+            val creds = prefsStore.getCachedOrCurrentCredentials()
             val chosen = accounts.firstOrNull()
             _uiState.update {
               it.copy(
@@ -937,28 +953,31 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
                 isAuthenticating = false,
                 isWaitingOAuthCallback = false,
                 authError = null,
-                statusMessage = "Cloudflare OAuth authorized",
               )
             }
-            appendLog("INFO", "Cloudflare OAuth2 authorized via pasted callback (${accounts.size} account(s))")
+            appendLog("INFO", "Cloudflare OAuth2 authorized via redirect (${accounts.size} account(s))")
             chosen?.let { refreshWorkersInternal(it.id) }
           }
           .onFailure { err ->
+            if (oauthFlowGeneration != flowGen) return@onFailure
             _uiState.update {
               it.copy(
                 isAuthenticating = false,
-                isWaitingOAuthCallback = false,
-                authError = err.localizedMessage ?: "Invalid OAuth callback URL",
+                isWaitingOAuthCallback = activeOAuthSession != null,
+                authError = err.localizedMessage ?: "OAuth callback verification failed",
               )
             }
+            appendLog("ERROR", err.localizedMessage ?: "OAuth callback verification failed")
           }
       }
   }
 
   fun cancelOAuthSignIn() {
+    oauthFlowGeneration += 1L
+    activeOAuthSession = null
+    CloudflareOAuthManager.closeActiveListener()
     oauthJob?.cancel()
     oauthJob = null
-    activeOAuthSession = null
     _uiState.update {
       it.copy(isAuthenticating = false, isWaitingOAuthCallback = false)
     }
@@ -1044,6 +1063,9 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   private fun signOutInternal() {
+    oauthFlowGeneration += 1L
+    activeOAuthSession = null
+    CloudflareOAuthManager.closeActiveListener()
     oauthJob?.cancel()
     stopTailIfRunning()
     viewModelScope.launch {
@@ -1051,6 +1073,7 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
       autoSaveStore.clearAllDrafts()
       withContext(Dispatchers.IO) { apiCacheStore.clearAll() }
       lastPersistedDraftDigests.clear()
+      lastPersistedNonSpacingDigests.clear()
       pendingCloudDrafts.clear()
       periodicAutoSaveJob?.cancel()
       undoStacks.clear()
@@ -1083,7 +1106,6 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
     if (existingRecord != null) {
       ramDb.setActiveWorkspaceKey(ramKey)
       val ws = existingRecord.workingWorkspace
-      seedSavedFileBaselines(ramKey, ws)
       val diags = rebuildDiagnosticsFull(ws.files)
       _uiState.update {
         it.copy(
@@ -1194,7 +1216,6 @@ export default {
         defaultActivePath = "src/index.js",
         isNewUnexported = false,
       )
-    seedSavedFileBaselines(ramKey, ws)
     val diags = rebuildDiagnosticsFull(ws.files)
     persistWorkspaceToProjectDirAsync(ramKey)
     _uiState.update {
@@ -1334,6 +1355,9 @@ export default {
   }
 
   fun refreshStoragePermissionAndReload() {
+    val now = System.currentTimeMillis()
+    val prev = lastStorageRefreshMs.get()
+    if (now - prev < 5_000L || !lastStorageRefreshMs.compareAndSet(prev, now)) return
     viewModelScope.launch {
       val migrated =
         withContext(Dispatchers.IO) {
@@ -1355,10 +1379,14 @@ export default {
         }
       }
       val summary = withContext(Dispatchers.IO) { projectDirManager.computeStorageSummary() }
+      val nextWorkspaces = ramDb.listWorkspaces()
       _uiState.update { state ->
+        if (!migrated && state.projectStorageSummary == summary && state.ramWorkspaces == nextWorkspaces) {
+          return@update state
+        }
         state.copy(
           projectStorageSummary = summary,
-          ramWorkspaces = ramDb.listWorkspaces(),
+          ramWorkspaces = nextWorkspaces,
           ramDbStats = ramDb.computeStats(activeWorkspaceKey(state)),
           statusMessage =
             if (migrated && summary.isUsingNativeDeviceStorage) {
@@ -1408,8 +1436,6 @@ export default {
       } else {
         rawWs
       }
-    val diags = rebuildDiagnosticsFull(ws.files)
-    seedSavedFileBaselines(key, ws)
     val isLocal = key.startsWith("local_")
     val baselineMap =
       record.importedSnapshot.files
@@ -1430,13 +1456,14 @@ export default {
         tabNavIndex = record.tabNavIndex,
         editorFieldValues = record.fieldValues,
         editorRevision = state.editorRevision + 1L,
-        diagnostics = diags,
+        diagnostics = emptyList(),
         restoredDraftBanner = null,
         activeWorkspaceHasPendingConfig = record.hasPendingChanges,
         ramDbStats = ramDb.computeStats(key),
         ramWorkspaces = ramDb.listWorkspaces(),
         previewUrl = resolvedPreview,
         previewHttpResult = null,
+        tailLogs = emptyList(),
         apiRequest =
           if (resolvedPreview.isNotBlank()) {
             ApiRequestUtils.applyDeployedWorkerUrl(state.apiRequest, resolvedPreview, forceReplace = false)
@@ -1447,6 +1474,16 @@ export default {
       )
     }
     appendLog("INFO", "Opened '${ws.scriptName}' from ${projectDirManager.displayRootPath()}")
+    diagnosticsJob?.cancel()
+    diagnosticsJob =
+      viewModelScope.launch {
+        val diags = withContext(Dispatchers.Default) { rebuildDiagnosticsFull(ws.files) }
+        _uiState.update { state ->
+          if (state.workspace?.scriptName == ws.scriptName && state.workspace.files == ws.files) {
+            state.copy(diagnostics = diags)
+          } else state
+        }
+      }
     recordActiveSessionPointer()
     syncPeriodicAutoSaveLoop()
   }
@@ -1454,7 +1491,7 @@ export default {
   fun deleteLocalRamWorkspace(key: String) {
     val activeKey = activeWorkspaceKey()
     ramDb.removeWorkspace(key)
-    lastPersistedDraftDigests.remove(key)
+    clearLocalAutoSaveTrackingForWorkspace(key)
     pendingCloudDrafts.remove(key)
     autoSaveIoScope.launch {
       autoSaveStore.clearWorkspaceDraft(key)
@@ -1473,6 +1510,76 @@ export default {
         statusMessage = "Removed project from directory",
       )
     }
+  }
+
+  fun duplicateRamWorkspace(key: String) {
+    syncActiveStateToRamDb()
+    val source = ramDb.getWorkspace(key) ?: return
+    val isScratchpad = key.startsWith("local_") || _uiState.value.isLocalScratchpad || _uiState.value.selectedAccount == null
+    val accountId = if (isScratchpad) null else _uiState.value.selectedAccount?.id
+    val existingNames = ramDb.listWorkspaces().map { it.workingWorkspace.scriptName.lowercase() }.toSet()
+    val baseName = source.workingWorkspace.scriptName.trim().lowercase().ifBlank { "worker" }
+    var candidate = "$baseName-copy"
+    var suffix = 2
+    while (candidate in existingNames || _uiState.value.workers.any { it.id.equals(candidate, ignoreCase = true) }) {
+      candidate = "$baseName-copy-$suffix"
+      suffix++
+    }
+    val clonedWs =
+      regenerateWranglerFileInWorkspace(
+        source.workingWorkspace.copy(
+          scriptName = candidate,
+          hasModuleSetChanged = !isScratchpad,
+          files = source.workingWorkspace.files.map { it.copy() },
+        ),
+      ).let { built ->
+        built.copy(files = ProjectDirectoryManager.organizeWorkspaceFiles(built.files))
+      }
+    val newKey = ramDb.workspaceKey(accountId, candidate)
+    val record =
+      ramDb.importWorkspace(
+        key = newKey,
+        workspace = clonedWs,
+        defaultTabs = source.openTabPaths.ifEmpty { listOf(clonedWs.entryModulePath) },
+        defaultActivePath = source.activeFilePath ?: clonedWs.entryModulePath,
+        isNewUnexported = !isScratchpad,
+      )
+    _uiState.update { state ->
+      state.copy(
+        ramWorkspaces = ramDb.listWorkspaces(),
+        ramDbStats = ramDb.computeStats(activeWorkspaceKey(state)),
+        statusMessage = "Duplicated '${source.workingWorkspace.scriptName}' as '$candidate'",
+      )
+    }
+    appendLog("INFO", "Duplicated workspace '${source.workingWorkspace.scriptName}' -> '$candidate'")
+    autoSaveIoScope.launch {
+      projectDirManager.saveWorkspaceRecord(record)
+      val summary = projectDirManager.computeStorageSummary()
+      _uiState.update { it.copy(projectStorageSummary = summary) }
+    }
+  }
+
+  fun createQuickStarterFromTemplate(template: WorkerTemplate) {
+    val baseSlug =
+      when (template) {
+        WorkerTemplate.HELLO_FETCH -> "hello-worker"
+        WorkerTemplate.JSON_ROUTER -> "rest-router"
+        WorkerTemplate.CORS_PROXY -> "cors-proxy"
+        WorkerTemplate.CRON_WORKER -> "cron-job"
+        WorkerTemplate.HONO_ROUTER -> "hono-api"
+        WorkerTemplate.BEARER_AUTH_WORKER -> "auth-worker"
+        WorkerTemplate.PAGES_FUNCTIONS_API -> "pages-api"
+      }
+    val existingNames =
+      (ramDb.listWorkspaces().map { it.workingWorkspace.scriptName.lowercase() } +
+        _uiState.value.workers.map { it.id.lowercase() }).toSet()
+    var uniqueName = baseSlug
+    var idx = 2
+    while (uniqueName in existingNames) {
+      uniqueName = "$baseSlug-$idx"
+      idx++
+    }
+    createNewWorker(uniqueName, template)
   }
 
   fun closeWorkspaceToHome() {
@@ -1810,7 +1917,6 @@ export default {
           rawWs
         }
       val diags = rebuildDiagnosticsFull(ws.files)
-      seedSavedFileBaselines(ramKey, ws)
       val baselineMap =
         cachedRecord.importedSnapshot.files
           .filterNot { it.isVirtualReadOnly || it.path == "wrangler.jsonc" }
@@ -1839,6 +1945,7 @@ export default {
           previewUrl = resolvedPreview,
           previewHttpResult = null,
           previewReloadNonce = state.previewReloadNonce + 1L,
+          tailLogs = emptyList(),
           apiRequest =
             if (resolvedPreview.isNotBlank()) {
               ApiRequestUtils.applyDeployedWorkerUrl(state.apiRequest, resolvedPreview, forceReplace = false)
@@ -1848,6 +1955,7 @@ export default {
           gitWorkingBaseline = baselineMap,
         )
       }
+      seedLocalAutoSaveBaseline(ramKey, cachedRecord)
       appendLog("INFO", "Switched to '${ws.scriptName}' from local project directory")
       recordActiveSessionPointer()
       syncPeriodicAutoSaveLoop()
@@ -1914,7 +2022,6 @@ export default {
             }
 
           val ws = activeRecord.workingWorkspace
-          seedSavedFileBaselines(ramKey, ws)
           val diags = rebuildDiagnosticsFull(ws.files)
           persistWorkspaceToProjectDirAsync(ramKey)
           val baselineMap =
@@ -1967,6 +2074,7 @@ export default {
               gitPushStatusMessage = null,
             )
           }
+          seedLocalAutoSaveBaseline(ramKey, activeRecord)
           appendLog("INFO", "Synced Worker '${ws.scriptName}' (${ws.files.size} files) into project folder")
           recordActiveSessionPointer()
           syncPeriodicAutoSaveLoop()
@@ -2011,10 +2119,10 @@ export default {
     val key = activeWorkspaceKey() ?: return
     val reverted = ramDb.revertWorkspaceToImportedBaseline(key) ?: return
     val ws = reverted.workingWorkspace
-    seedSavedFileBaselines(key, ws)
     persistWorkspaceToProjectDirAsync(key)
-    lastPersistedDraftDigests.remove(key)
-    autoSaveIoScope.launch { autoSaveStore.clearWorkspaceDraft(key) }
+    clearLocalAutoSaveTrackingForWorkspace(key)
+    seedLocalAutoSaveBaseline(key, reverted)
+    autoSaveIoScope.launch { autoSaveWriteMutex.withLock { autoSaveStore.clearWorkspaceDraft(key) } }
     val diags = rebuildDiagnosticsFull(ws.files)
     _uiState.update { state ->
       state.copy(
@@ -2078,7 +2186,6 @@ export default {
         defaultActivePath = "index.js",
         isNewUnexported = !isScratchpad,
       )
-    seedSavedFileBaselines(key, ws)
     val diags = rebuildDiagnosticsFull(ws.files)
     val initialPreview = resolveDefaultPreviewUrl(ws)
     _uiState.update { state ->
@@ -2198,7 +2305,6 @@ export default {
           defaultActivePath = resolvedEntry,
           isNewUnexported = !isScratchpad,
         )
-      seedSavedFileBaselines(key, ws)
       withContext(Dispatchers.IO) {
         projectDirManager.recordOrganizedImport(cleanName, finalFiles)
         projectDirManager.saveWorkspaceRecord(record)
@@ -2439,70 +2545,6 @@ export default {
     }
   }
 
-  fun exportActiveWorkspaceZipToUri(uri: Uri) {
-    flushActiveEditorBuffer()
-    syncActiveStateToRamDb()
-    val ws = _uiState.value.workspace
-    if (ws == null) {
-      _uiState.update { it.copy(statusMessage = "Open a workspace first") }
-      return
-    }
-    val binaries = _uiState.value.externalBinaryAssets
-    viewModelScope.launch {
-      val result =
-        withContext(Dispatchers.IO) {
-          val stream =
-            getApplication<Application>().contentResolver.openOutputStream(uri)
-              ?: return@withContext Result.failure(IllegalStateException("Unable to open ZIP output destination"))
-          stream.use { out ->
-            WorkspaceZipExporter.exportToStream(ws.files, out, binaries)
-          }
-        }
-      result
-        .onSuccess { summary ->
-          _uiState.update {
-            it.copy(
-              emblemActivityNonce = it.emblemActivityNonce + 1L,
-              statusMessage = "Exported ${summary.entryCount} files (${summary.byteCount / 1024} KB ZIP)",
-            )
-          }
-          appendLog("INFO", "Exported project ZIP '${ws.scriptName}' (${summary.entryCount} entries)")
-        }
-        .onFailure { err ->
-          _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "ZIP export failed") }
-        }
-    }
-  }
-
-  fun prepareShareWorkspaceZip(onReady: (File, String) -> Unit) {
-    flushActiveEditorBuffer()
-    syncActiveStateToRamDb()
-    val ws = _uiState.value.workspace
-    if (ws == null) {
-      _uiState.update { it.copy(statusMessage = "Open a workspace first") }
-      return
-    }
-    val binaries = _uiState.value.externalBinaryAssets
-    viewModelScope.launch {
-      val result =
-        withContext(Dispatchers.IO) {
-          WorkspaceZipExporter.exportToCacheFile(
-            cacheDir = getApplication<Application>().cacheDir,
-            projectName = ws.scriptName,
-            files = ws.files,
-            binaryAssets = binaries,
-          )
-        }
-      result
-        .onSuccess { zipFile ->
-          onReady(zipFile, ws.scriptName)
-        }
-        .onFailure { err ->
-          _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Could not build share ZIP") }
-        }
-    }
-  }
-
   fun exportWorkspaceBundleToUri(uri: Uri) {
     val key = activeWorkspaceKey()
     if (key == null) {
@@ -2531,6 +2573,140 @@ export default {
       .onFailure { err ->
         _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Bundle serialize failed") }
       }
+  }
+
+  fun exportActiveWorkspaceZipToUri(uri: Uri) {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val ws = state.workspace
+    if (ws == null) {
+      _uiState.update { it.copy(statusMessage = "Open a workspace first") }
+      return
+    }
+    val filesSnapshot =
+      ws.files.map { wf ->
+        val liveText = state.editorFieldValues[wf.path]?.text
+        if (liveText != null && liveText != wf.content) wf.copy(content = liveText) else wf
+      }
+    val binarySnapshot = state.externalBinaryAssets.toMap()
+    val projectName = ws.scriptName
+    viewModelScope.launch {
+      val result =
+        withContext(Dispatchers.IO) {
+          runCatching {
+            val resolver = getApplication<Application>().contentResolver
+            resolver.openOutputStream(uri)?.use { os ->
+              WorkspaceZipExporter.exportToStream(filesSnapshot, os, binarySnapshot).getOrThrow()
+            } ?: error("Cannot open destination ZIP stream")
+          }
+        }
+      result
+        .onSuccess { summary ->
+          noteEmblemActivity()
+          _uiState.update {
+            it.copy(
+              statusMessage =
+                "Exported '$projectName.zip' (${summary.entryCount} file${if (summary.entryCount == 1) "" else "s"})",
+            )
+          }
+          appendLog("INFO", "Exported ZIP archive for '$projectName' (${summary.entryCount} files)")
+        }
+        .onFailure { err ->
+          _uiState.update {
+            it.copy(statusMessage = err.localizedMessage ?: "ZIP export failed")
+          }
+        }
+    }
+  }
+
+  fun exportRamWorkspaceZipToUri(ramKey: String, uri: Uri) {
+    syncActiveStateToRamDb()
+    val record = ramDb.getWorkspace(ramKey)
+    if (record == null) {
+      _uiState.update { it.copy(statusMessage = "Project not found in workspace store") }
+      return
+    }
+    val files = record.workingWorkspace.files
+    val projectName = record.workingWorkspace.scriptName
+    viewModelScope.launch {
+      val result =
+        withContext(Dispatchers.IO) {
+          runCatching {
+            val resolver = getApplication<Application>().contentResolver
+            resolver.openOutputStream(uri)?.use { os ->
+              WorkspaceZipExporter.exportToStream(files, os).getOrThrow()
+            } ?: error("Cannot open destination ZIP stream")
+          }
+        }
+      result
+        .onSuccess { summary ->
+          noteEmblemActivity()
+          _uiState.update {
+            it.copy(
+              statusMessage =
+                "Exported '$projectName.zip' (${summary.entryCount} file${if (summary.entryCount == 1) "" else "s"})",
+            )
+          }
+        }
+        .onFailure { err ->
+          _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "ZIP export failed") }
+        }
+    }
+  }
+
+  fun prepareShareWorkspaceZip(
+    ramKey: String? = null,
+    onReady: (File, String) -> Unit,
+  ) {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val activeKey = activeWorkspaceKey(state)
+    val files: List<WorkerFile>
+    val binaryAssets: Map<String, ByteArray>
+    val projectName: String
+    if (ramKey != null && ramKey != activeKey) {
+      val rec = ramDb.getWorkspace(ramKey)
+      if (rec == null) {
+        _uiState.update { it.copy(statusMessage = "Project not found to share") }
+        return
+      }
+      files = rec.workingWorkspace.files
+      binaryAssets = emptyMap()
+      projectName = rec.workingWorkspace.scriptName
+    } else {
+      val ws = state.workspace
+      if (ws == null) {
+        _uiState.update { it.copy(statusMessage = "Open a workspace first") }
+        return
+      }
+      files =
+        ws.files.map { wf ->
+          val liveText = state.editorFieldValues[wf.path]?.text
+          if (liveText != null && liveText != wf.content) wf.copy(content = liveText) else wf
+        }
+      binaryAssets = state.externalBinaryAssets.toMap()
+      projectName = ws.scriptName
+    }
+
+    viewModelScope.launch {
+      val fileResult =
+        withContext(Dispatchers.IO) {
+          WorkspaceZipExporter.exportToCacheFile(
+            cacheDir = getApplication<Application>().cacheDir,
+            projectName = projectName,
+            files = files,
+            binaryAssets = binaryAssets,
+          )
+        }
+      fileResult
+        .onSuccess { zipFile ->
+          noteEmblemActivity()
+          onReady(zipFile, projectName)
+        }
+        .onFailure { err ->
+          _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Could not prepare ZIP share") }
+        }
+    }
   }
 
   fun importWorkspaceBundleFromUri(uri: Uri) {
@@ -3253,24 +3429,21 @@ export default {
       val prevHistMs = lastHistoryRecordMs[histKey] ?: 0L
       if (bumpRevision || nowMs - prevHistMs >= 4_000L) {
         lastHistoryRecordMs[histKey] = nowMs
-        localHistoryStore.recordSnapshot(
-          workspaceKey = wsKey,
-          filePath = path,
-          before = prevValue.text,
-          after = newValue.text,
-        )
-      }
-      workspaceEventBus.publish(WorkspaceEvent.FileSaved(wsKey, path, prevValue.text, newValue.text))
-      val baselineSaved = lastLocallySavedFileTexts[histKey] ?: prevValue.text
-      val isAutoSaveOn = _uiState.value.editorSettings.autoSaveEnabled
-      if (shouldAutoSaveEdit(baselineSaved, prevValue.text, newValue.text)) {
-        if (isAutoSaveOn) {
-          triggerImmediateLocalAutoSave()
+        autoSaveIoScope.launch {
+          localHistoryStore.recordSnapshot(
+            workspaceKey = wsKey,
+            filePath = path,
+            before = prevValue.text,
+            after = newValue.text,
+          )
         }
-      } else {
-        // Sync RAM DB without persisting spacing-only edit to disk
-        syncActiveStateToRamDb()
       }
+      val prevEventMs = lastFileEventPublishMs[histKey] ?: 0L
+      if (bumpRevision || nowMs - prevEventMs >= 1_500L) {
+        lastFileEventPublishMs[histKey] = nowMs
+        workspaceEventBus.publish(WorkspaceEvent.FileSaved(wsKey, path, prevValue.text, newValue.text))
+      }
+      scheduleDraftSave(syncRamDb = false)
     }
   }
 
@@ -3322,8 +3495,7 @@ export default {
 
   private fun applyDirectTextValue(path: String, value: TextFieldValue) {
     val prevState = _uiState.value
-    val prevText = prevState.editorFieldValues[path]?.text ?: prevState.workspace?.files?.firstOrNull { it.path == path }?.content.orEmpty()
-    val ramKey = activeWorkspaceKey()
+    val ramKey = activeWorkspaceKey(prevState)
     var filesSnapshot: List<WorkerFile>? = null
     _uiState.update { state ->
       val ws = state.workspace ?: return@update state
@@ -3361,213 +3533,64 @@ export default {
           }
         }
     }
-    val wsKey = ramKey ?: "default"
-    val histKey = "$wsKey::$path"
-    val baselineSaved = lastLocallySavedFileTexts[histKey] ?: prevText
-    if (editorCfg.autoSaveEnabled && shouldAutoSaveEdit(baselineSaved, prevText, value.text)) {
-      triggerImmediateLocalAutoSave()
-    }
+    scheduleDraftSave(syncRamDb = false)
   }
 
   fun formatActiveFile() {
     flushActiveEditorBuffer()
-    val file = _uiState.value.activeFile ?: return
+    val state = _uiState.value
+    val file = state.activeFile ?: return
     if (file.isVirtualReadOnly) return
-    val formatted = CodeFormatter.format(file.content, file.language, _uiState.value.editorSettings.tabSize)
-    if (formatted != file.content) {
-      val wsKey = activeWorkspaceKey() ?: "default"
-      localHistoryStore.recordSnapshot(wsKey, file.path, file.content, formatted, label = "Format")
-      val cursor = formatted.length.coerceAtMost(_uiState.value.activeTextFieldValue.selection.start)
-      updateEditorValue(TextFieldValue(formatted, TextRange(cursor)), bumpRevision = true)
-      _uiState.update { it.copy(statusMessage = "Formatted ${file.fileName}") }
+    val currentText = state.editorFieldValues[file.path]?.text ?: file.content
+    val tabSize = state.editorSettings.tabSize
+    viewModelScope.launch {
+      val res =
+        DenoToolingEngine.formatFileWithDenoOrFallback(
+          context = getApplication(),
+          filePath = file.path,
+          content = currentText,
+          language = file.language,
+          tabSize = tabSize,
+        )
+      val latest = _uiState.value.activeFile
+      if (latest == null || latest.path != file.path) return@launch
+      if (res.formatted != currentText) {
+        val wsKey = activeWorkspaceKey() ?: "default"
+        localHistoryStore.recordSnapshot(wsKey, file.path, currentText, res.formatted, label = "Format")
+        val cursor = res.formatted.length.coerceAtMost(_uiState.value.activeTextFieldValue.selection.start)
+        updateEditorValue(TextFieldValue(res.formatted, TextRange(cursor)), bumpRevision = true)
+        noteEmblemActivity()
+        _uiState.update { it.copy(statusMessage = "${res.note}: ${file.fileName}") }
+      } else {
+        _uiState.update { it.copy(statusMessage = "${file.fileName} is already formatted") }
+      }
     }
   }
 
   fun saveActiveFileWithOptionalFormat() {
     flushActiveEditorBuffer()
     val state = _uiState.value
-    val active = state.activeFile ?: return
-    if (active.isVirtualReadOnly) {
-      _uiState.update { it.copy(statusMessage = "Read-only file cannot be saved") }
-      return
-    }
-    viewModelScope.launch {
-      val currentText = state.editorFieldValues[active.path]?.text ?: active.content
-      val shouldFormat = state.editorSettings.formatOnSave
-      val finalText =
-        if (shouldFormat) {
-          val res =
-            DenoToolingEngine.formatFileWithDenoOrFallback(
-              context = getApplication(),
-              filePath = active.path,
-              content = currentText,
-              language = active.language,
-              tabSize = state.editorSettings.tabSize,
-            )
-          res.formatted
-        } else {
-          currentText
-        }
-
-      if (finalText != currentText) {
-        val wsKey = activeWorkspaceKey() ?: "default"
-        localHistoryStore.recordSnapshot(wsKey, active.path, currentText, finalText, label = "Format & Save")
-        val nextCursor = finalText.length.coerceAtMost(_uiState.value.activeTextFieldValue.selection.start)
-        updateEditorValue(TextFieldValue(finalText, TextRange(nextCursor)), bumpRevision = true)
-      }
-
-      if (active.path in state.externalFileUris) {
-        saveActiveExternalFileNow()
-      } else {
-        activeWorkspaceKey()?.let { key ->
-          persistWorkspaceToProjectDirAsync(key)
-          _uiState.value.workspace?.let { wsNow -> seedSavedFileBaselines(key, wsNow) }
-        }
-        buildActiveAutoSaveSnapshot(_uiState.value)?.let { snapshot ->
-          persistSnapshotIfChanged(snapshot.first, snapshot.second, forceSessionPointer = false)
-        }
-        _uiState.update {
-          it.copy(
-            emblemActivityNonce = it.emblemActivityNonce + 1L,
-            lastAutoSavedEpochMs = System.currentTimeMillis(),
-            statusMessage =
-              if (shouldFormat) "Formatted & saved ${active.fileName} locally"
-              else "Saved ${active.fileName} locally",
-          )
-        }
+    val file = state.activeFile
+    if (file != null && !file.isVirtualReadOnly && state.editorSettings.formatOnSave) {
+      val currentText = state.editorFieldValues[file.path]?.text ?: file.content
+      val formatted = CodeFormatter.format(currentText, file.language, state.editorSettings.tabSize)
+      if (formatted != currentText) {
+        val cursor = formatted.length.coerceAtMost(state.activeTextFieldValue.selection.start)
+        updateEditorValue(TextFieldValue(formatted, TextRange(cursor)), bumpRevision = true)
       }
     }
-  }
-
-  fun runDenoCheckAndLint() {
-    flushActiveEditorBuffer()
-    val ws = _uiState.value.workspace ?: return
-    if (_uiState.value.isRunningDenoCheck) return
-    _uiState.update { it.copy(isRunningDenoCheck = true, statusMessage = "Running check & lint...") }
-    viewModelScope.launch {
-      val summary = DenoToolingEngine.runWorkspaceCheckAndLint(getApplication(), ws.files)
-      _uiState.update { state ->
-        state.copy(
-          isRunningDenoCheck = false,
-          diagnostics = summary.diagnostics,
-          emblemActivityNonce = state.emblemActivityNonce + 1L,
-          statusMessage = summary.summaryMessage,
+    flushAutoSaveNow()
+    if (file != null && state.externalFileUris.containsKey(file.path)) {
+      saveActiveExternalFileNow()
+    } else if (file != null) {
+      noteEmblemActivity()
+      _uiState.update {
+        it.copy(
+          statusMessage =
+            if (state.editorSettings.formatOnSave) "Formatted & saved ${file.fileName}"
+            else "Saved ${file.fileName}",
         )
       }
-      appendLog(if (summary.diagnostics.isEmpty()) "INFO" else "WARN", summary.summaryMessage)
-    }
-  }
-
-  fun goToDefinitionAtCursor(
-    filePath: String? = null,
-    textOverride: String? = null,
-    cursorOffsetOverride: Int? = null,
-  ) {
-    flushActiveEditorBuffer()
-    val state = _uiState.value
-    val active =
-      if (filePath != null) state.workspace?.files?.firstOrNull { it.path == filePath } ?: state.activeFile
-      else state.activeFile
-    if (active == null) {
-      _uiState.update { it.copy(statusMessage = "Open a file to jump to definition") }
-      return
-    }
-    val docText = textOverride ?: state.editorFieldValues[active.path]?.text ?: active.content
-    val cursor =
-      (cursorOffsetOverride ?: state.editorFieldValues[active.path]?.selection?.end ?: 0)
-        .coerceIn(0, docText.length)
-    val target =
-      DefinitionResolver.resolveAt(
-        workspace = state.workspace,
-        editorFieldValues = state.editorFieldValues,
-        activeFilePath = active.path,
-        documentText = docText,
-        offset = cursor,
-      )
-    if (target == null) {
-      _uiState.update { it.copy(statusMessage = "No definition found at cursor") }
-      return
-    }
-    jumpToLine(target.filePath, target.line, target.column)
-    _uiState.update {
-      it.copy(
-        emblemActivityNonce = it.emblemActivityNonce + 1L,
-        statusMessage = "${target.kindLabel}: ${target.symbolName} (${target.filePath.substringAfterLast('/')}:${target.line})",
-      )
-    }
-  }
-
-  fun setSplitViewMode(mode: SplitViewMode) {
-    _uiState.update { state ->
-      if (mode != SplitViewMode.DUAL_FILE) {
-        state.copy(splitViewMode = mode)
-      } else {
-        val currentPath = state.activeFilePath
-        val editablePaths = state.workspace?.files?.filterNot { it.isVirtualReadOnly }?.map { it.path }.orEmpty()
-        val chosenSecondary =
-          state.secondaryFilePath?.takeIf { it in editablePaths && it != currentPath }
-            ?: state.openTabPaths.firstOrNull { it in editablePaths && it != currentPath }
-            ?: editablePaths.firstOrNull { it != currentPath }
-            ?: currentPath
-        state.copy(
-          splitViewMode = mode,
-          secondaryFilePath = chosenSecondary,
-        )
-      }
-    }
-  }
-
-  fun setSecondarySplitFile(path: String?) {
-    _uiState.update { state ->
-      state.copy(secondaryFilePath = path)
-    }
-  }
-
-  fun swapSplitFiles() {
-    val state = _uiState.value
-    val primary = state.activeFilePath ?: return
-    val secondary = state.secondaryFilePath ?: return
-    if (primary == secondary) return
-    openFileTab(secondary)
-    _uiState.update { cur ->
-      cur.copy(secondaryFilePath = primary)
-    }
-  }
-
-  fun addCustomSnippet(
-    abbrev: String,
-    title: String,
-    tag: String,
-    code: String,
-    description: String,
-  ) {
-    val cleanAbbrev = abbrev.trim()
-    val cleanCode = code.trimEnd()
-    if (cleanAbbrev.isBlank() || cleanCode.isBlank()) return
-    val newItem =
-      CodeSnippetItem(
-        id = "custom_${UUID.randomUUID()}",
-        abbrev = cleanAbbrev,
-        title = title.ifBlank { cleanAbbrev },
-        tag = tag.ifBlank { "CUSTOM" },
-        code = cleanCode,
-        description = description.ifBlank { "Custom user snippet" },
-        isCustom = true,
-      )
-    viewModelScope.launch {
-      prefsStore.updateEditorSettings { cur ->
-        cur.copy(customSnippets = cur.customSnippets + newItem)
-      }
-      _uiState.update { it.copy(statusMessage = "Saved snippet '${newItem.abbrev}'") }
-    }
-  }
-
-  fun deleteCustomSnippet(id: String) {
-    viewModelScope.launch {
-      prefsStore.updateEditorSettings { cur ->
-        cur.copy(customSnippets = cur.customSnippets.filterNot { it.id == id })
-      }
-      _uiState.update { it.copy(statusMessage = "Removed custom snippet") }
     }
   }
 
@@ -4143,6 +4166,7 @@ export default {
           buildString {
             appendLine("EdgeCode CLI Commands:")
             appendLine("  run            Execute active JS/TS file or Worker")
+            appendLine("  stop           Stop local runtime server")
             appendLine("  files / ls     List workspace files")
             appendLine("  env            Show Worker bindings & runtime mode")
             appendLine("  clear          Clear terminal output")
@@ -4159,6 +4183,26 @@ export default {
                 durationMs = 1L,
                 body = helpText,
                 logs = listOf(LocalRunLogEntry("INFO", "> $cmd", ts)),
+                ranAt = ts,
+              ),
+          )
+        }
+        return
+      }
+      "stop" -> {
+        LocalScriptRunner.stopActiveServer()
+        _uiState.update {
+          it.copy(
+            isRunningLocalScript = false,
+            localScriptResult =
+              LocalScriptRunResult(
+                mode = "CLI",
+                entryPath = "stop",
+                statusCode = 200,
+                statusText = "STOPPED",
+                durationMs = 1L,
+                body = "Stopped local script server.",
+                logs = listOf(LocalRunLogEntry("INFO", "Stopped local script server", ts)),
                 ranAt = ts,
               ),
           )
@@ -4328,10 +4372,21 @@ export default {
     val active = state.activeFile ?: return
     val uriStr = state.externalFileUris[active.path] ?: return
     val uri = runCatching { Uri.parse(uriStr) }.getOrNull() ?: return
-    val content = state.editorFieldValues[active.path]?.text ?: active.content
+    val rawContent = state.editorFieldValues[active.path]?.text ?: active.content
+    val content =
+      if (state.editorSettings.formatOnSave && !active.isVirtualReadOnly) {
+        CodeFormatter.format(rawContent, active.language, state.editorSettings.tabSize)
+      } else {
+        rawContent
+      }
+    if (content != rawContent) {
+      val cursor = content.length.coerceAtMost(state.activeTextFieldValue.selection.start)
+      updateEditorValue(TextFieldValue(content, TextRange(cursor)), bumpRevision = true)
+    }
     viewModelScope.launch {
       DeviceFileHelper.writeTextToUri(getApplication(), uri, content)
         .onSuccess {
+          noteEmblemActivity()
           _uiState.update { cur ->
             val ws = cur.workspace ?: return@update cur
             val updated = ws.files.map { f -> if (f.path == active.path) f.copy(originalContent = content, content = content) else f }
@@ -4350,6 +4405,21 @@ export default {
   }
 
   fun handleExternalIntent(intent: Intent?) {
+    val dataUri = intent?.data
+    if (dataUri != null) {
+      if (dataUri.scheme == "edgecode" && dataUri.host == "oauth") {
+        if (dataUri.getQueryParameter("code") != null || dataUri.getQueryParameter("error") != null) {
+          submitOAuthCallbackUrl(dataUri.toString())
+        }
+        return
+      }
+      val host = dataUri.host.orEmpty()
+      val path = dataUri.path.orEmpty()
+      if ((host == "localhost" || host == "127.0.0.1") && path.startsWith("/oauth/callback")) {
+        submitOAuthCallbackUrl(dataUri.toString())
+        return
+      }
+    }
     val extracted = ExternalIntentExtractor.extractFromIntent(intent) ?: return
     hasAttemptedAutoReopen = true
     val context = getApplication<Application>()
@@ -4784,67 +4854,128 @@ export default {
   ) {
     val stateSnapshot = _uiState.value
     val ramRecord = ramDb.getWorkspace(workspaceKey)
-    val ws =
+    val rawWs =
       if (activeWorkspaceKey(stateSnapshot) == workspaceKey) {
         stateSnapshot.workspace ?: ramRecord?.workingWorkspace
       } else {
         ramRecord?.workingWorkspace
       } ?: return
 
+    val dirtyWrangler =
+      rawWs.files.firstOrNull {
+        (it.path == "wrangler.jsonc" || it.path == "wrangler.json" || it.path == "wrangler.toml") && it.isDirty
+      }
+    var wranglerAutoSynced = false
+    val ws =
+      if (dirtyWrangler != null) {
+        val parsed = WranglerSyncParser.parse(dirtyWrangler.path, dirtyWrangler.content).getOrNull()
+        if (parsed != null) {
+          wranglerAutoSynced = true
+          val existingSecrets = rawWs.bindings.filter { it.type == "secret_text" }
+          val mergedBindings = (parsed.bindings + existingSecrets).distinctBy { it.name }
+          val nextCompatDate = parsed.compatibilityDate ?: rawWs.compatibilityDate
+          val nextFlags = if (parsed.hasCompatibilityFlags) parsed.compatibilityFlags else rawWs.compatibilityFlags
+          val nextWorkersDev = parsed.workersDev ?: rawWs.workersDevEnabled
+          val nextEntry = parsed.main?.takeIf { m -> rawWs.files.any { it.path == m } } ?: rawWs.entryModulePath
+          val nextSchedules =
+            if (parsed.hasCrons) parsed.crons.map { com.example.data.remote.CfCronSchedule(cron = it) }
+            else rawWs.schedules
+          rawWs.copy(
+            entryModulePath = nextEntry,
+            compatibilityDate = nextCompatDate,
+            compatibilityFlags = nextFlags,
+            workersDevEnabled = nextWorkersDev,
+            bindings = mergedBindings,
+            schedules = nextSchedules,
+            files = rawWs.files.map { f -> f.copy(isEntryPoint = f.path == nextEntry) },
+          )
+        } else {
+          rawWs
+        }
+      } else {
+        rawWs
+      }
+
+    val deployableModules =
+      ws.files.filterNot {
+        it.isVirtualReadOnly || it.path == "wrangler.jsonc" || it.path == "wrangler.json" || it.path == "wrangler.toml"
+      }
+    if (deployableModules.isEmpty()) {
+      _uiState.update {
+        it.copy(
+          isDeploying = false,
+          isDeployError = true,
+          statusMessage = null,
+          deployBannerMessage = "Cannot deploy '${ws.scriptName}': workspace has no deployable module files.",
+        )
+      }
+      return
+    }
+    val verifiedEntry =
+      if (deployableModules.any { it.path == ws.entryModulePath }) ws.entryModulePath
+      else deployableModules.first().path
+    val effectiveWs =
+      if (verifiedEntry == ws.entryModulePath) ws
+      else ws.copy(
+        entryModulePath = verifiedEntry,
+        files = ws.files.map { it.copy(isEntryPoint = it.path == verifiedEntry) },
+      )
+
     _uiState.update {
       it.copy(
         isDeploying = true,
         deployBannerMessage = null,
-        statusMessage = "Deploying '${ws.scriptName}' to Cloudflare…",
+        statusMessage = "Deploying '${effectiveWs.scriptName}' to Cloudflare…",
       )
     }
 
     repository
-      .deployWorkerWorkspace(accountId, ws)
+      .deployWorkerWorkspace(accountId, effectiveWs)
       .onSuccess {
         val pendingErrors = mutableListOf<String>()
         val shouldSyncConfig =
-          isNewWorker ||
+          wranglerAutoSynced ||
+            isNewWorker ||
             ramRecord?.hasPendingConfigSync == true ||
             ramRecord?.isNewUnexportedWorker == true ||
-            ws.hasModuleSetChanged
+            effectiveWs.hasModuleSetChanged
         if (shouldSyncConfig) {
           repository.saveBindingsAndCompat(
             accountId = accountId,
-            scriptName = ws.scriptName,
-            compatibilityDate = ws.compatibilityDate,
-            compatibilityFlags = ws.compatibilityFlags,
-            bindings = ws.bindings.filterNot { it.type == "secret_text" },
+            scriptName = effectiveWs.scriptName,
+            compatibilityDate = effectiveWs.compatibilityDate,
+            compatibilityFlags = effectiveWs.compatibilityFlags,
+            bindings = effectiveWs.bindings.filterNot { it.type == "secret_text" },
           ).onFailure { err -> pendingErrors.add("settings: ${err.localizedMessage}") }
         }
 
         val targetWorkersDev =
-          if (isNewWorker) _uiState.value.editorSettings.defaultWorkersDevEnabled || ws.workersDevEnabled
-          else ws.workersDevEnabled
+          if (isNewWorker) _uiState.value.editorSettings.defaultWorkersDevEnabled || effectiveWs.workersDevEnabled
+          else effectiveWs.workersDevEnabled
         var confirmedWorkersDev = targetWorkersDev
         if (shouldSyncConfig || targetWorkersDev) {
-          repository.toggleWorkersDev(accountId, ws.scriptName, targetWorkersDev)
+          repository.toggleWorkersDev(accountId, effectiveWs.scriptName, targetWorkersDev)
             .onSuccess { enabled -> confirmedWorkersDev = enabled }
             .onFailure { err -> pendingErrors.add("workers.dev: ${err.localizedMessage}") }
         }
 
-        if (shouldSyncConfig && (ws.schedules.isNotEmpty() || ramRecord?.hasPendingConfigSync == true)) {
-          repository.updateCronSchedules(accountId, ws.scriptName, ws.schedules.map { it.cron })
+        if (shouldSyncConfig && (effectiveWs.schedules.isNotEmpty() || ramRecord?.hasPendingConfigSync == true)) {
+          repository.updateCronSchedules(accountId, effectiveWs.scriptName, effectiveWs.schedules.map { it.cron })
             .onFailure { err -> pendingErrors.add("cron: ${err.localizedMessage}") }
         }
 
         ramRecord?.deletedSecrets?.forEach { secretName ->
-          repository.deleteSecret(accountId, ws.scriptName, secretName)
+          repository.deleteSecret(accountId, effectiveWs.scriptName, secretName)
             .onFailure { err -> pendingErrors.add("delete secret $secretName: ${err.localizedMessage}") }
         }
         ramRecord?.stagedSecrets?.forEach { (secretName, secretVal) ->
-          repository.putSecret(accountId, ws.scriptName, secretName, secretVal)
+          repository.putSecret(accountId, effectiveWs.scriptName, secretName, secretVal)
             .onFailure { err -> pendingErrors.add("put secret $secretName: ${err.localizedMessage}") }
         }
 
         val cachedSubdomain = ramDb.getInfraCache(accountId)?.subdomain.orEmpty()
         val resolvedSubdomain =
-          ws.accountSubdomain.ifBlank { cachedSubdomain }.ifBlank {
+          effectiveWs.accountSubdomain.ifBlank { cachedSubdomain }.ifBlank {
             repository.getAccountSubdomain(accountId)
           }
         if (resolvedSubdomain.isNotBlank()) {
@@ -4853,11 +4984,21 @@ export default {
           pendingErrors.add("workers.dev subdomain is not yet enabled on your Cloudflare account")
         }
 
-        val cleanFiles = ws.files.map { it.copy(originalContent = it.content) }
+        effectiveWs.files.filter { !it.isVirtualReadOnly && it.isDirty }.forEach { dirtyFile ->
+          localHistoryStore.recordSnapshot(
+            workspaceKey = workspaceKey,
+            filePath = dirtyFile.path,
+            before = dirtyFile.originalContent,
+            after = dirtyFile.content,
+            label = "Deployed",
+          )
+        }
+
+        val cleanFiles = effectiveWs.files.map { it.copy(originalContent = it.content) }
         val refreshedDeployments =
-          repository.listDeployments(accountId, ws.scriptName).getOrDefault(ws.deployments)
+          repository.listDeployments(accountId, effectiveWs.scriptName).getOrDefault(effectiveWs.deployments)
         val baseUpdatedWs =
-          ws.copy(
+          effectiveWs.copy(
             files = cleanFiles,
             deployments = refreshedDeployments,
             workersDevEnabled = confirmedWorkersDev,
@@ -4875,6 +5016,9 @@ export default {
           }
 
         ramDb.markExported(workspaceKey, updatedWs)
+        if (pendingErrors.isNotEmpty()) {
+          ramDb.updateWorkspace(workspaceKey) { it.copy(hasPendingConfigSync = true) }
+        }
         val updatedRec = ramDb.getWorkspace(workspaceKey)
         withContext(Dispatchers.IO) {
           if (updatedRec != null) {
@@ -4902,11 +5046,11 @@ export default {
           val banner =
             when {
               pendingErrors.isEmpty() && liveUrl.isNotBlank() ->
-                "Deployed '${ws.scriptName}' live: $liveUrl"
+                "Deployed '${effectiveWs.scriptName}' live: $liveUrl"
               pendingErrors.isEmpty() ->
-                "Deployed '${ws.scriptName}' to Cloudflare Edge"
+                "Deployed '${effectiveWs.scriptName}' to Cloudflare Edge"
               else ->
-                "Deployed '${ws.scriptName}' with warnings: ${pendingErrors.joinToString("; ")}"
+                "Deployed '${effectiveWs.scriptName}' with warnings: ${pendingErrors.joinToString("; ")}"
             }
           state.copy(
             accountSubdomain = resolvedSubdomain.ifBlank { state.accountSubdomain },
@@ -4914,7 +5058,7 @@ export default {
             restoredDraftBanner = null,
             isDeploying = false,
             isDeployError = pendingErrors.isNotEmpty(),
-            activeWorkspaceHasPendingConfig = false,
+            activeWorkspaceHasPendingConfig = pendingErrors.isNotEmpty(),
             ramDbStats = ramDb.computeStats(workspaceKey),
             ramWorkspaces = ramDb.listWorkspaces(),
             projectStorageSummary = summary,
@@ -4933,10 +5077,10 @@ export default {
         }
         appendLog(
           "DEPLOY",
-          "Deployed '${ws.scriptName}' (${cleanFiles.count { !it.isVirtualReadOnly }} files)" +
+          "Deployed '${effectiveWs.scriptName}' (${cleanFiles.count { !it.isVirtualReadOnly }} files)" +
             if (liveUrl.isNotBlank()) " -> $liveUrl" else "",
         )
-        appendPreviewConsoleEntry("DEPLOY", "LIVE", "Deployed '${ws.scriptName}' -> ${liveUrl.ifBlank { "Cloudflare Edge" }}")
+        appendPreviewConsoleEntry("DEPLOY", "LIVE", "Deployed '${effectiveWs.scriptName}' -> ${liveUrl.ifBlank { "Cloudflare Edge" }}")
         refreshWorkersInternal(accountId)
       }
       .onFailure { err ->
@@ -5204,7 +5348,7 @@ export default {
         workspace = nextWs,
         editorFieldValues = nextFields,
         editorRevision = state.editorRevision + 1L,
-        diagnostics = updatedFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+        diagnostics = rebuildDiagnosticsFull(updatedFiles),
         ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else state.ramDbStats,
         statusMessage = "Replaced $totalMatches match(es) across $fileHits $scopeLabel",
       )
@@ -5242,7 +5386,7 @@ export default {
         workspace = nextWs,
         editorFieldValues = nextFields,
         editorRevision = state.editorRevision + 1L,
-        diagnostics = updatedFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+        diagnostics = rebuildDiagnosticsFull(updatedFiles),
         ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else state.ramDbStats,
         statusMessage = "Replaced matches across $fileHits file(s) in RAM",
       )
@@ -5936,6 +6080,7 @@ export default {
   }
 
   fun syncWranglerFileToWorkspace() {
+    flushActiveEditorBuffer()
     val ws = _uiState.value.workspace ?: return
     val cfgFile =
       ws.files.firstOrNull { it.path == "wrangler.jsonc" || it.path == "wrangler.json" || it.path == "wrangler.toml" }
@@ -5946,15 +6091,14 @@ export default {
         return
       }
 
-    // Preserve encrypted secrets that aren't serialized verbatim into wrangler.jsonc
     val existingSecrets = ws.bindings.filter { it.type == "secret_text" }
     val mergedBindings = (parsed.bindings + existingSecrets).distinctBy { it.name }
     val nextCompatDate = parsed.compatibilityDate ?: ws.compatibilityDate
-    val nextFlags = if (parsed.compatibilityFlags.isNotEmpty()) parsed.compatibilityFlags else ws.compatibilityFlags
+    val nextFlags = if (parsed.hasCompatibilityFlags) parsed.compatibilityFlags else ws.compatibilityFlags
     val nextWorkersDev = parsed.workersDev ?: ws.workersDevEnabled
     val nextEntry = parsed.main?.takeIf { m -> ws.files.any { it.path == m } } ?: ws.entryModulePath
     val nextSchedules =
-      if (parsed.crons.isNotEmpty()) parsed.crons.map { com.example.data.remote.CfCronSchedule(cron = it) }
+      if (parsed.hasCrons) parsed.crons.map { com.example.data.remote.CfCronSchedule(cron = it) }
       else ws.schedules
     val updatedFiles =
       ws.files.map { f ->
@@ -5970,6 +6114,8 @@ export default {
         schedules = nextSchedules,
         files = updatedFiles,
       )
+    val diags = rebuildDiagnosticsFull(updatedFiles)
+    val resolvedPreview = resolveDefaultPreviewUrl(nextWs)
     val ramKey = activeWorkspaceKey()
     if (ramKey != null) {
       ramDb.updateWorkspace(ramKey) { rec ->
@@ -5980,6 +6126,8 @@ export default {
     _uiState.update { state ->
       state.copy(
         workspace = nextWs,
+        diagnostics = diags,
+        previewUrl = resolvedPreview.ifBlank { state.previewUrl },
         activeWorkspaceHasPendingConfig = true,
         ramDbStats = if (ramKey != null) ramDb.computeStats(ramKey) else state.ramDbStats,
         statusMessage = "Applied ${cfgFile.fileName} to RAM workspace (${mergedBindings.size} binding(s))",
@@ -6084,10 +6232,6 @@ export default {
     }
   }
 
-  fun clearTailLogs() {
-    _uiState.update { it.copy(tailLogs = emptyList()) }
-  }
-
   private fun stopTailIfRunning() {
     val session = activeTailSession ?: return
     activeTailSession = null
@@ -6099,6 +6243,10 @@ export default {
     } else {
       runCatching { session.webSocket.close(1000, "Stopped") }
     }
+  }
+
+  fun clearTailLogs() {
+    _uiState.update { it.copy(tailLogs = emptyList()) }
   }
 
   // Comprehensive Cloudflare Workers Infra: Bindings (KV/D1/R2/Service), Custom Domains, D1, R2, DO, Queues
@@ -6861,7 +7009,7 @@ export default {
           openTabPaths = state.openTabPaths + path,
           activeFilePath = path,
           editorFieldValues = state.editorFieldValues + (path to TextFieldValue(starterContent)),
-          diagnostics = nextFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+          diagnostics = rebuildDiagnosticsFull(nextFiles),
           statusMessage = "Created Pages file '$path'",
         )
       }
@@ -7825,7 +7973,7 @@ jobs:
           else state.editorFieldValues + (path to TextFieldValue(baseContent)),
         editorRevision = state.editorRevision + 1L,
         gitUnstagedExcludedPaths = state.gitUnstagedExcludedPaths - path,
-        diagnostics = nextFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+        diagnostics = rebuildDiagnosticsFull(nextFiles),
         statusMessage = "Discarded changes in $path",
       )
     }
@@ -7900,7 +8048,7 @@ jobs:
                 editorFieldValues =
                   state.editorFieldValues + mergeOutput.mergedEditable.associate { it.path to TextFieldValue(it.content) },
                 editorRevision = state.editorRevision + 1L,
-                diagnostics = nextFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+                diagnostics = rebuildDiagnosticsFull(nextFiles),
                 pendingMergeConflicts = conflicts,
                 showConflictResolverModal = conflicts.isNotEmpty(),
                 statusMessage =
@@ -7948,7 +8096,7 @@ jobs:
                 tabNavHistory = listOf(bundle.detectedEntryPath),
                 tabNavIndex = 0,
                 editorFieldValues = bundle.files.associate { it.path to TextFieldValue(it.content) },
-                diagnostics = bundle.files.flatMap { CodeAnalyzer.analyzeFile(it) },
+                diagnostics = rebuildDiagnosticsFull(bundle.files),
                 statusMessage = "Cloned ${bundle.repo.fullName} (${bundle.files.size} files) as Worker '$workerName'",
               )
             }
@@ -8355,7 +8503,7 @@ jobs:
                 tabNavHistory = listOf(entry),
                 tabNavIndex = 0,
                 editorFieldValues = finalFiles.associate { f -> f.path to TextFieldValue(f.content) },
-                diagnostics = finalFiles.flatMap { f -> CodeAnalyzer.analyzeFile(f) },
+                diagnostics = rebuildDiagnosticsFull(finalFiles),
                 statusMessage = "Pulled ${finalFiles.size} file(s) from ${repo.fullName}",
               )
             }
@@ -8383,7 +8531,7 @@ jobs:
                 editorFieldValues =
                   state.editorFieldValues + mergeOutput.mergedEditable.associate { it.path to TextFieldValue(it.content) },
                 editorRevision = state.editorRevision + 1L,
-                diagnostics = nextFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+                diagnostics = rebuildDiagnosticsFull(nextFiles),
                 pendingMergeConflicts = mergeOutput.conflicts,
                 showConflictResolverModal = mergeOutput.conflicts.isNotEmpty(),
                 statusMessage =
@@ -8528,6 +8676,7 @@ jobs:
   }
 
   fun openDiffReview(intent: DiffReviewIntent) {
+    flushActiveEditorBuffer()
     val state = _uiState.value
     val entries = buildDiffEntries(intent, state)
     _uiState.update {
@@ -8554,6 +8703,7 @@ jobs:
   }
 
   fun openConflictResolver() {
+    flushActiveEditorBuffer()
     val state = _uiState.value
     val existing = state.pendingMergeConflicts
     if (existing.isNotEmpty()) {
@@ -8667,7 +8817,7 @@ jobs:
         editorFieldValues = nextFields,
         editorRevision = s.editorRevision + 1L,
         gitWorkingBaseline = nextBaseline,
-        diagnostics = nextFiles.flatMap { CodeAnalyzer.analyzeFile(it) },
+        diagnostics = rebuildDiagnosticsFull(nextFiles),
         pendingMergeConflicts = emptyList(),
         showConflictResolverModal = false,
         statusMessage = "Applied merged changes across ${conflicts.size} resolved file(s)",
@@ -8925,18 +9075,21 @@ jobs:
     val key = activeWorkspaceKey()
     revertWorkspaceToImportedBaseline()
     if (key != null) {
-      lastPersistedDraftDigests.remove(key)
+      clearLocalAutoSaveTrackingForWorkspace(key)
       pendingCloudDrafts.remove(key)
-      autoSaveIoScope.launch { autoSaveStore.clearWorkspaceDraft(key) }
+      autoSaveIoScope.launch { autoSaveWriteMutex.withLock { autoSaveStore.clearWorkspaceDraft(key) } }
     }
     _uiState.update { it.copy(restoredDraftBanner = null) }
   }
 
   fun clearAllAutoSavedDrafts() {
     lastPersistedDraftDigests.clear()
+    lastPersistedNonSpacingDigests.clear()
     pendingCloudDrafts.clear()
     autoSaveIoScope.launch {
-      autoSaveStore.clearAllDrafts()
+      autoSaveWriteMutex.withLock {
+        autoSaveStore.clearAllDrafts()
+      }
     }
     _uiState.update {
       it.copy(
@@ -8950,79 +9103,65 @@ jobs:
     flushActiveEditorBuffer()
     val state = _uiState.value
     val activeKey = activeWorkspaceKey(state)
-    val ws = state.workspace
-    if (activeKey != null &&
-      ws != null &&
-      lastLocallySavedFileTexts.keys.any { it.startsWith("$activeKey::") } &&
-      !hasAnyNonSpacingWorkspaceDiff(activeKey, ws.files, state.editorFieldValues, lastLocallySavedFileTexts)
-    ) {
-      if (clearSessionPointer) {
-        autoSaveIoScope.launch { autoSaveStore.clearLastActiveSession() }
-      }
-      return
-    }
-    val snapshot = buildActiveAutoSaveSnapshot(state)
     autoSaveIoScope.launch {
-      persistWorkspaceSnapshotAndRecordLocked(state, activeKey, snapshot, clearSessionPointer)
-    }
-  }
-
-  private fun triggerImmediateLocalAutoSave() {
-    draftSaveJob?.cancel()
-    immediateLocalSaveJob?.cancel()
-    immediateLocalSaveJob =
-      autoSaveIoScope.launch {
-        val state = _uiState.value
-        val activeKey = activeWorkspaceKey(state)
-        if (state.workspace == null) return@launch
-        val snapshot = buildActiveAutoSaveSnapshot(state)
-        persistWorkspaceSnapshotAndRecordLocked(state, activeKey, snapshot, clearSessionPointer = false)
-      }
-  }
-
-  private suspend fun persistWorkspaceSnapshotAndRecordLocked(
-    state: IdeUiState,
-    activeKey: String?,
-    snapshot: Pair<AutoSavedWorkspaceDraft, AutoSaveSessionPointer>?,
-    clearSessionPointer: Boolean,
-  ) {
-    if (snapshot != null) {
-      val (draft, pointer) = snapshot
-      val prevDigest = lastPersistedDraftDigests[draft.workspaceKey]
-      if (prevDigest != draft.contentDigest) {
-        autoSaveStore.saveWorkspaceDraft(draft)
-        lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
-      }
-      draft.files.forEach { wf ->
-        lastLocallySavedFileTexts["${draft.workspaceKey}::${wf.path}"] = wf.content
-      }
-      if (activeKey != null) {
-        ramDb.getWorkspace(activeKey)?.let { projectDirManager.saveWorkspaceRecord(it) }
-        val summary = projectDirManager.computeStorageSummary()
-        _uiState.update {
-          it.copy(
-            projectStorageSummary = summary,
-            lastAutoSavedEpochMs = System.currentTimeMillis(),
-          )
-        }
-      }
-      // Best-effort save-back to opened external file URIs when auto-saving/backgrounding
-      state.externalFileUris.forEach { (path, uriStr) ->
-        val wsFile = state.workspace?.files?.firstOrNull { it.path == path }
-        val liveContent = state.editorFieldValues[path]?.text ?: wsFile?.content
-        if (wsFile != null && liveContent != null && liveContent != wsFile.originalContent) {
-          runCatching { Uri.parse(uriStr) }.getOrNull()?.let { uri ->
-            DeviceFileHelper.writeTextToUri(getApplication(), uri, liveContent)
+      val snapshot = buildActiveAutoSaveSnapshot(state)
+      autoSaveWriteMutex.withLock {
+        if (snapshot != null) {
+          val (draft, pointer) = snapshot
+          val prevDigest = lastPersistedDraftDigests[draft.workspaceKey]
+          if (prevDigest != draft.contentDigest) {
+            autoSaveStore.saveWorkspaceDraft(draft)
+            lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
+            lastPersistedNonSpacingDigests[draft.workspaceKey] =
+              AutoSaveDraftStore.computeNonSpacingContentDigest(
+                files = draft.files,
+                openTabs = draft.openTabs,
+                activeFilePath = draft.activeFilePath,
+                entryModulePath = draft.entryModulePath,
+              )
+            state.workspace?.files?.forEach { wf ->
+              if (!wf.isVirtualReadOnly) {
+                val liveText = state.editorFieldValues[wf.path]?.text ?: wf.content
+                if (liveText != wf.originalContent) {
+                  localHistoryStore.recordSnapshot(
+                    workspaceKey = draft.workspaceKey,
+                    filePath = wf.path,
+                    before = wf.originalContent,
+                    after = liveText,
+                    label = "AutoSave",
+                  )
+                }
+              }
+            }
+            noteEmblemActivity()
           }
+          if (activeKey != null) {
+            ramDb.getWorkspace(activeKey)?.let { projectDirManager.saveWorkspaceRecord(it) }
+            val summary = projectDirManager.computeStorageSummary()
+            _uiState.update {
+              if (it.projectStorageSummary != summary) it.copy(projectStorageSummary = summary) else it
+            }
+          }
+          // Best-effort save-back to opened external file URIs when auto-saving/backgrounding
+          state.externalFileUris.forEach { (path, uriStr) ->
+            val wsFile = state.workspace?.files?.firstOrNull { it.path == path }
+            val liveContent = state.editorFieldValues[path]?.text ?: wsFile?.content
+            if (wsFile != null && liveContent != null && liveContent != wsFile.originalContent) {
+              runCatching { Uri.parse(uriStr) }.getOrNull()?.let { uri ->
+                DeviceFileHelper.writeTextToUri(getApplication(), uri, liveContent)
+                noteEmblemActivity()
+              }
+            }
+          }
+          if (clearSessionPointer) {
+            autoSaveStore.clearLastActiveSession()
+          } else {
+            autoSaveStore.saveLastActiveSession(pointer)
+          }
+        } else if (clearSessionPointer) {
+          autoSaveStore.clearLastActiveSession()
         }
       }
-      if (clearSessionPointer) {
-        autoSaveStore.clearLastActiveSession()
-      } else {
-        autoSaveStore.saveLastActiveSession(pointer)
-      }
-    } else if (clearSessionPointer) {
-      autoSaveStore.clearLastActiveSession()
     }
   }
 
@@ -9034,23 +9173,35 @@ jobs:
     draftSaveJob?.cancel()
     draftSaveJob =
       viewModelScope.launch {
-        delay(220L)
+        delay(1200L)
         val state = _uiState.value
-        val activeKey = activeWorkspaceKey(state) ?: return@launch
-        val ws = state.workspace ?: return@launch
-        val hasTrackedBaseline = lastLocallySavedFileTexts.keys.any { it.startsWith("$activeKey::") }
-        if (hasTrackedBaseline && !hasAnyNonSpacingWorkspaceDiff(activeKey, ws.files, state.editorFieldValues, lastLocallySavedFileTexts)) {
-          return@launch
-        }
-        ramDb.getWorkspace(activeKey)?.let { rec ->
-          withContext(Dispatchers.IO) {
-            projectDirManager.saveWorkspaceRecord(rec)
-            seedSavedFileBaselines(activeKey, rec.workingWorkspace)
+        val activeKey = activeWorkspaceKey(state)
+        if (state.workspace == null) return@launch
+        val ramRecord = activeKey?.let { ramDb.getWorkspace(it) }
+        val snapshot =
+          if (settings.autoSaveEnabled) {
+            withContext(Dispatchers.Default) { buildActiveAutoSaveSnapshot(state) }
+          } else null
+        withContext(Dispatchers.IO) {
+          autoSaveWriteMutex.withLock {
+            if (ramRecord != null) {
+              projectDirManager.saveWorkspaceRecord(ramRecord)
+            }
+            if (snapshot != null) {
+              persistSnapshotIfChangedLocked(snapshot.first, snapshot.second, forceSessionPointer = false)
+            }
+            if (settings.autoSaveEnabled) {
+              state.externalFileUris.forEach { (path, uriStr) ->
+                val wsFile = state.workspace?.files?.firstOrNull { it.path == path }
+                val liveContent = state.editorFieldValues[path]?.text ?: wsFile?.content
+                if (wsFile != null && liveContent != null && liveContent != wsFile.originalContent) {
+                  runCatching { Uri.parse(uriStr) }.getOrNull()?.let { uri ->
+                    DeviceFileHelper.writeTextToUri(getApplication(), uri, liveContent)
+                  }
+                }
+              }
+            }
           }
-        }
-        if (settings.autoSaveEnabled) {
-          val snapshot = withContext(Dispatchers.Default) { buildActiveAutoSaveSnapshot(state) } ?: return@launch
-          persistSnapshotIfChanged(snapshot.first, snapshot.second, forceSessionPointer = false)
         }
       }
   }
@@ -9066,14 +9217,24 @@ jobs:
           delay(intervalMs)
           val state = _uiState.value
           if (!state.editorSettings.autoSaveEnabled) break
-          val ws = state.workspace ?: continue
-          val activeKey = activeWorkspaceKey(state) ?: continue
-          val hasTrackedBaseline = lastLocallySavedFileTexts.keys.any { it.startsWith("$activeKey::") }
-          if (hasTrackedBaseline && !hasAnyNonSpacingWorkspaceDiff(activeKey, ws.files, state.editorFieldValues, lastLocallySavedFileTexts)) {
-            continue
-          }
+          if (state.workspace == null) continue
           val snapshot = withContext(Dispatchers.Default) { buildActiveAutoSaveSnapshot(state) } ?: continue
-          persistSnapshotIfChanged(snapshot.first, snapshot.second, forceSessionPointer = false)
+          val (draft, pointer) = snapshot
+          val nonSpacingDigest =
+            AutoSaveDraftStore.computeNonSpacingContentDigest(
+              files = draft.files,
+              openTabs = draft.openTabs,
+              activeFilePath = draft.activeFilePath,
+              entryModulePath = draft.entryModulePath,
+            )
+          val prevNonSpacingDigest = lastPersistedNonSpacingDigests[draft.workspaceKey]
+          if (prevNonSpacingDigest != nonSpacingDigest) {
+            withContext(Dispatchers.IO) {
+              autoSaveWriteMutex.withLock {
+                persistSnapshotIfChangedLocked(draft, pointer, forceSessionPointer = false)
+              }
+            }
+          }
         }
       }
   }
@@ -9081,38 +9242,44 @@ jobs:
   private fun recordActiveSessionPointer() {
     val snapshot = buildActiveAutoSaveSnapshot(_uiState.value) ?: return
     autoSaveIoScope.launch {
-      autoSaveStore.saveLastActiveSession(snapshot.second)
-      val (draft, _) = snapshot
-      draft.files.forEach { wf ->
-        lastLocallySavedFileTexts["${draft.workspaceKey}::${wf.path}"] = wf.content
-      }
-      if (lastPersistedDraftDigests[draft.workspaceKey] != draft.contentDigest) {
-        autoSaveStore.saveWorkspaceDraft(draft)
-        lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
+      autoSaveWriteMutex.withLock {
+        autoSaveStore.saveLastActiveSession(snapshot.second)
+        val (draft, _) = snapshot
+        if (lastPersistedDraftDigests[draft.workspaceKey] != draft.contentDigest) {
+          autoSaveStore.saveWorkspaceDraft(draft)
+          lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
+          lastPersistedNonSpacingDigests[draft.workspaceKey] =
+            AutoSaveDraftStore.computeNonSpacingContentDigest(
+              files = draft.files,
+              openTabs = draft.openTabs,
+              activeFilePath = draft.activeFilePath,
+              entryModulePath = draft.entryModulePath,
+            )
+        }
       }
     }
   }
 
-  private suspend fun persistSnapshotIfChanged(
+  private suspend fun persistSnapshotIfChangedLocked(
     draft: AutoSavedWorkspaceDraft,
     pointer: AutoSaveSessionPointer,
     forceSessionPointer: Boolean,
   ) {
     val prevDigest = lastPersistedDraftDigests[draft.workspaceKey]
     if (prevDigest != draft.contentDigest) {
-      withContext(Dispatchers.IO) {
-        autoSaveStore.saveWorkspaceDraft(draft)
-        autoSaveStore.saveLastActiveSession(pointer)
-      }
+      autoSaveStore.saveWorkspaceDraft(draft)
+      autoSaveStore.saveLastActiveSession(pointer)
       lastPersistedDraftDigests[draft.workspaceKey] = draft.contentDigest
-      draft.files.forEach { wf ->
-        lastLocallySavedFileTexts["${draft.workspaceKey}::${wf.path}"] = wf.content
-      }
-      _uiState.update { it.copy(lastAutoSavedEpochMs = System.currentTimeMillis()) }
+      lastPersistedNonSpacingDigests[draft.workspaceKey] =
+        AutoSaveDraftStore.computeNonSpacingContentDigest(
+          files = draft.files,
+          openTabs = draft.openTabs,
+          activeFilePath = draft.activeFilePath,
+          entryModulePath = draft.entryModulePath,
+        )
+      noteEmblemActivity()
     } else if (forceSessionPointer) {
-      withContext(Dispatchers.IO) {
-        autoSaveStore.saveLastActiveSession(pointer)
-      }
+      autoSaveStore.saveLastActiveSession(pointer)
     }
   }
 
@@ -9168,8 +9335,6 @@ jobs:
     val record = ramDb.getWorkspace(draft.workspaceKey) ?: return
     ramDb.setActiveWorkspaceKey(draft.workspaceKey)
     val ws = record.workingWorkspace
-    seedSavedFileBaselines(draft.workspaceKey, ws)
-    val diags = rebuildDiagnosticsFull(ws.files)
     val hasDirty = ws.files.any { it.isDirty }
     val banner =
       if (hasDirty && draft.savedAtEpochMs > 0L) {
@@ -9188,7 +9353,7 @@ jobs:
         tabNavIndex = record.tabNavIndex,
         editorFieldValues = record.fieldValues,
         editorRevision = it.editorRevision + 1L,
-        diagnostics = diags,
+        diagnostics = emptyList(),
         restoredDraftBanner = banner,
         lastAutoSavedEpochMs = draft.savedAtEpochMs.takeIf { ts -> ts > 0L },
         activeWorkspaceHasPendingConfig = record.hasPendingChanges,
@@ -9196,6 +9361,16 @@ jobs:
         ramWorkspaces = ramDb.listWorkspaces(),
       )
     }
+    diagnosticsJob?.cancel()
+    diagnosticsJob =
+      viewModelScope.launch {
+        val diags = withContext(Dispatchers.Default) { rebuildDiagnosticsFull(ws.files) }
+        _uiState.update { state ->
+          if (state.workspace?.scriptName == ws.scriptName && state.workspace.files == ws.files) {
+            state.copy(diagnostics = diags)
+          } else state
+        }
+      }
     appendLog("INFO", "Restored '${ws.scriptName}' from project directory & auto-save")
     syncPeriodicAutoSaveLoop()
   }
@@ -9240,8 +9415,6 @@ jobs:
     val wf = ws?.files?.firstOrNull { it.path == "wrangler.jsonc" } ?: return current
     return current + ("wrangler.jsonc" to TextFieldValue(wf.content))
   }
-
-  private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 
   // Settings & Cloudflare Credentials
   fun updateSettings(transform: (EditorSettings) -> EditorSettings) {
@@ -9297,21 +9470,31 @@ jobs:
               decoded.compress(Bitmap.CompressFormat.JPEG, 90, fos)
             }
             decoded.recycle()
+
+            // Prune oldest images beyond MAX_SAVED_BG_PATHS gallery capacity
+            val allSaved =
+              bgDir.listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() }.orEmpty()
+            allSaved.drop(EditorSettings.MAX_SAVED_BG_PATHS).forEach { old ->
+              runCatching { old.delete() }
+            }
             outFile.absolutePath
           }
         }
       savedResult
         .onSuccess { path ->
           prefsStore.updateEditorSettings { cur ->
-            val updatedSaved = (listOf(path) + cur.editorBgSavedPaths.filterNot { it == path }).take(8)
+            val updatedGallery =
+              (listOf(path) + cur.editorBgSavedPaths.filter { it != path && File(it).isFile })
+                .take(EditorSettings.MAX_SAVED_BG_PATHS)
             cur.copy(
               editorBgPreset = "CUSTOM",
               editorBgImagePath = path,
-              editorBgSavedPaths = updatedSaved,
+              editorBgSavedPaths = updatedGallery,
               editorBgOffsetX = 0f,
               editorBgOffsetY = 0f,
             )
           }
+          noteEmblemActivity()
           _uiState.update { it.copy(statusMessage = "Custom editor background updated") }
         }
         .onFailure { err ->
@@ -9322,19 +9505,23 @@ jobs:
 
   fun selectSavedEditorBackground(path: String) {
     if (path.isBlank()) return
-    viewModelScope.launch {
-      prefsStore.updateEditorSettings { cur ->
-        val updatedSaved = (listOf(path) + cur.editorBgSavedPaths.filterNot { it == path }).take(8)
-        cur.copy(
-          editorBgPreset = "CUSTOM",
-          editorBgImagePath = path,
-          editorBgSavedPaths = updatedSaved,
-          editorBgOffsetX = 0f,
-          editorBgOffsetY = 0f,
-        )
-      }
-      _uiState.update { it.copy(statusMessage = "Applied saved editor background") }
+    if (!File(path).isFile) {
+      removeSavedEditorBackground(path)
+      return
     }
+    updateSettings { cur ->
+      val updatedGallery =
+        (listOf(path) + cur.editorBgSavedPaths.filter { it != path })
+          .take(EditorSettings.MAX_SAVED_BG_PATHS)
+      cur.copy(
+        editorBgPreset = "CUSTOM",
+        editorBgImagePath = path,
+        editorBgSavedPaths = updatedGallery,
+        editorBgOffsetX = 0f,
+        editorBgOffsetY = 0f,
+      )
+    }
+    _uiState.update { it.copy(statusMessage = "Switched saved backdrop") }
   }
 
   fun removeSavedEditorBackground(path: String) {
@@ -9344,29 +9531,32 @@ jobs:
       }
       prefsStore.updateEditorSettings { cur ->
         val remaining = cur.editorBgSavedPaths.filterNot { it == path }
-        val clearingActive = cur.editorBgImagePath == path
-        cur.copy(
-          editorBgSavedPaths = remaining,
-          editorBgPreset = if (clearingActive && remaining.isEmpty()) "NONE" else cur.editorBgPreset,
-          editorBgImagePath = if (clearingActive) remaining.firstOrNull().orEmpty() else cur.editorBgImagePath,
-        )
+        val wasActive = cur.editorBgImagePath == path
+        if (wasActive) {
+          val fallbackPath = remaining.firstOrNull().orEmpty()
+          cur.copy(
+            editorBgSavedPaths = remaining,
+            editorBgImagePath = fallbackPath,
+            editorBgPreset = if (fallbackPath.isNotEmpty()) "CUSTOM" else "NONE",
+          )
+        } else {
+          cur.copy(editorBgSavedPaths = remaining)
+        }
       }
-      _uiState.update { it.copy(statusMessage = "Removed saved editor background") }
+      _uiState.update { it.copy(statusMessage = "Removed saved wallpaper") }
     }
   }
 
   fun clearCustomEditorBackground() {
-    viewModelScope.launch {
-      prefsStore.updateEditorSettings {
-        it.copy(
-          editorBgPreset = "NONE",
-          editorBgImagePath = "",
-          editorBgOffsetX = 0f,
-          editorBgOffsetY = 0f,
-        )
-      }
-      _uiState.update { it.copy(statusMessage = "Editor background reset to solid") }
+    updateSettings { cur ->
+      cur.copy(
+        editorBgPreset = "NONE",
+        editorBgImagePath = "",
+        editorBgOffsetX = 0f,
+        editorBgOffsetY = 0f,
+      )
     }
+    _uiState.update { it.copy(statusMessage = "Editor background reset to solid") }
   }
 
   fun clearCloudflareCredentialTestMessage() {
@@ -9549,11 +9739,10 @@ jobs:
 
   private fun rebuildDiagnosticsFull(files: List<WorkerFile>): List<DiagnosticItem> {
     fileDiagnosticsCache.clear()
-    val result = ArrayList<DiagnosticItem>()
+    val result = CodeAnalyzer.analyzeWorkspace(files)
+    val byPath = result.groupBy { it.filePath }
     for (file in files) {
-      val list = CodeAnalyzer.analyzeFile(file)
-      fileDiagnosticsCache[file.path] = list
-      result.addAll(list)
+      fileDiagnosticsCache[file.path] = byPath[file.path].orEmpty()
     }
     return result
   }
@@ -9562,15 +9751,9 @@ jobs:
     editedFile: WorkerFile,
     allFiles: List<WorkerFile>,
   ): List<DiagnosticItem> {
-    fileDiagnosticsCache[editedFile.path] = CodeAnalyzer.analyzeFile(editedFile)
-    val result = ArrayList<DiagnosticItem>()
-    for (file in allFiles) {
-      val cached = fileDiagnosticsCache[file.path] ?: CodeAnalyzer.analyzeFile(file).also {
-        fileDiagnosticsCache[file.path] = it
-      }
-      result.addAll(cached)
-    }
-    return result
+    val updated =
+      allFiles.map { if (it.path == editedFile.path) editedFile else it }
+    return rebuildDiagnosticsFull(updated)
   }
 
   private fun persistWorkspaceToProjectDirAsync(
@@ -9580,6 +9763,7 @@ jobs:
     val snapshot = ramDb.getWorkspace(workspaceKey) ?: return
     autoSaveIoScope.launch {
       projectDirManager.saveWorkspaceRecord(snapshot)
+      noteEmblemActivity()
       if (refreshSummary) {
         val summary = projectDirManager.computeStorageSummary()
         _uiState.update { it.copy(projectStorageSummary = summary) }
@@ -9611,6 +9795,7 @@ jobs:
         documentText = documentText,
         cursor = cursor,
         language = language,
+        customSnippets = _uiState.value.editorSettings.customSnippets,
       )
     idePerfSampler.record("completion", (System.nanoTime() - t0) / 1_000_000L)
     return items
@@ -9876,5 +10061,168 @@ jobs:
         scheduleDraftSave()
       }
     }
+  }
+
+  // --- Deno Check & Lint / Go to Definition / Split View / Custom Snippets ---
+
+  fun runDenoCheckAndLint() {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val ws = state.workspace
+    if (ws == null) {
+      _uiState.update { it.copy(statusMessage = "Open a workspace to run Deno Check") }
+      return
+    }
+    if (state.isRunningDenoCheck) return
+
+    val liveFiles =
+      ws.files.map { wf ->
+        val live = state.editorFieldValues[wf.path]?.text
+        if (live != null && live != wf.content) wf.copy(content = live) else wf
+      }
+
+    _uiState.update {
+      it.copy(
+        isRunningDenoCheck = true,
+        statusMessage = "Running Deno check & lint…",
+      )
+    }
+
+    viewModelScope.launch {
+      val summary = DenoToolingEngine.runWorkspaceCheckAndLint(getApplication(), liveFiles)
+      noteEmblemActivity()
+      appendLog(
+        if (summary.diagnostics.any { it.severity == com.example.data.remote.DiagnosticSeverity.ERROR }) "WARN" else "INFO",
+        summary.summaryMessage,
+      )
+      _uiState.update { cur ->
+        cur.copy(
+          isRunningDenoCheck = false,
+          diagnostics = summary.diagnostics,
+          showBottomPanel =
+            if (summary.diagnostics.isNotEmpty()) true else cur.showBottomPanel,
+          activeBottomTab =
+            if (summary.diagnostics.isNotEmpty()) BottomPanelTab.PROBLEMS else cur.activeBottomTab,
+          statusMessage = summary.summaryMessage,
+        )
+      }
+    }
+  }
+
+  fun goToDefinitionAtCursor(
+    filePath: String? = _uiState.value.activeFilePath,
+    documentText: CharSequence? = null,
+    cursor: Int? = null,
+  ): Boolean {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val targetPath = filePath ?: state.activeFilePath
+    if (targetPath == null) {
+      _uiState.update { it.copy(statusMessage = "Open a file first") }
+      return false
+    }
+    val tfv = state.editorFieldValues[targetPath]
+    val textStr = documentText?.toString() ?: tfv?.text ?: state.workspace?.files?.firstOrNull { it.path == targetPath }?.content.orEmpty()
+    val offset = cursor ?: tfv?.selection?.end ?: 0
+
+    val resolved =
+      DefinitionResolver.resolveAt(
+        workspace = state.workspace,
+        editorFieldValues = state.editorFieldValues,
+        activeFilePath = targetPath,
+        documentText = textStr,
+        offset = offset,
+      )
+    if (resolved == null) {
+      _uiState.update { it.copy(statusMessage = "No definition found at cursor") }
+      return false
+    }
+    jumpToLine(resolved.filePath, resolved.line, resolved.column)
+    _uiState.update {
+      it.copy(
+        statusMessage = "Defined ${resolved.symbolName} → ${resolved.filePath.substringAfterLast('/')}:${resolved.line}",
+      )
+    }
+    return true
+  }
+
+  fun setSplitViewMode(mode: SplitViewMode) {
+    _uiState.update { cur ->
+      val editablePaths = cur.workspace?.files.orEmpty().filterNot { it.isVirtualReadOnly }.map { it.path }
+      val resolvedSecondary =
+        when (mode) {
+          SplitViewMode.DUAL_FILE -> {
+            val currentSec = cur.secondaryFilePath
+            if (currentSec != null && currentSec != cur.activeFilePath && currentSec in editablePaths) {
+              currentSec
+            } else {
+              cur.openTabPaths.firstOrNull { it != cur.activeFilePath && it in editablePaths }
+                ?: editablePaths.firstOrNull { it != cur.activeFilePath }
+                ?: cur.activeFilePath
+            }
+          }
+          SplitViewMode.CODE_PREVIEW -> {
+            val previewCandidate =
+              LocalWorkspacePreviewRenderer.findDefaultPreviewPath(cur.workspace, cur.activeFilePath)
+            previewCandidate ?: cur.secondaryFilePath
+          }
+          SplitViewMode.NONE -> cur.secondaryFilePath
+        }
+      cur.copy(
+        splitViewMode = mode,
+        secondaryFilePath = resolvedSecondary,
+        projectMode = if (mode != SplitViewMode.NONE) ProjectMode.CODE else cur.projectMode,
+      )
+    }
+  }
+
+  fun setSecondarySplitFile(path: String?) {
+    _uiState.update { cur -> cur.copy(secondaryFilePath = path) }
+  }
+
+  fun swapSplitFiles() {
+    val cur = _uiState.value
+    if (cur.splitViewMode != SplitViewMode.DUAL_FILE) return
+    val primary = cur.activeFilePath ?: return
+    val secondary = cur.secondaryFilePath ?: return
+    if (primary == secondary) return
+    openFileTab(secondary, recordHistory = true)
+    _uiState.update { it.copy(secondaryFilePath = primary) }
+  }
+
+  fun addCustomSnippet(
+    abbrev: String,
+    title: String,
+    tag: String,
+    code: String,
+    description: String = "",
+  ) {
+    val cleanAbbrev = abbrev.trim()
+    val cleanTitle = title.trim().ifBlank { cleanAbbrev }
+    val cleanTag = tag.trim().uppercase().ifBlank { "CUSTOM" }
+    if (cleanAbbrev.isEmpty() || code.isBlank()) return
+
+    val newItem =
+      CodeSnippetItem(
+        id = "custom_${System.currentTimeMillis()}",
+        abbrev = cleanAbbrev,
+        title = cleanTitle,
+        tag = cleanTag,
+        code = code,
+        description = description.trim(),
+        isCustom = true,
+      )
+    updateSettings { cur ->
+      val deduped = cur.customSnippets.filterNot { it.abbrev.equals(cleanAbbrev, ignoreCase = true) }
+      cur.copy(customSnippets = listOf(newItem) + deduped)
+    }
+    _uiState.update { it.copy(statusMessage = "Saved snippet '$cleanAbbrev'") }
+  }
+
+  fun deleteCustomSnippet(snippetId: String) {
+    updateSettings { cur ->
+      cur.copy(customSnippets = cur.customSnippets.filterNot { it.id == snippetId })
+    }
+    _uiState.update { it.copy(statusMessage = "Deleted custom snippet") }
   }
 }

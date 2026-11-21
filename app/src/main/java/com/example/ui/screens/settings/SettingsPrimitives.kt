@@ -106,10 +106,10 @@ enum class SettingsCategory(
 ) {
   APPEARANCE(
     title = "Appearance",
-    subtitle = "Theme, accent, liquid glass & startup",
+    subtitle = "Theme, accent, code style & startup",
     jumpTag = "appearance",
     icon = Icons.Outlined.Palette,
-    keywords = listOf("theme", "dark", "light", "system", "accent", "color", "dynamic", "material you", "custom", "lime", "violet", "teal", "orange", "pumpkin", "style", "liquid glass", "glass", "clear", "tinted", "lensing", "refraction", "tilt", "code style", "syntax", "monokai", "neon", "tokyo", "dracula", "labels", "home", "editor", "background", "reopen", "startup"),
+    keywords = listOf("theme", "dark", "light", "system", "accent", "color", "dynamic", "material you", "custom", "lime", "violet", "teal", "orange", "pumpkin", "style", "code style", "syntax", "monokai", "neon", "tokyo", "dracula", "labels", "home", "editor", "background", "bubbles", "floating", "pop", "particles", "reopen", "startup"),
   ),
   EDITOR(
     title = "Editor",
@@ -163,7 +163,7 @@ enum class AppearanceSubPage(
   val icon: ImageVector,
 ) {
   HOME_PAGE("Home Page", "Appearance · Home Page", "Floating bottom bar & popup menus", "appearance_home", Icons.Outlined.Home),
-  EDITOR("Editor", "Appearance · Editor", "Code styles, bottom bar, menus & background", "appearance_editor", Icons.Outlined.Code),
+  EDITOR("Editor", "Appearance · Editor", "Code styles, bottom bar, bubbles & background", "appearance_editor", Icons.Outlined.Code),
 }
 
 // ---- CodeAssist Material 3 Expressive Settings Controls ------------------------------------------
@@ -932,7 +932,7 @@ fun SettingsFoldableSection(
   modifier: Modifier = Modifier,
   summary: String? = null,
   initiallyExpanded: Boolean = false,
-  onExpandedChange: (Boolean) -> Unit = {},
+  onExpandedChange: ((Boolean) -> Unit)? = null,
   contentPadding: Dp = 0.dp,
   content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -958,7 +958,7 @@ fun SettingsFoldableSection(
             .clickable {
               val next = !expanded
               expanded = next
-              onExpandedChange(next)
+              onExpandedChange?.invoke(next)
             }
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,

@@ -5,9 +5,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import com.example.ui.theme.LocalGlassBackdrop
-import com.example.ui.theme.glassLens
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
@@ -62,17 +59,9 @@ import com.example.data.security.FloatingBarStyleConfig
 import com.example.data.security.IconLabelBehavior
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalBarStylePreferences
-import com.example.ui.theme.LocalEditorSettings
 import com.example.ui.theme.LocalIconLabelBehavior
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.UiStyleVersion
-import com.example.ui.theme.LiquidGlassScrubLensOverlay
-import com.example.ui.theme.liquidGlassScrubHost
-import com.example.ui.theme.liquidGlassScrubItem
-import com.example.ui.theme.liquidGlassSurface
-import com.example.ui.theme.liquidGlassTouchGlow
-import com.example.ui.theme.rememberLiquidGlassAdaptiveColors
-import com.example.ui.theme.rememberLiquidGlassScrubState
 
 data class EdgeBottomDockItem(
   val label: String,
@@ -126,34 +115,22 @@ private fun LiquidGlassFloatingDock(
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
-  val settings = LocalEditorSettings.current
   val isDark = palette.isDark
   val labelBehavior = LocalIconLabelBehavior.current
   val capsuleShape = RoundedCornerShape(cfg.cornerRadiusDp.dp)
   val hideOrbSize = (cfg.heightDp - 10).coerceIn(34, 44).dp
-  val liquidEnabled = settings.liquidGlassEnabled
-  val glassBackdrop = LocalGlassBackdrop.current
-  val useRealGlass = liquidEnabled && glassBackdrop != null
-
-  val adaptiveGlass =
-    rememberLiquidGlassAdaptiveColors(
-      palette = palette,
-      tintFraction = settings.liquidGlassTint,
-      thickness = 1.25f,
-      surfaceOpacityMultiplier = (cfg.opacity / 0.65f).coerceIn(0.45f, 1.35f),
-    )
 
   val topGlassTint =
     if (isDark) {
-      lerp(Color(0xFF2B282A), palette.chromeSurface, 0.35f).copy(alpha = (cfg.opacity * 0.96f).coerceIn(0.12f, 1f))
+      lerp(Color(0xFF2B282A), palette.chromeSurface, 0.85f).copy(alpha = (cfg.opacity * 0.96f).coerceIn(0.12f, 1f))
     } else {
-      lerp(Color(0xFFFAFAFC), palette.chromeSurface, 0.30f).copy(alpha = (cfg.opacity * 0.96f).coerceIn(0.18f, 1f))
+      lerp(Color(0xFFFAFAFC), palette.chromeSurface, 0.85f).copy(alpha = (cfg.opacity * 0.96f).coerceIn(0.18f, 1f))
     }
   val bottomGlassTint =
     if (isDark) {
-      lerp(Color(0xFF151416), palette.chromeBg, 0.32f).copy(alpha = (cfg.opacity * 1.04f).coerceIn(0.15f, 1f))
+      lerp(Color(0xFF151416), palette.chromeBg, 0.85f).copy(alpha = (cfg.opacity * 1.04f).coerceIn(0.15f, 1f))
     } else {
-      lerp(Color(0xFFE7E9EF), palette.chromeSurface, 0.35f).copy(alpha = (cfg.opacity * 1.02f).coerceIn(0.22f, 1f))
+      lerp(Color(0xFFE7E9EF), palette.chromeSurface, 0.85f).copy(alpha = (cfg.opacity * 1.02f).coerceIn(0.22f, 1f))
     }
   val glassBodyBrush = Brush.verticalGradient(listOf(topGlassTint, bottomGlassTint))
 
@@ -200,52 +177,22 @@ private fun LiquidGlassFloatingDock(
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-      val dockScrubState = rememberLiquidGlassScrubState()
-      val innerCorner = (cfg.cornerRadiusDp - 3).coerceAtLeast(10).dp
       Box(
         modifier =
           Modifier
             .width(capsuleWidth)
             .height(cfg.heightDp.dp)
-            .then(
-              if (useRealGlass && glassBackdrop != null) {
-                Modifier
-                  .shadow(
-                    elevation = elevationDp,
-                    shape = capsuleShape,
-                    ambientColor = Color.Black.copy(alpha = if (isDark) 0.55f else 0.18f),
-                    spotColor = Color.Black.copy(alpha = if (isDark) 0.65f else 0.22f),
-                  )
-                  .glassLens(glassBackdrop, cfg.cornerRadiusDp.dp, isDark)
-              } else if (liquidEnabled) {
-                Modifier.liquidGlassSurface(
-                  shape = capsuleShape,
-                  cornerRadius = cfg.cornerRadiusDp.dp,
-                  thickness = 1.25f,
-                  surfaceOpacityMultiplier = (cfg.opacity / 0.65f).coerceIn(0.45f, 1.35f),
-                  borderOpacityMultiplier = (cfg.borderOpacity / 0.35f).coerceIn(0f, 1.4f),
-                  drawShadow = true,
-                )
-              } else {
-                Modifier
-                  .shadow(
-                    elevation = elevationDp,
-                    shape = capsuleShape,
-                    ambientColor = Color.Black.copy(alpha = if (isDark) 0.65f else 0.25f),
-                    spotColor = Color.Black.copy(alpha = if (isDark) 0.75f else 0.30f),
-                  )
-                  .clip(capsuleShape)
-                  .background(glassBodyBrush)
-                  .then(
-                    if (rimBrush != null) Modifier.border(width = 1.dp, brush = rimBrush, shape = capsuleShape)
-                    else Modifier,
-                  )
-              },
+            .shadow(
+              elevation = elevationDp,
+              shape = capsuleShape,
+              ambientColor = Color.Black.copy(alpha = if (isDark) 0.65f else 0.25f),
+              spotColor = Color.Black.copy(alpha = if (isDark) 0.75f else 0.30f),
             )
-            .liquidGlassScrubHost(
-              state = dockScrubState,
-              itemCount = items.size,
-              onCommitItem = { idx -> items.getOrNull(idx)?.onClick?.invoke() },
+            .clip(capsuleShape)
+            .background(glassBodyBrush)
+            .then(
+              if (rimBrush != null) Modifier.border(width = 1.dp, brush = rimBrush, shape = capsuleShape)
+              else Modifier,
             ),
       ) {
         if (sheenAlpha > 0.005f) {
@@ -272,20 +219,15 @@ private fun LiquidGlassFloatingDock(
             verticalAlignment = Alignment.CenterVertically,
           ) {
             val itemHeight = (cfg.heightDp - 8).coerceAtLeast(36).dp
+            val innerCorner = (cfg.cornerRadiusDp - 3).coerceAtLeast(10).dp
             val innerShape = RoundedCornerShape(innerCorner)
 
-            items.forEachIndexed { index, item ->
+            items.forEach { item ->
               val interactionSource = remember(item.testTag) { MutableInteractionSource() }
-              val scrubHovered = dockScrubState.isItemScrubHovered(index)
-              val scrubProgress by animateFloatAsState(
-                targetValue = if (scrubHovered) 1f else 0f,
-                animationSpec = spring(dampingRatio = 0.55f, stiffness = 340f),
-                label = "v2_dock_scrub",
-              )
               val active = item.selected
               val activeBgTarget =
                 if (active) {
-                  palette.activePillBg.copy(alpha = (cfg.activePillOpacity + 0.56f).coerceIn(0.42f, 0.94f))
+                  palette.activePillBg.copy(alpha = (cfg.activePillOpacity + 0.62f).coerceIn(0.28f, 0.96f))
                 } else {
                   Color.Transparent
                 }
@@ -295,24 +237,13 @@ private fun LiquidGlassFloatingDock(
                 label = "v2_dock_pill_bg",
               )
               val iconTint by animateColorAsState(
-                targetValue =
-                  when {
-                    scrubHovered || active -> palette.activePillFg
-                    liquidEnabled -> adaptiveGlass.foregroundSecondary
-                    isDark -> Color.White.copy(alpha = 0.76f)
-                    else -> palette.textSecondary
-                  },
-                animationSpec = tween(durationMillis = 150),
+                targetValue = if (active) palette.activePillFg else palette.textSecondary,
+                animationSpec = tween(durationMillis = 170),
                 label = "v2_dock_icon_tint",
               )
               val iconScale by animateFloatAsState(
-                targetValue =
-                  when {
-                    scrubHovered -> 1.16f
-                    active -> 1.07f
-                    else -> 1f
-                  },
-                animationSpec = spring(dampingRatio = 0.5f, stiffness = 420f),
+                targetValue = if (active) 1.07f else 1f,
+                animationSpec = tween(durationMillis = 190, easing = FastOutSlowInEasing),
                 label = "v2_dock_icon_scale",
               )
 
@@ -335,29 +266,20 @@ private fun LiquidGlassFloatingDock(
               Box(
                 modifier =
                   Modifier
-                    .liquidGlassScrubItem(dockScrubState, index)
                     .height(itemHeight)
-                    .then(
-                      if (useRealGlass && glassBackdrop != null) {
-                        Modifier.glassLens(glassBackdrop, innerCorner, isDark, press = { scrubProgress }, bubble = true)
-                      } else {
-                        Modifier
-                      },
-                    )
                     .clip(innerShape)
                     .background(pillBg)
                     .then(
                       if (active && cfg.borderOpacity > 0.02f) {
                         Modifier.border(
                           width = 0.75.dp,
-                          color = palette.activePillFg.copy(alpha = 0.34f),
+                          color = palette.activePillFg.copy(alpha = (cfg.borderOpacity * 0.45f).coerceIn(0.14f, 0.36f)),
                           shape = innerShape,
                         )
                       } else {
                         Modifier
                       },
                     )
-                    .liquidGlassTouchGlow(glowColor = palette.activePillFg)
                     .clickable(
                       interactionSource = interactionSource,
                       indication = null,
@@ -410,7 +332,7 @@ private fun LiquidGlassFloatingDock(
                     DockInlineCounterBadge(
                       text = item.badgeText,
                       customColor = item.badgeColor,
-                      active = active || scrubHovered,
+                      active = active,
                       isV2Glass = true,
                     )
                   }
@@ -419,15 +341,6 @@ private fun LiquidGlassFloatingDock(
             }
           }
         }
-
-        if (!useRealGlass) {
-          LiquidGlassScrubLensOverlay(
-            state = dockScrubState,
-            cornerRadius = innerCorner,
-            thickness = 1.45f,
-            modifier = Modifier.fillMaxSize(),
-          )
-        }
       }
 
       if (onHideDock != null) {
@@ -435,33 +348,18 @@ private fun LiquidGlassFloatingDock(
           modifier =
             Modifier
               .size(hideOrbSize)
-              .then(
-                if (liquidEnabled) {
-                  Modifier.liquidGlassSurface(
-                    shape = CircleShape,
-                    cornerRadius = hideOrbSize / 2,
-                    thickness = 1.25f,
-                    surfaceOpacityMultiplier = (cfg.opacity / 0.65f).coerceIn(0.45f, 1.35f),
-                    borderOpacityMultiplier = (cfg.borderOpacity / 0.35f).coerceIn(0f, 1.4f),
-                    drawShadow = true,
-                  )
-                } else {
-                  Modifier
-                    .shadow(
-                      elevation = (elevationDp.value * 0.85f).dp,
-                      shape = CircleShape,
-                      ambientColor = Color.Black.copy(alpha = if (isDark) 0.6f else 0.22f),
-                      spotColor = Color.Black.copy(alpha = if (isDark) 0.7f else 0.28f),
-                    )
-                    .clip(CircleShape)
-                    .background(glassBodyBrush)
-                    .then(
-                      if (rimBrush != null) Modifier.border(width = 1.dp, brush = rimBrush, shape = CircleShape)
-                      else Modifier,
-                    )
-                },
+              .shadow(
+                elevation = (elevationDp.value * 0.85f).dp,
+                shape = CircleShape,
+                ambientColor = Color.Black.copy(alpha = if (isDark) 0.6f else 0.22f),
+                spotColor = Color.Black.copy(alpha = if (isDark) 0.7f else 0.28f),
               )
-              .liquidGlassTouchGlow(glowColor = palette.activePillFg)
+              .clip(CircleShape)
+              .background(glassBodyBrush)
+              .then(
+                if (rimBrush != null) Modifier.border(width = 1.dp, brush = rimBrush, shape = CircleShape)
+                else Modifier,
+              )
               .clickable(role = Role.Button, onClick = onHideDock)
               .testTag(hideDockTestTag),
           contentAlignment = Alignment.Center,
@@ -469,7 +367,7 @@ private fun LiquidGlassFloatingDock(
           Icon(
             imageVector = Icons.Outlined.KeyboardArrowDown,
             contentDescription = "Hide bottom menu",
-            tint = if (liquidEnabled) adaptiveGlass.foregroundPrimary else palette.textSecondary,
+            tint = palette.textSecondary,
             modifier = Modifier.size(19.dp),
           )
         }
@@ -505,16 +403,8 @@ private fun ClassicDockedBar(
           .padding(horizontal = 8.dp, vertical = 5.dp),
       verticalAlignment = Alignment.CenterVertically,
     ) {
-      val classicScrubState = rememberLiquidGlassScrubState()
       Box(
-        modifier =
-          Modifier
-            .weight(1f)
-            .liquidGlassScrubHost(
-              state = classicScrubState,
-              itemCount = items.size,
-              onCommitItem = { idx -> items.getOrNull(idx)?.onClick?.invoke() },
-            ),
+        modifier = Modifier.weight(1f),
         contentAlignment = Alignment.Center,
       ) {
         Row(
@@ -523,9 +413,8 @@ private fun ClassicDockedBar(
           verticalAlignment = Alignment.CenterVertically,
         ) {
           val labelBehavior = LocalIconLabelBehavior.current
-          items.forEachIndexed { index, item ->
+          items.forEach { item ->
             val interactionSource = remember(item.testTag) { MutableInteractionSource() }
-            val scrubHovered = classicScrubState.isItemScrubHovered(index)
             val active = item.selected
             val showLabel =
               when {
@@ -541,28 +430,21 @@ private fun ClassicDockedBar(
               label = "dock_pill_bg",
             )
             val iconTint by animateColorAsState(
-              targetValue = if (scrubHovered || active) palette.activePillFg else palette.textSecondary,
-              animationSpec = tween(durationMillis = 150),
+              targetValue = if (active) palette.activePillFg else palette.textSecondary,
+              animationSpec = tween(durationMillis = 160),
               label = "dock_icon_tint",
             )
             val iconScale by animateFloatAsState(
-              targetValue =
-                when {
-                  scrubHovered -> 1.14f
-                  active -> 1.06f
-                  else -> 1f
-                },
-              animationSpec = tween(durationMillis = 160, easing = FastOutSlowInEasing),
+              targetValue = if (active) 1.06f else 1f,
+              animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
               label = "dock_icon_scale",
             )
 
             Box(
               modifier =
                 Modifier
-                  .liquidGlassScrubItem(classicScrubState, index)
                   .height((cfg.heightDp - 12).coerceIn(36, 52).dp)
                   .clip(RoundedCornerShape(cfg.cornerRadiusDp.dp))
-                  .liquidGlassTouchGlow(glowColor = palette.activePillFg)
                   .clickable(
                     interactionSource = interactionSource,
                     indication = null,
@@ -622,7 +504,7 @@ private fun ClassicDockedBar(
                     DockInlineCounterBadge(
                       text = item.badgeText,
                       customColor = item.badgeColor,
-                      active = active || scrubHovered,
+                      active = active,
                       isV2Glass = false,
                     )
                   }
@@ -631,12 +513,6 @@ private fun ClassicDockedBar(
             }
           }
         }
-        LiquidGlassScrubLensOverlay(
-          state = classicScrubState,
-          cornerRadius = cfg.cornerRadiusDp.dp,
-          thickness = 1.35f,
-          modifier = Modifier.matchParentSize(),
-        )
       }
 
       if (onHideDock != null) {
@@ -676,13 +552,15 @@ private fun DockInlineCounterBadge(
   val badgeBg =
     when {
       customColor != null -> customColor
-      isV2Glass -> palette.activePillFg.copy(alpha = if (active) 0.24f else 0.16f)
+      isV2Glass && active -> palette.ctaBg
+      isV2Glass -> palette.activePillBg.copy(alpha = 0.75f)
       active -> palette.ctaBg
       else -> palette.chromePill
     }
   val badgeFg =
     when {
       customColor != null -> Color(0xFF141806)
+      isV2Glass && active -> palette.ctaFg
       isV2Glass -> palette.activePillFg
       active -> palette.ctaFg
       else -> palette.textSecondary

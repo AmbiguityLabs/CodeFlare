@@ -101,7 +101,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
-import com.example.ui.theme.glassSource
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -158,7 +157,6 @@ import com.example.ui.components.IconSegmentTab
 import com.example.ui.components.IconToggleRevealText
 import com.example.ui.components.IdeCoreSheetTab
 import com.example.ui.components.IdeSearchAndHistorySheet
-import com.example.ui.components.LiquidGlassIconScrubStrip
 import com.example.ui.components.LiveTailView
 import com.example.ui.components.LocalScriptRunPane
 import com.example.ui.components.NewDirectoryDialog
@@ -179,16 +177,11 @@ import com.example.ui.screens.settings.SettingsCategory
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
-import com.example.ui.theme.LiquidGlassBackdropState
-import com.example.ui.theme.LiquidGlassEmergeVisibility
 import com.example.ui.theme.LocalIdePalette
-import com.example.ui.theme.LocalLiquidGlassBackdrop
 import com.example.ui.theme.LocalPopupMenuStyle
 import com.example.ui.theme.UiStyleVersion
 import com.example.ui.theme.edgeGlassDock
 import com.example.ui.theme.edgeGlassSurface
-import com.example.ui.theme.liquidGlassSurface
-import com.example.ui.theme.liquidGlassTouchGlow
 import com.example.ui.theme.rememberGlassBorderStroke
 import com.example.ui.viewmodel.BottomPanelTab
 import com.example.ui.viewmodel.IdeUiState
@@ -1003,23 +996,8 @@ fun IdeWorkspaceScreen(
   val dockClearanceBottom =
     if (isV2Workspace) (editorBarStyle.heightDp + editorBarStyle.bottomMarginDp + 14).dp
     else (editorBarStyle.heightDp + 10).dp
-  val activeTextLen = uiState.activeFile?.content?.length ?: 0
-  val workspaceBackdrop =
-    LiquidGlassBackdropState(
-      luminance = if (palette.isDark) 0.10f else 0.89f,
-      contentDensity =
-        if (uiState.projectMode == ProjectMode.CODE && activeTextLen > 12) 0.85f
-        else if (uiState.projectMode == ProjectMode.CONSOLE || uiState.projectMode == ProjectMode.TEST) 0.65f
-        else 0.45f,
-      scrollOffsetPx = (uiState.activeFilePath?.hashCode()?.rem(120)?.toFloat() ?: 0f),
-      accentHint = palette.ctaBg,
-    )
 
-  CompositionLocalProvider(
-    LocalPopupMenuStyle provides uiState.editorSettings.editorMenuStyle,
-    LocalLiquidGlassBackdrop provides workspaceBackdrop,
-  ) {
-  val glassBackdrop = com.example.ui.theme.rememberGlassBackdrop()
+  CompositionLocalProvider(LocalPopupMenuStyle provides uiState.editorSettings.editorMenuStyle) {
   BoxWithConstraints(
     modifier = Modifier.fillMaxSize().background(palette.chromeBg),
   ) {
@@ -1236,7 +1214,7 @@ fun IdeWorkspaceScreen(
           }
           }
 
-          Row(modifier = Modifier.weight(1f).fillMaxWidth().glassSource(glassBackdrop)) {
+          Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
             if (isExpanded && uiState.projectMode == ProjectMode.CODE) {
               Box(modifier = Modifier.width(300.dp).fillMaxHeight()) {
                 projectSidebarContent()
@@ -1310,7 +1288,7 @@ fun IdeWorkspaceScreen(
                       onOpenProjectSearch = { activeIdeSheetTab = IdeCoreSheetTab.FIND_IN_FILES },
                       onRunLocalScript = { viewModel.runWorkspaceLocally(openTestWorkspace = true) },
                       onRegisterInsertHook = { hook -> insertSnippetHook = hook },
-                      onGoToDefinition = { path, text, cursor -> viewModel.goToDefinitionAtCursor(path, text.toString(), cursor) },
+                      onGoToDefinition = { path, text, cursor -> viewModel.goToDefinitionAtCursor(path, text, cursor) },
                       onRunDenoCheck = viewModel::runDenoCheckAndLint,
                       onOpenSnippetsDialog = { showSnippetsDialog = true },
                       onSetSplitViewMode = viewModel::setSplitViewMode,
@@ -1388,7 +1366,6 @@ fun IdeWorkspaceScreen(
             enter = slideInVertically(tween(200)) { it } + fadeIn(tween(180)),
             exit = slideOutVertically(tween(160)) { it } + fadeOut(tween(140)),
           ) {
-            CompositionLocalProvider(com.example.ui.theme.LocalGlassBackdrop provides glassBackdrop) {
             EdgeBottomDock(
               barStyle = editorBarStyle,
               onHideDock = { viewModel.setBottomDockHidden(true) },
@@ -1432,7 +1409,6 @@ fun IdeWorkspaceScreen(
                   ),
                 ),
             )
-            }
           }
         }
 
@@ -1893,8 +1869,10 @@ fun IdeWorkspaceScreen(
         val baseDockPad = if (uiState.isBottomDockHidden) 14.dp else dockClearanceBottom
         val floatingOverlayBottomPad = baseDockPad + editorBottomBarsClearance
 
-        LiquidGlassEmergeVisibility(
+        AnimatedVisibility(
           visible = !isFullScreenPreview && anyUiHidden,
+          enter = fadeIn(tween(180)) + slideInVertically(tween(180)) { it / 2 },
+          exit = fadeOut(tween(140)) + slideOutVertically(tween(140)) { it / 2 },
           modifier =
             Modifier
               .align(Alignment.BottomEnd)
@@ -1902,23 +1880,22 @@ fun IdeWorkspaceScreen(
                 end = 14.dp,
                 bottom = floatingOverlayBottomPad,
               ),
-        ) { emerge ->
-          val capsuleShape = RoundedCornerShape(999.dp)
+        ) {
           Row(
             modifier =
-              Modifier.liquidGlassSurface(
-                shape = capsuleShape,
-                cornerRadius = 999.dp,
-                thickness = 1.35f,
-                emergenceProgress = emerge,
-              ),
+              Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .background(palette.chromeSurface)
+                .then(
+                  if (palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED) Modifier
+                  else Modifier.edgeGlassSurface(RoundedCornerShape(999.dp), elevated = true),
+                ),
             verticalAlignment = Alignment.CenterVertically,
           ) {
             Box(
               modifier =
                 Modifier
                   .clip(RoundedCornerShape(topStart = 999.dp, bottomStart = 999.dp))
-                  .liquidGlassTouchGlow(glowColor = palette.activePillFg)
                   .clickable { viewModel.toggleAllUiChrome(false) }
                   .padding(horizontal = 12.dp, vertical = 9.dp)
                   .testTag("show_workspace_bottom_menus_button"),
@@ -1942,7 +1919,6 @@ fun IdeWorkspaceScreen(
               modifier =
                 Modifier
                   .clip(RoundedCornerShape(topEnd = 999.dp, bottomEnd = 999.dp))
-                  .liquidGlassTouchGlow(glowColor = palette.activePillFg)
                   .clickable { overflowMenuOpen = true }
                   .padding(horizontal = 10.dp, vertical = 9.dp)
                   .testTag("zen_overflow_menu_button"),
@@ -2005,74 +1981,56 @@ private fun ProjectTestModeWorkspace(
 
   Column(modifier = Modifier.fillMaxSize().background(palette.chromeBg)) {
     if (!uiState.isPreviewFullScreen) {
-      LiquidGlassIconScrubStrip(
-        itemCount = 5,
-        onCommitItem = { idx ->
-          when (idx) {
-            0 -> viewModel.toggleBottomPanel(BottomPanelTab.LOCAL_RUN)
-            1 -> viewModel.openDeployedWorkerPreview(maximizeWindow = true)
-            2 -> viewModel.openWorkerTestWindow(maximizeWindow = true)
-            3 -> viewModel.toggleBottomPanel(BottomPanelTab.API_TESTER)
-            4 -> viewModel.setPreviewFullScreen(true)
-          }
-        },
-        modifier = Modifier.fillMaxWidth().edgeGlassDock(shape = RectangleShape),
-      ) { scrubState ->
-        Row(
-          modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
-          verticalAlignment = Alignment.CenterVertically,
+      Row(
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .edgeGlassDock(shape = RectangleShape)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        IconSegmentTab(
+          icon = Icons.Outlined.Terminal,
+          label = "CLI",
+          selected = activeTab == BottomPanelTab.LOCAL_RUN,
+          tag = "test_segment_local_run",
+          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.LOCAL_RUN) },
+          modifier = Modifier.weight(1f),
+        )
+        IconSegmentTab(
+          icon = Icons.Outlined.Visibility,
+          label = "Preview",
+          selected = activeTab == BottomPanelTab.WORKER_PREVIEW,
+          tag = "test_segment_preview",
+          onClick = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
+          modifier = Modifier.weight(1f),
+        )
+        IconSegmentTab(
+          icon = Icons.Outlined.Http,
+          label = "HTTP",
+          selected = activeTab == BottomPanelTab.WORKER_TEST,
+          tag = "test_segment_worker_http",
+          onClick = { viewModel.openWorkerTestWindow(maximizeWindow = true) },
+          modifier = Modifier.weight(1f),
+        )
+        IconSegmentTab(
+          icon = Icons.Outlined.Api,
+          label = "API",
+          selected = activeTab == BottomPanelTab.API_TESTER,
+          tag = "test_segment_api_tester",
+          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.API_TESTER) },
+          modifier = Modifier.weight(1f),
+        )
+        IconButton(
+          onClick = { viewModel.setPreviewFullScreen(true) },
+          modifier = Modifier.size(32.dp).testTag("test_workspace_fullscreen_button"),
         ) {
-          IconSegmentTab(
-            icon = Icons.Outlined.Terminal,
-            label = "CLI",
-            selected = activeTab == BottomPanelTab.LOCAL_RUN,
-            tag = "test_segment_local_run",
-            onClick = { viewModel.toggleBottomPanel(BottomPanelTab.LOCAL_RUN) },
-            modifier = Modifier.weight(1f),
-            scrubState = scrubState,
-            scrubIndex = 0,
-          )
-          IconSegmentTab(
-            icon = Icons.Outlined.Visibility,
-            label = "Preview",
-            selected = activeTab == BottomPanelTab.WORKER_PREVIEW,
-            tag = "test_segment_preview",
-            onClick = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
-            modifier = Modifier.weight(1f),
-            scrubState = scrubState,
-            scrubIndex = 1,
-          )
-          IconSegmentTab(
-            icon = Icons.Outlined.Http,
-            label = "HTTP",
-            selected = activeTab == BottomPanelTab.WORKER_TEST,
-            tag = "test_segment_worker_http",
-            onClick = { viewModel.openWorkerTestWindow(maximizeWindow = true) },
-            modifier = Modifier.weight(1f),
-            scrubState = scrubState,
-            scrubIndex = 2,
-          )
-          IconSegmentTab(
-            icon = Icons.Outlined.Api,
-            label = "API",
-            selected = activeTab == BottomPanelTab.API_TESTER,
-            tag = "test_segment_api_tester",
-            onClick = { viewModel.toggleBottomPanel(BottomPanelTab.API_TESTER) },
-            modifier = Modifier.weight(1f),
-            scrubState = scrubState,
-            scrubIndex = 3,
-          )
-          IconRevealButton(
-            icon = Icons.Outlined.Fullscreen,
-            revealedLabel = "Fullscreen",
-            minimal = true,
-            height = 32.dp,
-            iconSize = 18.dp,
-            onClick = { viewModel.setPreviewFullScreen(true) },
-            tag = "test_workspace_fullscreen_button",
-            scrubState = scrubState,
-            scrubIndex = 4,
+          Icon(
+            imageVector = Icons.Outlined.Fullscreen,
+            contentDescription = "Fullscreen Preview",
+            tint = palette.textSecondary,
+            modifier = Modifier.size(18.dp),
           )
         }
       }
@@ -2206,57 +2164,43 @@ private fun ProjectConsoleModeWorkspace(
     }
 
   Column(modifier = Modifier.fillMaxSize().background(palette.chromeBg)) {
-    LiquidGlassIconScrubStrip(
-      itemCount = 3,
-      onCommitItem = { idx ->
-        when (idx) {
-          0 -> viewModel.toggleBottomPanel(BottomPanelTab.TAIL_LOGS)
-          1 -> viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS)
-          2 -> viewModel.toggleBottomPanel(BottomPanelTab.CONSOLE)
-        }
-      },
-      modifier = Modifier.fillMaxWidth().edgeGlassDock(shape = RectangleShape),
-    ) { scrubState ->
-      Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        IconSegmentTab(
-          icon = Icons.Outlined.Sensors,
-          label = "Live Tail",
-          selected = activeTab == BottomPanelTab.TAIL_LOGS,
-          tag = "console_segment_tail",
-          badgeText = if (uiState.isTailRunning) "LIVE" else null,
-          badgeColor = EmeraldLive,
-          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.TAIL_LOGS) },
-          modifier = Modifier.weight(1f),
-          scrubState = scrubState,
-          scrubIndex = 0,
-        )
-        IconSegmentTab(
-          icon = Icons.Outlined.WarningAmber,
-          label = "Problems",
-          selected = activeTab == BottomPanelTab.PROBLEMS,
-          tag = "console_segment_problems",
-          badgeText = uiState.diagnostics.size.takeIf { it > 0 }?.toString(),
-          badgeColor = AmberWarn,
-          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS) },
-          modifier = Modifier.weight(1f),
-          scrubState = scrubState,
-          scrubIndex = 1,
-        )
-        IconSegmentTab(
-          icon = Icons.Outlined.Dvr,
-          label = "Log",
-          selected = activeTab == BottomPanelTab.CONSOLE,
-          tag = "console_segment_log",
-          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.CONSOLE) },
-          modifier = Modifier.weight(1f),
-          scrubState = scrubState,
-          scrubIndex = 2,
-        )
-      }
+    Row(
+      modifier =
+        Modifier
+          .fillMaxWidth()
+          .edgeGlassDock(shape = RectangleShape)
+          .padding(horizontal = 10.dp, vertical = 6.dp),
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      IconSegmentTab(
+        icon = Icons.Outlined.Sensors,
+        label = "Live Tail",
+        selected = activeTab == BottomPanelTab.TAIL_LOGS,
+        tag = "console_segment_tail",
+        badgeText = if (uiState.isTailRunning) "LIVE" else null,
+        badgeColor = EmeraldLive,
+        onClick = { viewModel.toggleBottomPanel(BottomPanelTab.TAIL_LOGS) },
+        modifier = Modifier.weight(1f),
+      )
+      IconSegmentTab(
+        icon = Icons.Outlined.WarningAmber,
+        label = "Problems",
+        selected = activeTab == BottomPanelTab.PROBLEMS,
+        tag = "console_segment_problems",
+        badgeText = uiState.diagnostics.size.takeIf { it > 0 }?.toString(),
+        badgeColor = AmberWarn,
+        onClick = { viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS) },
+        modifier = Modifier.weight(1f),
+      )
+      IconSegmentTab(
+        icon = Icons.Outlined.Dvr,
+        label = "Log",
+        selected = activeTab == BottomPanelTab.CONSOLE,
+        tag = "console_segment_log",
+        onClick = { viewModel.toggleBottomPanel(BottomPanelTab.CONSOLE) },
+        modifier = Modifier.weight(1f),
+      )
     }
 
     HorizontalDivider(color = palette.border.copy(alpha = 0.45f))

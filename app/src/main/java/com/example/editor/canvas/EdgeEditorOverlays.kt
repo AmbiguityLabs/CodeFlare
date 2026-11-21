@@ -38,6 +38,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.CallMade
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.Add
@@ -65,7 +66,6 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -115,18 +115,9 @@ import com.example.ui.components.IconRevealButton
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
-import com.example.ui.theme.LiquidGlassEmergeVisibility
-import com.example.ui.theme.LiquidGlassScrubLensOverlay
-import com.example.ui.theme.LiquidGlassScrubState
-import com.example.ui.theme.LocalEditorSettings
 import com.example.ui.theme.LocalIconLabelBehavior
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.RoseError
-import com.example.ui.theme.liquidGlassScrubHost
-import com.example.ui.theme.liquidGlassScrubItem
-import com.example.ui.theme.liquidGlassSurface
-import com.example.ui.theme.liquidGlassTouchGlow
-import com.example.ui.theme.rememberLiquidGlassScrubState
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -331,6 +322,7 @@ fun BoxScope.EdgeStickyScrollHeader(
       modifier = Modifier.fillMaxWidth(),
     ) {
       Column(modifier = Modifier.fillMaxWidth()) {
+        val canvasAccent = palette.canvasAccent()
         Row(
           modifier =
             Modifier
@@ -346,14 +338,14 @@ fun BoxScope.EdgeStickyScrollHeader(
             text = "${sym.line}",
             fontFamily = JetBrainsMono,
             fontSize = 10.sp,
-            color = palette.textMuted,
+            color = palette.editorTextMuted,
             modifier = Modifier.widthIn(min = 22.dp),
           )
           Box(
             modifier =
               Modifier
                 .clip(RoundedCornerShape(4.dp))
-                .background(palette.activePillBg)
+                .background(canvasAccent.copy(alpha = 0.16f))
                 .padding(horizontal = 5.dp, vertical = 1.dp),
           ) {
             Text(
@@ -361,14 +353,14 @@ fun BoxScope.EdgeStickyScrollHeader(
               fontFamily = JetBrainsMono,
               fontSize = 8.5.sp,
               fontWeight = FontWeight.Bold,
-              color = palette.activePillFg,
+              color = canvasAccent,
             )
           }
           Text(
             text = lineText.trim().ifEmpty { sym.name },
             fontFamily = JetBrainsMono,
             fontSize = 11.sp,
-            color = palette.textPrimary,
+            color = palette.editorTextPrimary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
@@ -710,25 +702,22 @@ fun BoxScope.EdgeSmartHoldScopePill(
       if (desired < 8.dp.toPx()) (anchorY + 34.dp.toPx()).roundToInt() else desired.roundToInt()
     }
 
-  LiquidGlassEmergeVisibility(
+  AnimatedVisibility(
     visible = scope != null,
+    enter = fadeIn(tween(90)) + scaleIn(tween(110), initialScale = 0.92f),
+    exit = fadeOut(tween(80)),
     modifier =
       Modifier
         .align(Alignment.TopCenter)
         .offset { IntOffset(0, topOffsetPx.coerceAtLeast(8)) },
-  ) { emerge ->
-    val active = scope ?: return@LiquidGlassEmergeVisibility
-    val pillShape = RoundedCornerShape(999.dp)
-    Box(
-      modifier =
-        Modifier
-          .liquidGlassSurface(
-            shape = pillShape,
-            cornerRadius = 999.dp,
-            thickness = 1.25f,
-            emergenceProgress = emerge,
-          )
-          .testTag("editor_hold_scope_pill"),
+  ) {
+    val active = scope ?: return@AnimatedVisibility
+    Surface(
+      color = palette.glassElevated.copy(alpha = 0.96f),
+      shape = RoundedCornerShape(999.dp),
+      border = BorderStroke(1.dp, palette.ctaBg.copy(alpha = 0.45f)),
+      shadowElevation = 4.dp,
+      modifier = Modifier.testTag("editor_hold_scope_pill"),
     ) {
       Row(
         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
@@ -754,29 +743,38 @@ fun BoxScope.EdgeSmartHoldScopePill(
 }
 
 internal fun computeSelectionToolbarTopPx(
-  anchorY: Float,
+  anchorTopY: Float,
   anchorBottomY: Float,
   viewportHeightPx: Float,
-  toolbarAboveOffsetPx: Float,
-  minBelowAnchorPx: Float,
-  belowSelectionGapPx: Float,
+  toolbarHeightPx: Float,
   minTopPx: Float,
-  toolbarReserveBottomPx: Float,
-  isFullDocumentSelected: Boolean,
+  bottomClearancePx: Float,
+  gapPx: Float,
+  isAllSelected: Boolean,
 ): Int {
-  val desiredAbove = anchorY - toolbarAboveOffsetPx
-  if (desiredAbove >= minTopPx) {
-    return desiredAbove.roundToInt()
+  val safeMinTop = minTopPx.coerceAtLeast(0f)
+  val maxTop =
+    if (viewportHeightPx > 0f) {
+      (viewportHeightPx - toolbarHeightPx - bottomClearancePx).coerceAtLeast(safeMinTop)
+    } else {
+      Float.MAX_VALUE
+    }
+  if (isAllSelected) {
+    return safeMinTop.roundToInt()
   }
-  if (isFullDocumentSelected) {
-    return minTopPx.roundToInt()
+  val spansViewport = viewportHeightPx > 0f && anchorTopY < safeMinTop && anchorBottomY > maxTop
+  if (spansViewport) {
+    return safeMinTop.roundToInt()
   }
-  val belowSel = maxOf(anchorY + minBelowAnchorPx, anchorBottomY + belowSelectionGapPx)
-  val maxY =
-    if (viewportHeightPx > 0f) (viewportHeightPx - toolbarReserveBottomPx).coerceAtLeast(minTopPx)
-    else belowSel
-  // If selection extends beyond the bottom of the viewport as well, stay cleanly pinned at top instead of overlapping text
-  return if (belowSel <= maxY) belowSel.roundToInt() else minTopPx.roundToInt()
+  val above = anchorTopY - toolbarHeightPx - gapPx
+  if (above >= safeMinTop && above <= maxTop) {
+    return above.roundToInt()
+  }
+  val below = anchorBottomY + gapPx
+  if (below >= safeMinTop && below <= maxTop) {
+    return below.roundToInt()
+  }
+  return safeMinTop.roundToInt()
 }
 
 @Composable
@@ -786,10 +784,12 @@ fun BoxScope.EdgeSelectionToolbar(
   anchorBottomY: Float = anchorY,
   viewportHeightPx: Float = 0f,
   readOnly: Boolean,
-  hasClipboardHistory: Boolean,
   hasSelection: Boolean = true,
   canSelectAll: Boolean = true,
-  isFullDocumentSelected: Boolean = false,
+  isAllSelected: Boolean = false,
+  topClearancePx: Float = 0f,
+  bottomClearancePx: Float = 0f,
+  hasClipboardHistory: Boolean,
   scopeLabel: String? = null,
   canExpandScope: Boolean = false,
   canShrinkScope: Boolean = false,
@@ -811,23 +811,26 @@ fun BoxScope.EdgeSelectionToolbar(
   onSelectAll: () -> Unit,
   onComment: () -> Unit,
   onRename: () -> Unit,
+  onGoToDefinition: () -> Unit = {},
 ) {
   val palette = LocalIdePalette.current
-  val settings = LocalEditorSettings.current
   val labelBehavior = LocalIconLabelBehavior.current
   val density = LocalDensity.current
+  var measuredToolbarHeightPx by remember { mutableFloatStateOf(0f) }
   val topOffsetPx =
     with(density) {
+      val fallbackHeightPx = 38.dp.toPx()
+      val effectiveHeightPx =
+        if (measuredToolbarHeightPx > 0f) measuredToolbarHeightPx else fallbackHeightPx
       computeSelectionToolbarTopPx(
-        anchorY = anchorY,
+        anchorTopY = anchorY,
         anchorBottomY = anchorBottomY,
         viewportHeightPx = viewportHeightPx,
-        toolbarAboveOffsetPx = 46.dp.toPx(),
-        minBelowAnchorPx = 30.dp.toPx(),
-        belowSelectionGapPx = 14.dp.toPx(),
-        minTopPx = 8.dp.toPx(),
-        toolbarReserveBottomPx = 56.dp.toPx(),
-        isFullDocumentSelected = isFullDocumentSelected,
+        toolbarHeightPx = effectiveHeightPx,
+        minTopPx = 8.dp.toPx() + topClearancePx,
+        bottomClearancePx = 8.dp.toPx() + bottomClearancePx,
+        gapPx = 8.dp.toPx(),
+        isAllSelected = isAllSelected,
       )
     }
 
@@ -837,51 +840,30 @@ fun BoxScope.EdgeSelectionToolbar(
         (showScopeBadge && !scopeLabel.isNullOrBlank()) ||
         (showExpandShrink && (canExpandScope || canShrinkScope)) ||
         (showModeToggle && !readOnly))
-  val hasCodeTools = hasSelection && showCodeActions && !readOnly
-  val hasCaretQuickTools = !hasSelection && (!readOnly || canSelectAll)
-  val hasSelectionQuickTools = hasSelection && showQuickActions
-  val hasAnyControl = hasSmartTools || hasSelectionQuickTools || hasCaretQuickTools || hasCodeTools
+  val hasCollapsedActions = !hasSelection && (!readOnly || canSelectAll)
+  val hasVisibleQuickActions =
+    if (hasSelection) showQuickActions else hasCollapsedActions
+  val hasCodeTools = hasSelection && showCodeActions
+  val hasAnyControl = hasSmartTools || hasVisibleQuickActions || hasCodeTools
 
-  LiquidGlassEmergeVisibility(
+  AnimatedVisibility(
     visible = visible && hasAnyControl,
+    enter = fadeIn(tween(100)) + scaleIn(tween(100), initialScale = 0.94f),
+    exit = fadeOut(tween(80)),
     modifier =
       Modifier
         .align(Alignment.TopCenter)
         .padding(horizontal = 12.dp)
         .offset { IntOffset(0, topOffsetPx.coerceAtLeast(8)) },
-  ) { emerge ->
-    val pillShape = RoundedCornerShape(999.dp)
-    val toolbarScrubState = rememberLiquidGlassScrubState()
-    val commitHandlers = mutableListOf<() -> Unit>()
-    fun registerScrubAction(action: () -> Unit): Int {
-      val idx = commitHandlers.size
-      commitHandlers += action
-      return idx
-    }
-    val latestCommitHandlers by rememberUpdatedState(commitHandlers)
-
-    Box(
+  ) {
+    Surface(
+      color = palette.glassElevated.copy(alpha = 0.96f),
+      shape = RoundedCornerShape(999.dp),
+      border = BorderStroke(1.dp, palette.ctaBg.copy(alpha = 0.42f)),
+      shadowElevation = 6.dp,
       modifier =
         Modifier
-          .then(
-            if (settings.liquidGlassEnabled) {
-              Modifier.liquidGlassSurface(
-                shape = pillShape,
-                cornerRadius = 999.dp,
-                thickness = 1.45f,
-                emergenceProgress = emerge,
-              )
-            } else {
-              Modifier
-                .clip(pillShape)
-                .background(palette.glassElevated.copy(alpha = 0.96f), pillShape)
-            },
-          )
-          .liquidGlassScrubHost(
-            state = toolbarScrubState,
-            itemCount = latestCommitHandlers.size,
-            onCommitItem = { idx -> latestCommitHandlers.getOrNull(idx)?.invoke() },
-          )
+          .onSizeChanged { measuredToolbarHeightPx = it.height.toFloat() }
           .testTag("editor_selection_toolbar"),
     ) {
       Row(
@@ -889,7 +871,7 @@ fun BoxScope.EdgeSelectionToolbar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp),
       ) {
-        if (showDragGrip) {
+        if (hasSelection && showDragGrip) {
           Box(
             modifier =
               Modifier
@@ -931,7 +913,7 @@ fun BoxScope.EdgeSelectionToolbar(
           }
         }
 
-        if (showScopeBadge && !scopeLabel.isNullOrBlank()) {
+        if (hasSelection && showScopeBadge && !scopeLabel.isNullOrBlank()) {
           Text(
             text = scopeLabel,
             fontFamily = JetBrainsMono,
@@ -943,12 +925,11 @@ fun BoxScope.EdgeSelectionToolbar(
           )
         }
 
-        if (showExpandShrink && (canExpandScope || canShrinkScope)) {
-          val shrinkIdx = registerScrubAction { if (canShrinkScope) onShrinkScope() }
+        if (hasSelection && showExpandShrink && (canExpandScope || canShrinkScope)) {
           IconButton(
             onClick = onShrinkScope,
             enabled = canShrinkScope,
-            modifier = Modifier.liquidGlassScrubItem(toolbarScrubState, shrinkIdx).size(26.dp).testTag("sel_shrink_scope"),
+            modifier = Modifier.size(26.dp).testTag("sel_shrink_scope"),
           ) {
             Icon(
               imageVector = Icons.Outlined.Remove,
@@ -957,11 +938,10 @@ fun BoxScope.EdgeSelectionToolbar(
               modifier = Modifier.size(14.dp),
             )
           }
-          val expandIdx = registerScrubAction { if (canExpandScope) onExpandScope() }
           IconButton(
             onClick = onExpandScope,
             enabled = canExpandScope,
-            modifier = Modifier.liquidGlassScrubItem(toolbarScrubState, expandIdx).size(26.dp).testTag("sel_expand_scope"),
+            modifier = Modifier.size(26.dp).testTag("sel_expand_scope"),
           ) {
             Icon(
               imageVector = Icons.Outlined.Add,
@@ -972,10 +952,9 @@ fun BoxScope.EdgeSelectionToolbar(
           }
         }
 
-        if (showModeToggle && !readOnly) {
+        if (hasSelection && showModeToggle && !readOnly) {
           val isMove = dragMode == DragTransferMode.MOVE
           val modeTint = if (isMove) palette.ctaBg else EmeraldLive
-          val modeIdx = registerScrubAction(onToggleDragMode)
           IconRevealButton(
             icon = if (isMove) Icons.Outlined.OpenWith else Icons.Outlined.ContentCopy,
             revealedLabel = if (isMove) "Move" else "Copy",
@@ -986,12 +965,10 @@ fun BoxScope.EdgeSelectionToolbar(
             iconSize = 14.dp,
             onClick = onToggleDragMode,
             tag = "sel_drag_mode_toggle",
-            scrubState = toolbarScrubState,
-            scrubIndex = modeIdx,
           )
         }
 
-        if (hasSmartTools && hasSelectionQuickTools) {
+        if (hasSmartTools && hasVisibleQuickActions) {
           Box(
             modifier =
               Modifier
@@ -1002,35 +979,32 @@ fun BoxScope.EdgeSelectionToolbar(
           )
         }
 
-        if (hasSelectionQuickTools) {
-          val copyIdx = registerScrubAction(onCopy)
-          IconRevealButton(
-            icon = Icons.Outlined.ContentCopy,
-            revealedLabel = "Copy",
-            minimal = true,
-            contentTint = palette.textPrimary,
-            height = 28.dp,
-            iconSize = 15.dp,
-            onClick = onCopy,
-            tag = "sel_copy",
-            scrubState = toolbarScrubState,
-            scrubIndex = copyIdx,
-          )
-          if (!readOnly) {
-            val cutIdx = registerScrubAction(onCut)
+        if (hasVisibleQuickActions) {
+          if (hasSelection) {
             IconRevealButton(
-              icon = Icons.Outlined.ContentCut,
-              revealedLabel = "Cut",
+              icon = Icons.Outlined.ContentCopy,
+              revealedLabel = "Copy",
               minimal = true,
               contentTint = palette.textPrimary,
               height = 28.dp,
               iconSize = 15.dp,
-              onClick = onCut,
-              tag = "sel_cut",
-              scrubState = toolbarScrubState,
-              scrubIndex = cutIdx,
+              onClick = onCopy,
+              tag = "sel_copy",
             )
-            val pasteIdx = registerScrubAction(onPaste)
+            if (!readOnly) {
+              IconRevealButton(
+                icon = Icons.Outlined.ContentCut,
+                revealedLabel = "Cut",
+                minimal = true,
+                contentTint = palette.textPrimary,
+                height = 28.dp,
+                iconSize = 15.dp,
+                onClick = onCut,
+                tag = "sel_cut",
+              )
+            }
+          }
+          if (!readOnly) {
             IconRevealButton(
               icon = Icons.Outlined.ContentPaste,
               revealedLabel = "Paste",
@@ -1040,11 +1014,8 @@ fun BoxScope.EdgeSelectionToolbar(
               iconSize = 15.dp,
               onClick = onPaste,
               tag = "sel_paste",
-              scrubState = toolbarScrubState,
-              scrubIndex = pasteIdx,
             )
             if (hasClipboardHistory) {
-              val historyIdx = registerScrubAction(onOpenPasteHistory)
               IconRevealButton(
                 icon = Icons.Outlined.History,
                 revealedLabel = "History",
@@ -1054,61 +1025,10 @@ fun BoxScope.EdgeSelectionToolbar(
                 iconSize = 15.dp,
                 onClick = onOpenPasteHistory,
                 tag = "sel_paste_history",
-                scrubState = toolbarScrubState,
-                scrubIndex = historyIdx,
-              )
-            }
-          }
-          if (canSelectAll && !isFullDocumentSelected) {
-            val selectAllIdx = registerScrubAction(onSelectAll)
-            IconRevealButton(
-              icon = Icons.Outlined.SelectAll,
-              revealedLabel = "All",
-              minimal = true,
-              contentTint = palette.textPrimary,
-              height = 28.dp,
-              iconSize = 15.dp,
-              onClick = onSelectAll,
-              tag = "sel_all",
-              scrubState = toolbarScrubState,
-              scrubIndex = selectAllIdx,
-            )
-          }
-        } else if (hasCaretQuickTools) {
-          if (!readOnly) {
-            val pasteIdx = registerScrubAction(onPaste)
-            IconRevealButton(
-              icon = Icons.Outlined.ContentPaste,
-              revealedLabel = "Paste",
-              minimal = true,
-              active = true,
-              contentTint = palette.activePillFg,
-              height = 28.dp,
-              iconSize = 15.dp,
-              labelBehaviorOverride = IconLabelBehavior.ALWAYS_SHOW,
-              onClick = onPaste,
-              tag = "sel_paste",
-              scrubState = toolbarScrubState,
-              scrubIndex = pasteIdx,
-            )
-            if (hasClipboardHistory) {
-              val historyIdx = registerScrubAction(onOpenPasteHistory)
-              IconRevealButton(
-                icon = Icons.Outlined.History,
-                revealedLabel = "History",
-                minimal = true,
-                contentTint = palette.textPrimary,
-                height = 28.dp,
-                iconSize = 15.dp,
-                onClick = onOpenPasteHistory,
-                tag = "sel_paste_history",
-                scrubState = toolbarScrubState,
-                scrubIndex = historyIdx,
               )
             }
           }
           if (canSelectAll) {
-            val selectAllIdx = registerScrubAction(onSelectAll)
             IconRevealButton(
               icon = Icons.Outlined.SelectAll,
               revealedLabel = "All",
@@ -1118,14 +1038,12 @@ fun BoxScope.EdgeSelectionToolbar(
               iconSize = 15.dp,
               onClick = onSelectAll,
               tag = "sel_all",
-              scrubState = toolbarScrubState,
-              scrubIndex = selectAllIdx,
             )
           }
         }
 
         if (hasCodeTools) {
-          if (hasSmartTools || hasSelectionQuickTools) {
+          if (hasSmartTools || hasVisibleQuickActions) {
             Box(
               modifier =
                 Modifier
@@ -1135,57 +1053,43 @@ fun BoxScope.EdgeSelectionToolbar(
                   .background(palette.border.copy(alpha = 0.65f)),
             )
           }
-          val commentIdx = registerScrubAction(onComment)
-          ToolbarSlashButton(
-            onClick = onComment,
-            tag = "sel_comment",
-            scrubState = toolbarScrubState,
-            scrubIndex = commentIdx,
-          )
-          val renameIdx = registerScrubAction(onRename)
+          if (!readOnly) {
+            ToolbarSlashButton(onClick = onComment, tag = "sel_comment")
+            IconRevealButton(
+              icon = Icons.Outlined.DriveFileRenameOutline,
+              revealedLabel = "Rename",
+              minimal = true,
+              contentTint = palette.textPrimary,
+              height = 28.dp,
+              iconSize = 15.dp,
+              onClick = onRename,
+              tag = "sel_rename",
+            )
+          }
           IconRevealButton(
-            icon = Icons.Outlined.DriveFileRenameOutline,
-            revealedLabel = "Rename",
+            icon = Icons.AutoMirrored.Outlined.CallMade,
+            revealedLabel = "Def",
             minimal = true,
-            contentTint = palette.textPrimary,
+            contentTint = palette.activePillFg,
             height = 28.dp,
             iconSize = 15.dp,
-            onClick = onRename,
-            tag = "sel_rename",
-            scrubState = toolbarScrubState,
-            scrubIndex = renameIdx,
+            onClick = onGoToDefinition,
+            tag = "sel_go_to_def",
           )
         }
       }
-
-      LiquidGlassScrubLensOverlay(
-        state = toolbarScrubState,
-        cornerRadius = 999.dp,
-        thickness = 1.45f,
-        modifier = Modifier.matchParentSize(),
-      )
     }
   }
 }
 
 @Composable
-private fun ToolbarSlashButton(
-  onClick: () -> Unit,
-  tag: String,
-  scrubState: LiquidGlassScrubState? = null,
-  scrubIndex: Int = -1,
-) {
+private fun ToolbarSlashButton(onClick: () -> Unit, tag: String) {
   val palette = LocalIdePalette.current
-  val scrubHovered = scrubState != null && scrubIndex >= 0 && scrubState.isItemScrubHovered(scrubIndex)
   Surface(
     onClick = onClick,
     shape = RoundedCornerShape(7.dp),
-    color = if (scrubHovered) palette.activePillBg.copy(alpha = 0.45f) else Color.Transparent,
-    modifier =
-      Modifier
-        .then(if (scrubState != null && scrubIndex >= 0) Modifier.liquidGlassScrubItem(scrubState, scrubIndex) else Modifier)
-        .height(26.dp)
-        .testTag(tag),
+    color = Color.Transparent,
+    modifier = Modifier.height(26.dp).testTag(tag),
   ) {
     Box(
       modifier = Modifier.padding(horizontal = 7.dp),
@@ -1196,7 +1100,7 @@ private fun ToolbarSlashButton(
         fontFamily = JetBrainsMono,
         fontSize = 11.sp,
         fontWeight = FontWeight.Bold,
-        color = if (scrubHovered) palette.activePillFg else palette.textSecondary,
+        color = palette.textSecondary,
       )
     }
   }
@@ -1211,33 +1115,19 @@ fun BoxScope.EdgePasteHistoryPopup(
   onDismiss: () -> Unit,
 ) {
   val palette = LocalIdePalette.current
-  val settings = LocalEditorSettings.current
   val entries = ClipboardHistoryStore.entries
-  LiquidGlassEmergeVisibility(
+  AnimatedVisibility(
     visible = visible,
+    enter = fadeIn(tween(110)) + scaleIn(tween(110), initialScale = 0.95f),
+    exit = fadeOut(tween(90)),
     modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp, vertical = 8.dp),
-  ) { emerge ->
-    val popupShape = RoundedCornerShape(16.dp)
-    Box(
-      modifier =
-        Modifier
-          .fillMaxWidth()
-          .widthIn(max = 360.dp)
-          .then(
-            if (settings.liquidGlassEnabled) {
-              Modifier.liquidGlassSurface(
-                shape = popupShape,
-                cornerRadius = 16.dp,
-                thickness = 1.65f,
-                emergenceProgress = emerge,
-              )
-            } else {
-              Modifier
-                .clip(popupShape)
-                .background(palette.chromeSurface, popupShape)
-            },
-          )
-          .testTag("editor_paste_history_popup"),
+  ) {
+    Surface(
+      color = palette.chromeSurface,
+      shape = RoundedCornerShape(12.dp),
+      border = BorderStroke(0.75.dp, palette.border.copy(alpha = 0.8f)),
+      shadowElevation = 8.dp,
+      modifier = Modifier.fillMaxWidth().widthIn(max = 360.dp).testTag("editor_paste_history_popup"),
     ) {
       Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -1259,7 +1149,7 @@ fun BoxScope.EdgePasteHistoryPopup(
             fontSize = 10.sp,
             color = palette.textMuted,
           )
-          IconButton(onClick = onDismiss, modifier = Modifier.size(26.dp).liquidGlassTouchGlow()) {
+          IconButton(onClick = onDismiss, modifier = Modifier.size(26.dp)) {
             Icon(Icons.Outlined.Close, contentDescription = "Close", tint = palette.textMuted, modifier = Modifier.size(14.dp))
           }
         }
@@ -1276,7 +1166,6 @@ fun BoxScope.EdgePasteHistoryPopup(
                 modifier =
                   Modifier
                     .fillMaxWidth()
-                    .liquidGlassTouchGlow()
                     .clickable {
                       onSelectClip(clip)
                       onDismiss()
