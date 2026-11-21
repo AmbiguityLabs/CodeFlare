@@ -81,6 +81,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import com.example.ui.theme.glassSource
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -770,7 +771,7 @@ fun HomeScreen(
         transitionSpec = {
           fadeIn(tween(180)) togetherWith fadeOut(tween(130))
         },
-        modifier = Modifier.fillMaxSize().then(com.example.ui.theme.run { Modifier.glassSource(glassBackdrop) }),
+        modifier = Modifier.fillMaxSize().glassSource(glassBackdrop),
         label = "home_tab_content",
       ) { tab ->
         when (tab) {

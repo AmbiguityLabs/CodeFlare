@@ -101,6 +101,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import com.example.ui.theme.glassSource
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -1235,7 +1236,7 @@ fun IdeWorkspaceScreen(
           }
           }
 
-          Row(modifier = Modifier.weight(1f).fillMaxWidth().then(com.example.ui.theme.run { Modifier.glassSource(glassBackdrop) })) {
+          Row(modifier = Modifier.weight(1f).fillMaxWidth().glassSource(glassBackdrop)) {
             if (isExpanded && uiState.projectMode == ProjectMode.CODE) {
               Box(modifier = Modifier.width(300.dp).fillMaxHeight()) {
                 projectSidebarContent()
