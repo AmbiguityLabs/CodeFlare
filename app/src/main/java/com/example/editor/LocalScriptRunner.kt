@@ -150,10 +150,52 @@ object LocalScriptRunner {
         JSONObject()
           .put("name", b.name)
           .put("type", b.type)
-          .put("text", b.text.orEmpty()),
+          .put("text", b.text.orEmpty())
+          .apply {
+            b.className?.takeIf { it.isNotBlank() }?.let { put("className", it) }
+            b.scriptName?.takeIf { it.isNotBlank() }?.let { put("scriptName", it) }
+            b.queueName?.takeIf { it.isNotBlank() }?.let { put("queueName", it) }
+            b.service?.takeIf { it.isNotBlank() }?.let { put("service", it) }
+            b.environment?.takeIf { it.isNotBlank() }?.let { put("environment", it) }
+          },
       )
     }
     return arr.toString()
+  }
+
+  fun synthesizeDenoImportMapJson(files: List<WorkerFile>): String? {
+    val editable = files.filter { !it.isVirtualReadOnly }
+    val hasExplicitDenoConfig =
+      editable.any {
+        val norm = it.path.trimStart('/').replace('\\', '/')
+        norm == "deno.json" || norm == "deno.jsonc"
+      }
+    if (hasExplicitDenoConfig) return null
+
+    val pkgFile =
+      editable.firstOrNull { it.path.trimStart('/').replace('\\', '/') == "package.json" }
+        ?: return null
+    val pkgJson = runCatching { JSONObject(pkgFile.content) }.getOrNull() ?: return null
+    val importsObj = JSONObject()
+    listOf("dependencies", "devDependencies").forEach { section ->
+      val deps = pkgJson.optJSONObject(section) ?: return@forEach
+      val keys = deps.keys()
+      while (keys.hasNext()) {
+        val pkgName = keys.next().trim()
+        val version = deps.optString(pkgName).trim()
+        if (pkgName.isEmpty() || version.isEmpty() || version.startsWith("workspace:") || version.startsWith("file:")) {
+          continue
+        }
+        val cleanVer = version.removePrefix("npm:").trim()
+        val spec = if (cleanVer.isNotEmpty() && cleanVer != "*") "npm:$pkgName@$cleanVer" else "npm:$pkgName"
+        if (!importsObj.has(pkgName)) {
+          importsObj.put(pkgName, spec)
+          importsObj.put("$pkgName/", "$spec/")
+        }
+      }
+    }
+    if (importsObj.length() == 0) return null
+    return JSONObject().put("imports", importsObj).toString(2)
   }
 
   fun stageWorkspaceFiles(
@@ -176,6 +218,13 @@ object LocalScriptRunner {
       val targetCanonical = runCatching { target.canonicalFile }.getOrNull() ?: return@forEach
       if (!targetCanonical.path.startsWith(rootBoundary)) return@forEach
       desiredFiles[targetCanonical] = wf.content
+    }
+
+    synthesizeDenoImportMapJson(files)?.let { importMapContent ->
+      val denoCfg = File(workspaceDir, "deno.json").canonicalFile
+      if (denoCfg.path.startsWith(rootBoundary) && denoCfg !in desiredFiles) {
+        desiredFiles[denoCfg] = importMapContent
+      }
     }
 
     // Remove stale workspace files from earlier runs (keep .edgecode_runner intact for incremental sync)

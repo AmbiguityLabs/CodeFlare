@@ -6,6 +6,11 @@ interface BindingSpec {
   name: string;
   type: string;
   text?: string;
+  className?: string;
+  scriptName?: string;
+  queueName?: string;
+  service?: string;
+  environment?: string;
 }
 
 type FetchListener = (event: {
@@ -748,11 +753,65 @@ function createPersistentD1(bindingName: string) {
     return Object.values(db.tables).find((t) => t.name.toLowerCase() === clean);
   };
 
-  const executeSingle = (rawSql: string, params: unknown[]) => {
+  const executeSingle = (
+    rawSql: string,
+    params: unknown[],
+    cteTables: Map<string, Array<Record<string, unknown>>> = new Map(),
+  ): { results: Array<Record<string, unknown>>; success: boolean; meta: Record<string, unknown> } => {
     const started = performance.now();
-    const sql = rawSql.trim().replace(/;+\s*$/, "");
+    let sql = rawSql.trim().replace(/;+\s*$/, "");
     if (!sql) {
       return { results: [] as Record<string, unknown>[], success: true, meta: { duration: 0, changes: 0, last_row_id: 0 } };
+    }
+
+    // Materialize CTEs: WITH cte1 [(cols)] AS (...), cte2 AS (...) SELECT ...
+    if (/^WITH\s+/i.test(sql)) {
+      const localCtes = new Map(cteTables);
+      let idx = sql.replace(/^WITH\s+(?:RECURSIVE\s+)?/i, "");
+      while (idx.length > 0) {
+        const hdr = /^([A-Za-z_][A-Za-z0-9_]*|"[^"]+"|`[^`]+`)(?:\s*\(([^)]*)\))?\s+AS\s*\(/i.exec(idx);
+        if (!hdr) break;
+        const cteName = unquoteIdent(hdr[1]).toLowerCase();
+        const colAliases = hdr[2] ? splitSqlList(hdr[2]).map((c) => unquoteIdent(c)) : null;
+        let pos = hdr[0].length;
+        let depth = 1;
+        let inSingle = false;
+        while (pos < idx.length && depth > 0) {
+          const ch = idx[pos];
+          if (ch === "'") {
+            if (inSingle && idx[pos + 1] === "'") pos += 2;
+            else { inSingle = !inSingle; pos++; }
+            continue;
+          }
+          if (!inSingle) {
+            if (ch === "(") depth++;
+            else if (ch === ")") depth--;
+          }
+          pos++;
+        }
+        if (depth !== 0) break;
+        const innerSql = idx.slice(hdr[0].length, pos - 1).trim();
+        const cteRes = executeSingle(innerSql, params, localCtes);
+        const materialized = colAliases
+          ? cteRes.results.map((row) => {
+              const vals = Object.values(row);
+              const mapped: Record<string, unknown> = {};
+              colAliases.forEach((alias, i) => { mapped[alias] = vals[i] ?? null; });
+              return mapped;
+            })
+          : cteRes.results;
+        localCtes.set(cteName, materialized);
+        const rest = idx.slice(pos).trimStart();
+        if (rest.startsWith(",")) {
+          idx = rest.slice(1).trimStart();
+        } else {
+          sql = rest;
+          break;
+        }
+      }
+      if (sql !== rawSql.trim().replace(/;+\s*$/, "")) {
+        return executeSingle(sql, params, localCtes);
+      }
     }
 
     // PRAGMA table_info('tbl')
@@ -982,9 +1041,9 @@ function createPersistentD1(bindingName: string) {
       return { results, success: true, meta: { duration: performance.now() - started, changes: removed.length } };
     }
 
-    // SELECT [DISTINCT] cols FROM tbl [WHERE ...] [ORDER BY ...] [LIMIT ...] [OFFSET ...]
+    // SELECT [DISTINCT] cols FROM tbl [WHERE ...] [GROUP BY ...] [ORDER BY ...] [LIMIT ...] [OFFSET ...]
     const selectMatch =
-      /^SELECT\s+(?:(DISTINCT)\s+)?([\s\S]+?)\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+([\s\S]+?))?(?:\s+ORDER\s+BY\s+([\s\S]+?))?(?:\s+LIMIT\s+([^\s]+))?(?:\s+OFFSET\s+([^\s]+))?$/i.exec(
+      /^SELECT\s+(?:(DISTINCT)\s+)?([\s\S]+?)\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+([\s\S]+?))?(?:\s+GROUP\s+BY\s+([\s\S]+?))?(?:\s+ORDER\s+BY\s+([\s\S]+?))?(?:\s+LIMIT\s+([^\s]+))?(?:\s+OFFSET\s+([^\s]+))?$/i.exec(
         sql,
       );
     if (selectMatch) {
@@ -993,12 +1052,16 @@ function createPersistentD1(bindingName: string) {
       const tableName = unquoteIdent(selectMatch[3]);
       const cursor: ExprCursor = { params, nextParam: 0 };
       const predicate = selectMatch[4] ? evalWhere(selectMatch[4], cursor) : () => true;
-      const orderRaw = selectMatch[5]?.trim();
-      const limitVal = selectMatch[6] ? Number(parseValueToken(selectMatch[6], cursor)) : undefined;
-      const offsetVal = selectMatch[7] ? Number(parseValueToken(selectMatch[7], cursor)) : 0;
+      const groupByRaw = selectMatch[5]?.trim();
+      const orderRaw = selectMatch[6]?.trim();
+      const limitVal = selectMatch[7] ? Number(parseValueToken(selectMatch[7], cursor)) : undefined;
+      const offsetVal = selectMatch[8] ? Number(parseValueToken(selectMatch[8], cursor)) : 0;
 
       let sourceRows: Array<Record<string, unknown>>;
-      if (tableName.toLowerCase() === "sqlite_master" || tableName.toLowerCase() === "sqlite_schema") {
+      const cteHit = cteTables.get(tableName.toLowerCase());
+      if (cteHit) {
+        sourceRows = cteHit;
+      } else if (tableName.toLowerCase() === "sqlite_master" || tableName.toLowerCase() === "sqlite_schema") {
         sourceRows = Object.values(db.tables).map((t) => ({
           type: "table",
           name: t.name,
@@ -1013,6 +1076,54 @@ function createPersistentD1(bindingName: string) {
       }
 
       let rows = sourceRows.filter(predicate).map((r) => ({ ...r }));
+      const selectParts = splitSqlList(colsExpr);
+
+      const evalAggFn = (fn: string, arg: string, groupRows: Array<Record<string, unknown>>): unknown => {
+        if (fn === "COUNT") {
+          return arg === "*"
+            ? groupRows.length
+            : groupRows.filter((r) => r[unquoteIdent(arg)] !== null && r[unquoteIdent(arg)] !== undefined).length;
+        }
+        const vals = groupRows.map((r) => Number(r[unquoteIdent(arg)])).filter((n) => !Number.isNaN(n));
+        if (vals.length === 0) return null;
+        if (fn === "SUM") return vals.reduce((acc, x) => acc + x, 0);
+        if (fn === "AVG") return vals.reduce((acc, x) => acc + x, 0) / vals.length;
+        if (fn === "MIN") return Math.min(...vals);
+        if (fn === "MAX") return Math.max(...vals);
+        return null;
+      };
+
+      let alreadyProjected = false;
+      if (groupByRaw) {
+        const groupCols = splitSqlList(groupByRaw).map((g) => unquoteIdent(g));
+        const buckets = new Map<string, Array<Record<string, unknown>>>();
+        for (const r of rows) {
+          const key = JSON.stringify(groupCols.map((c) => r[c] ?? null));
+          const bucket = buckets.get(key);
+          if (bucket) bucket.push(r);
+          else buckets.set(key, [r]);
+        }
+        const aggRe = /^(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*([^)]+)\s*\)(?:\s+AS\s+(.+))?$/i;
+        rows = Array.from(buckets.values()).map((bucket) => {
+          const first = bucket[0] ?? {};
+          if (colsExpr === "*") return { ...first };
+          const out: Record<string, unknown> = {};
+          for (const part of selectParts) {
+            const am = aggRe.exec(part);
+            if (am) {
+              const alias = am[3] ? unquoteIdent(am[3]) : part.replace(/\s+/g, "");
+              out[alias] = evalAggFn(am[1].toUpperCase(), am[2].trim(), bucket);
+            } else {
+              const asMatch = /^(.+?)\s+AS\s+(.+)$/i.exec(part);
+              const src = unquoteIdent(asMatch ? asMatch[1] : part);
+              const alias = unquoteIdent(asMatch ? asMatch[2] : part);
+              out[alias] = first[src] ?? null;
+            }
+          }
+          return out;
+        });
+        alreadyProjected = true;
+      }
 
       if (orderRaw) {
         const orderSpecs = splitSqlList(orderRaw).map((part) => {
@@ -1028,30 +1139,17 @@ function createPersistentD1(bindingName: string) {
         });
       }
 
-      // Check aggregate functions
-      const selectParts = splitSqlList(colsExpr);
+      // Check aggregate functions (ungrouped single-row aggregate)
       const aggMatch =
-        selectParts.length === 1
+        !groupByRaw && selectParts.length === 1
           ? /^(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*([^)]+)\s*\)(?:\s+AS\s+(.+))?$/i.exec(selectParts[0])
           : null;
       if (aggMatch) {
         const fn = aggMatch[1].toUpperCase();
         const arg = aggMatch[2].trim();
         const alias = aggMatch[3] ? unquoteIdent(aggMatch[3]) : selectParts[0].replace(/\s+/g, "");
-        let aggVal: unknown = null;
-        if (fn === "COUNT") {
-          aggVal = arg === "*" ? rows.length : rows.filter((r) => r[unquoteIdent(arg)] !== null && r[unquoteIdent(arg)] !== undefined).length;
-        } else {
-          const vals = rows.map((r) => Number(r[unquoteIdent(arg)])).filter((n) => !Number.isNaN(n));
-          if (vals.length > 0) {
-            if (fn === "SUM") aggVal = vals.reduce((acc, x) => acc + x, 0);
-            else if (fn === "AVG") aggVal = vals.reduce((acc, x) => acc + x, 0) / vals.length;
-            else if (fn === "MIN") aggVal = Math.min(...vals);
-            else if (fn === "MAX") aggVal = Math.max(...vals);
-          }
-        }
         return {
-          results: [{ [alias]: aggVal }],
+          results: [{ [alias]: evalAggFn(fn, arg, rows) }],
           success: true,
           meta: { duration: performance.now() - started, changes: 0 },
         };
@@ -1061,7 +1159,7 @@ function createPersistentD1(bindingName: string) {
         rows = rows.slice(offsetVal, limitVal !== undefined ? offsetVal + limitVal : undefined);
       }
 
-      if (colsExpr !== "*") {
+      if (!alreadyProjected && colsExpr !== "*") {
         const projections = selectParts.map((part) => {
           const asMatch = /^(.+?)\s+AS\s+(.+)$/i.exec(part);
           if (asMatch) return { src: unquoteIdent(asMatch[1]), out: unquoteIdent(asMatch[2]) };
@@ -1131,7 +1229,238 @@ function createPersistentD1(bindingName: string) {
   };
 }
 
-function createEnv(bindings: BindingSpec[]): Record<string, unknown> {
+type LoadedWorkerModuleRef = {
+  mod: Record<string, unknown> | null;
+  env: Record<string, unknown>;
+};
+
+function createPersistentQueue(spec: BindingSpec, modRef: LoadedWorkerModuleRef) {
+  const queueName = spec.queueName || spec.name;
+  const qDir = stateDir ? `${stateDir}/queues` : "";
+  const qFile = qDir ? `${qDir}/${safeId(queueName)}.json` : "";
+  if (qDir) ensureDir(qDir);
+
+  type QueuedMsg = { id: string; timestamp: string; body: unknown; contentType: string; attempts: number };
+
+  const readMessages = (): QueuedMsg[] => {
+    if (!qFile) return [];
+    const parsed = readJsonFile<unknown>(qFile, []);
+    return Array.isArray(parsed) ? (parsed as QueuedMsg[]) : [];
+  };
+
+  const appendMessages = async (items: Array<{ body: unknown; contentType?: string }>) => {
+    const nowIso = new Date().toISOString();
+    const added: QueuedMsg[] = items.map((it) => ({
+      id: typeof crypto?.randomUUID === "function" ? crypto.randomUUID() : hashKeyHex(`${Date.now()}-${Math.random()}`),
+      timestamp: nowIso,
+      body: it.body,
+      contentType: it.contentType || (typeof it.body === "string" ? "text" : "json"),
+      attempts: 1,
+    }));
+    if (qFile) {
+      const existing = readMessages();
+      writeJsonFile(qFile, [...existing.slice(-200), ...added]);
+    }
+
+    const handler =
+      (modRef.mod?.default as Record<string, unknown> | undefined)?.queue ??
+      modRef.mod?.queue;
+    if (typeof handler === "function") {
+      const batch = {
+        queue: queueName,
+        messages: added.map((m) => ({
+          id: m.id,
+          timestamp: new Date(m.timestamp),
+          body: m.body,
+          attempts: m.attempts,
+          ack: () => {},
+          retry: () => {},
+        })),
+        ackAll: () => {},
+        retryAll: () => {},
+      };
+      const ctx = makeExecutionContext();
+      await (handler as (b: unknown, e: unknown, c: unknown) => Promise<unknown>)(batch, modRef.env, ctx);
+      await ctx.flush();
+    }
+    return added;
+  };
+
+  return {
+    send: async (body: unknown, opts?: { contentType?: string }) => {
+      await appendMessages([{ body, contentType: opts?.contentType }]);
+    },
+    sendBatch: async (messages: Iterable<{ body: unknown; contentType?: string }>) => {
+      await appendMessages(Array.from(messages));
+    },
+  };
+}
+
+function createPersistentDurableObjectNamespace(spec: BindingSpec, modRef: LoadedWorkerModuleRef) {
+  const nsDir = stateDir ? `${stateDir}/do/${safeId(spec.className || spec.name)}` : "";
+  if (nsDir) ensureDir(nsDir);
+
+  const createDoStorage = (idStr: string) => {
+    const file = nsDir ? `${nsDir}/${safeId(idStr)}.json` : "";
+    let data: Record<string, unknown> = {};
+    let alarmAtMs: number | null = null;
+    if (file) {
+      const parsed = readJsonFile<{ data?: Record<string, unknown>; alarmAtMs?: number } | null>(file, null);
+      if (parsed && typeof parsed === "object") {
+        data = parsed.data && typeof parsed.data === "object" ? parsed.data : {};
+        alarmAtMs = typeof parsed.alarmAtMs === "number" ? parsed.alarmAtMs : null;
+      }
+    }
+    const flush = () => {
+      if (file) writeJsonFile(file, { data, alarmAtMs });
+    };
+
+    const storage = {
+      get: async (keyOrKeys: string | string[]) => {
+        if (Array.isArray(keyOrKeys)) {
+          const out = new Map<string, unknown>();
+          for (const k of keyOrKeys) {
+            if (k in data) out.set(k, data[k]);
+          }
+          return out;
+        }
+        return keyOrKeys in data ? data[keyOrKeys] : undefined;
+      },
+      put: async (keyOrEntries: string | Record<string, unknown>, value?: unknown) => {
+        if (typeof keyOrEntries === "string") {
+          data[keyOrEntries] = value;
+        } else if (keyOrEntries && typeof keyOrEntries === "object") {
+          Object.assign(data, keyOrEntries);
+        }
+        flush();
+      },
+      delete: async (keyOrKeys: string | string[]) => {
+        if (Array.isArray(keyOrKeys)) {
+          let count = 0;
+          for (const k of keyOrKeys) {
+            if (k in data) { delete data[k]; count++; }
+          }
+          if (count > 0) flush();
+          return count;
+        }
+        const existed = keyOrKeys in data;
+        if (existed) {
+          delete data[keyOrKeys];
+          flush();
+        }
+        return existed;
+      },
+      deleteAll: async () => {
+        data = {};
+        alarmAtMs = null;
+        flush();
+      },
+      list: async (opts?: { prefix?: string; limit?: number; reverse?: boolean }) => {
+        const prefix = opts?.prefix ?? "";
+        let keys = Object.keys(data).filter((k) => k.startsWith(prefix)).sort();
+        if (opts?.reverse) keys.reverse();
+        if (opts?.limit !== undefined) keys = keys.slice(0, Math.max(0, opts.limit));
+        const map = new Map<string, unknown>();
+        for (const k of keys) map.set(k, data[k]);
+        return map;
+      },
+      getAlarm: async () => alarmAtMs,
+      setAlarm: async (scheduledTime: number | Date) => {
+        alarmAtMs = scheduledTime instanceof Date ? scheduledTime.getTime() : Number(scheduledTime);
+        flush();
+      },
+      deleteAlarm: async () => {
+        alarmAtMs = null;
+        flush();
+      },
+      transaction: async <T>(closure: (txn: unknown) => Promise<T>) => closure(storage),
+      sync: async () => { flush(); },
+    };
+    return storage;
+  };
+
+  const instances = new Map<string, unknown>();
+  const makeIdObj = (hex: string, name?: string) => ({
+    toString: () => hex,
+    equals: (other: { toString(): string }) => other?.toString() === hex,
+    name,
+  });
+
+  return {
+    idFromName: (name: string) => makeIdObj(hashKeyHex(`${spec.name}:${name}`), name),
+    idFromString: (id: string) => makeIdObj(String(id)),
+    newUniqueId: () => makeIdObj(hashKeyHex(`${spec.name}:${Date.now()}:${Math.random()}`)),
+    get: (id: { toString(): string; name?: string } | string) => {
+      const idStr = typeof id === "string" ? id : id.toString();
+      const idObj = typeof id === "string" ? makeIdObj(idStr) : id;
+      return {
+        id: idObj,
+        name: typeof id === "string" ? undefined : id.name,
+        fetch: async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+          const req = input instanceof Request ? input : new Request(typeof input === "string" ? input : input.toString(), init);
+          const className = spec.className;
+          const DoCtor = className ? modRef.mod?.[className] : undefined;
+          if (typeof DoCtor === "function") {
+            let inst = instances.get(idStr) as { fetch?: (r: Request) => Promise<Response> | Response } | undefined;
+            if (!inst) {
+              const state = {
+                id: idObj,
+                storage: createDoStorage(idStr),
+                waitUntil: (p: Promise<unknown>) => { void Promise.resolve(p); },
+                blockConcurrencyWhile: async <T>(fn: () => Promise<T>) => fn(),
+                acceptWebSocket: () => {},
+                getWebSockets: () => [],
+              };
+              inst = new (DoCtor as new (s: unknown, e: unknown) => { fetch?: (r: Request) => Promise<Response> | Response })(state, modRef.env);
+              instances.set(idStr, inst);
+            }
+            if (typeof inst.fetch === "function") {
+              return await inst.fetch(req);
+            }
+          }
+          return Response.json(
+            {
+              localDurableObject: spec.name,
+              className: className ?? null,
+              id: idStr,
+              note: className
+                ? `Exported Durable Object class '${className}' was not found on module; using fallback stub.`
+                : "No class_name configured for Durable Object binding.",
+            },
+            { status: 501 },
+          );
+        },
+      };
+    },
+  };
+}
+
+function createServiceBindingStub(spec: BindingSpec, modRef: LoadedWorkerModuleRef) {
+  return {
+    fetch: async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const req = input instanceof Request ? input : new Request(typeof input === "string" ? input : input.toString(), init);
+      const localFetch = (modRef.mod?.default as Record<string, unknown> | undefined)?.fetch ?? modRef.mod?.fetch;
+      if (spec.service && spec.service === modRef.env.__EDGECODE_SCRIPT_NAME && typeof localFetch === "function") {
+        const ctx = makeExecutionContext();
+        const res = await (localFetch as (r: Request, e: unknown, c: unknown) => Promise<Response>)(req, modRef.env, ctx);
+        await ctx.flush();
+        return res;
+      }
+      return Response.json(
+        {
+          error: "SERVICE_BINDING_UNAVAILABLE_LOCALLY",
+          binding: spec.name,
+          targetService: spec.service ?? null,
+          environment: spec.environment ?? null,
+          url: req.url,
+        },
+        { status: 501 },
+      );
+    },
+  };
+}
+
+function createEnv(bindings: BindingSpec[], modRef: LoadedWorkerModuleRef): Record<string, unknown> {
   const env: Record<string, unknown> = {};
   for (const b of bindings) {
     if (!b || !b.name) continue;
@@ -1149,6 +1478,12 @@ function createEnv(bindings: BindingSpec[]): Record<string, unknown> {
       env[b.name] = createPersistentR2(b.name);
     } else if (b.type === "d1") {
       env[b.name] = createPersistentD1(b.name);
+    } else if (b.type === "queue") {
+      env[b.name] = createPersistentQueue(b, modRef);
+    } else if (b.type === "durable_object_namespace") {
+      env[b.name] = createPersistentDurableObjectNamespace(b, modRef);
+    } else if (b.type === "service") {
+      env[b.name] = createServiceBindingStub(b, modRef);
     } else {
       env[b.name] = {};
     }
@@ -1524,7 +1859,9 @@ async function main() {
   } catch {
     parsedBindings = [];
   }
-  const env = createEnv(parsedBindings);
+  const modRef: LoadedWorkerModuleRef = { mod: null, env: {} };
+  const env = createEnv(parsedBindings, modRef);
+  modRef.env = env;
 
   if (evalSnippet.trim().length > 0) {
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
@@ -1548,12 +1885,16 @@ async function main() {
   }
 
   const mod = await import(toFileUrl(entryFile));
+  modRef.mod = (mod && typeof mod === "object" ? mod : null) as Record<string, unknown> | null;
 
   let workerFetch:
     | ((req: Request, env: Record<string, unknown>, ctx: ReturnType<typeof makeExecutionContext>) => Response | Promise<Response>)
     | null = null;
   let workerScheduled:
     | ((ctrl: ScheduledController, env: Record<string, unknown>, ctx: ReturnType<typeof makeExecutionContext>) => unknown)
+    | null = null;
+  let workerQueue:
+    | ((batch: unknown, env: Record<string, unknown>, ctx: ReturnType<typeof makeExecutionContext>) => unknown)
     | null = null;
 
   if (mod?.default && typeof mod.default.fetch === "function") {
@@ -1577,8 +1918,60 @@ async function main() {
     workerScheduled = mod.scheduled.bind(mod);
   }
 
-  const handleCronRequest = async (request: Request): Promise<Response | null> => {
+  if (mod?.default && typeof mod.default.queue === "function") {
+    workerQueue = mod.default.queue.bind(mod.default);
+  } else if (typeof mod?.queue === "function") {
+    workerQueue = mod.queue.bind(mod);
+  }
+
+  const handleInternalTrigger = async (request: Request): Promise<Response | null> => {
     const url = new URL(request.url);
+    if (url.pathname === "/__edgecode/queue") {
+      if (!workerQueue) {
+        return Response.json({ ok: false, error: "Worker does not export a queue() consumer handler" }, { status: 404 });
+      }
+      const ctx = makeExecutionContext();
+      try {
+        let payload: { queue?: string; messages?: Array<{ id?: string; body?: unknown; attempts?: number }> } = {};
+        if (request.method === "POST") {
+          const text = await request.text();
+          if (text.trim().length > 0) {
+            try {
+              payload = JSON.parse(text);
+            } catch {
+              payload = { messages: [{ body: text }] };
+            }
+          }
+        }
+        const queueName = payload.queue || url.searchParams.get("queue") || "default";
+        const rawMessages =
+          Array.isArray(payload.messages) && payload.messages.length > 0
+            ? payload.messages
+            : [{ body: url.searchParams.get("body") ?? { triggeredAt: new Date().toISOString() } }];
+        const batch = {
+          queue: queueName,
+          messages: rawMessages.map((m, idx) => ({
+            id: m.id ?? `msg-${Date.now()}-${idx}`,
+            timestamp: new Date(),
+            body: m.body,
+            attempts: m.attempts ?? 1,
+            ack: () => {},
+            retry: () => {},
+          })),
+          ackAll: () => {},
+          retryAll: () => {},
+        };
+        await workerQueue(batch, env, ctx);
+        await ctx.flush();
+        return Response.json({ ok: true, queue: queueName, processed: batch.messages.length });
+      } catch (err) {
+        return Response.json(
+          { ok: false, error: err instanceof Error ? (err.stack ?? err.message) : String(err) },
+          { status: 500 },
+        );
+      }
+    }
+
     if (url.pathname !== "/__edgecode/cron") return null;
     const cronExpr = url.searchParams.get("cron") ?? "* * * * *";
     const scheduledTime = Date.now();
@@ -1614,8 +2007,8 @@ async function main() {
         },
       },
       async (request: Request) => {
-        const cronResp = await handleCronRequest(request);
-        if (cronResp) return cronResp;
+        const triggerResp = await handleInternalTrigger(request);
+        if (triggerResp) return triggerResp;
         const ctx = makeExecutionContext();
         try {
           const cfRequest = attachCloudflareProperties(request);
@@ -1645,8 +2038,8 @@ async function main() {
         },
       },
       async (request: Request) => {
-        const cronResp = await handleCronRequest(request);
-        if (cronResp) return cronResp;
+        const triggerResp = await handleInternalTrigger(request);
+        if (triggerResp) return triggerResp;
         const ctx = makeExecutionContext();
         let responded: Response | Promise<Response> | null = null;
         try {

@@ -160,4 +160,87 @@ class WranglerSyncParserTest {
     assertEquals("env.MY_KV.get()", suggestions.first().label)
     assertTrue(suggestions.any { it.label == "env.AI.run()" })
   }
+
+  @Test
+  fun parseJsonc_mergesNamedEnvironmentOverrides() {
+    val raw =
+      """
+      {
+        "name": "api-worker",
+        "main": "src/index.ts",
+        "compatibility_date": "2026-04-01",
+        "vars": {
+          "STAGE": "dev",
+          "SHARED": "keep"
+        },
+        "kv_namespaces": [
+          { "binding": "CACHE", "id": "kv_base" }
+        ],
+        "env": {
+          "staging": {
+            "name": "api-worker-staging",
+            "vars": {
+              "STAGE": "staging"
+            },
+            "kv_namespaces": [
+              { "binding": "CACHE", "id": "kv_staging" }
+            ],
+            "queues": {
+              "producers": [
+                { "binding": "EVENTS", "queue": "staging-events" }
+              ]
+            }
+          }
+        }
+      }
+      """.trimIndent()
+
+    val base = WranglerSyncParser.parse("wrangler.jsonc", raw)
+    assertEquals("api-worker", base.scriptName)
+    assertTrue(base.environments.containsKey("staging"))
+    assertEquals("dev", base.bindings.first { it.name == "STAGE" }.text)
+
+    val staging = WranglerSyncParser.parse("wrangler.jsonc", raw, environment = "staging")
+    assertEquals("api-worker-staging", staging.scriptName)
+    assertEquals("src/index.ts", staging.main)
+    assertEquals("staging", staging.bindings.first { it.name == "STAGE" }.text)
+    assertEquals("keep", staging.bindings.first { it.name == "SHARED" }.text)
+    assertEquals("kv_staging", staging.bindings.first { it.name == "CACHE" }.namespaceId)
+    assertEquals("staging-events", staging.bindings.first { it.name == "EVENTS" }.queueName)
+  }
+
+  @Test
+  fun parseToml_mergesNamedEnvironmentOverrides() {
+    val raw =
+      """
+      name = "toml-api"
+      main = "src/index.ts"
+      compatibility_date = "2026-04-01"
+
+      [vars]
+      ENV = "default"
+      APP_NAME = "edge"
+
+      [[d1_databases]]
+      binding = "DB"
+      database_id = "db_default"
+
+      [env.production]
+      name = "toml-api-prod"
+
+      [env.production.vars]
+      ENV = "production"
+
+      [[env.production.d1_databases]]
+      binding = "DB"
+      database_id = "db_prod"
+      """.trimIndent()
+
+    val prod = WranglerSyncParser.parse("wrangler.toml", raw, environment = "production")
+    assertEquals("toml-api-prod", prod.scriptName)
+    assertEquals("production", prod.bindings.first { it.name == "ENV" }.text)
+    assertEquals("edge", prod.bindings.first { it.name == "APP_NAME" }.text)
+    assertEquals("db_prod", prod.bindings.first { it.name == "DB" }.databaseId)
+  }
 }
+

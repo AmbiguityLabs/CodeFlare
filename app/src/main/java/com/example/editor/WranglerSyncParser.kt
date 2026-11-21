@@ -6,6 +6,16 @@ import com.example.data.remote.WorkerWorkspace
 import org.json.JSONArray
 import org.json.JSONObject
 
+data class ParsedWranglerEnv(
+  val scriptName: String? = null,
+  val main: String? = null,
+  val compatibilityDate: String? = null,
+  val compatibilityFlags: List<String> = emptyList(),
+  val workersDev: Boolean? = null,
+  val bindings: List<CfWorkerBinding> = emptyList(),
+  val crons: List<String> = emptyList(),
+)
+
 data class ParsedWranglerConfig(
   val scriptName: String? = null,
   val main: String? = null,
@@ -14,6 +24,7 @@ data class ParsedWranglerConfig(
   val workersDev: Boolean? = null,
   val bindings: List<CfWorkerBinding> = emptyList(),
   val crons: List<String> = emptyList(),
+  val environments: Map<String, ParsedWranglerEnv> = emptyMap(),
 )
 
 data class CodeSymbol(
@@ -30,14 +41,36 @@ data class CompletionSuggestion(
 )
 
 object WranglerSyncParser {
-  fun parse(path: String, content: String): Result<ParsedWranglerConfig> {
+  fun parse(path: String, content: String, environment: String? = null): Result<ParsedWranglerConfig> {
     return runCatching {
-      if (path.endsWith(".toml", ignoreCase = true)) {
-        parseToml(content)
-      } else {
-        parseJsonc(content)
-      }
+      val base =
+        if (path.endsWith(".toml", ignoreCase = true)) {
+          parseToml(content)
+        } else {
+          parseJsonc(content)
+        }
+      applyEnvironmentOverride(base, environment)
     }
+  }
+
+  private fun applyEnvironmentOverride(
+    base: ParsedWranglerConfig,
+    environment: String?,
+  ): ParsedWranglerConfig {
+    val envKey = environment?.trim()?.takeIf { it.isNotEmpty() } ?: return base
+    val envOverride = base.environments[envKey] ?: return base
+    val mergedBindings = linkedMapOf<String, CfWorkerBinding>()
+    base.bindings.forEach { mergedBindings[it.name] = it }
+    envOverride.bindings.forEach { mergedBindings[it.name] = it }
+    return base.copy(
+      scriptName = envOverride.scriptName ?: base.scriptName,
+      main = envOverride.main ?: base.main,
+      compatibilityDate = envOverride.compatibilityDate ?: base.compatibilityDate,
+      compatibilityFlags = envOverride.compatibilityFlags.ifEmpty { base.compatibilityFlags },
+      workersDev = envOverride.workersDev ?: base.workersDev,
+      bindings = mergedBindings.values.toList(),
+      crons = envOverride.crons.ifEmpty { base.crons },
+    )
   }
 
   fun stripJsoncCommentsAndTrailingCommas(raw: String): String {
@@ -120,11 +153,8 @@ object WranglerSyncParser {
     return out.toString().trim()
   }
 
-  private fun parseJsonc(content: String): ParsedWranglerConfig {
-    val clean = stripJsoncCommentsAndTrailingCommas(content)
-    val json = JSONObject(clean)
+  private fun extractJsoncSection(json: JSONObject): ParsedWranglerEnv {
     val bindings = mutableListOf<CfWorkerBinding>()
-
     val flags = mutableListOf<String>()
     json.optJSONArray("compatibility_flags")?.let { arr ->
       for (i in 0 until arr.length()) {
@@ -234,7 +264,7 @@ object WranglerSyncParser {
       }
     }
 
-    return ParsedWranglerConfig(
+    return ParsedWranglerEnv(
       scriptName = json.optString("name").takeIf { it.isNotBlank() },
       main = json.optString("main").takeIf { it.isNotBlank() }?.removePrefix("./"),
       compatibilityDate = json.optString("compatibility_date").takeIf { it.isNotBlank() },
@@ -245,8 +275,34 @@ object WranglerSyncParser {
     )
   }
 
-  private fun parseToml(content: String): ParsedWranglerConfig {
-    var currentSection = ""
+  private fun parseJsonc(content: String): ParsedWranglerConfig {
+    val clean = stripJsoncCommentsAndTrailingCommas(content)
+    val json = JSONObject(clean)
+    val root = extractJsoncSection(json)
+    val environments = linkedMapOf<String, ParsedWranglerEnv>()
+    json.optJSONObject("env")?.let { envObj ->
+      val keys = envObj.keys()
+      while (keys.hasNext()) {
+        val envName = keys.next().trim()
+        val sub = envObj.optJSONObject(envName) ?: continue
+        if (envName.isNotEmpty()) {
+          environments[envName] = extractJsoncSection(sub)
+        }
+      }
+    }
+    return ParsedWranglerConfig(
+      scriptName = root.scriptName,
+      main = root.main,
+      compatibilityDate = root.compatibilityDate,
+      compatibilityFlags = root.compatibilityFlags,
+      workersDev = root.workersDev,
+      bindings = root.bindings,
+      crons = root.crons,
+      environments = environments,
+    )
+  }
+
+  private class MutableTomlScope {
     var scriptName: String? = null
     var main: String? = null
     var compatDate: String? = null
@@ -255,33 +311,65 @@ object WranglerSyncParser {
     val bindings = mutableListOf<CfWorkerBinding>()
     val crons = mutableListOf<String>()
 
+    fun toEnv() =
+      ParsedWranglerEnv(
+        scriptName = scriptName,
+        main = main,
+        compatibilityDate = compatDate,
+        compatibilityFlags = compatFlags.toList(),
+        workersDev = workersDev,
+        bindings = bindings.toList(),
+        crons = crons.toList(),
+      )
+  }
+
+  private fun splitEnvSection(section: String): Pair<String?, String> {
+    if (!section.startsWith("env.")) return null to section
+    val rest = section.removePrefix("env.")
+    val dot = rest.indexOf('.')
+    return if (dot < 0) {
+      rest.trim().takeIf { it.isNotEmpty() } to ""
+    } else {
+      rest.substring(0, dot).trim().takeIf { it.isNotEmpty() } to rest.substring(dot + 1).trim()
+    }
+  }
+
+  private fun parseToml(content: String): ParsedWranglerConfig {
+    var currentSection = ""
+    val root = MutableTomlScope()
+    val envScopes = linkedMapOf<String, MutableTomlScope>()
+    fun scopeFor(envName: String?): MutableTomlScope =
+      if (envName == null) root else envScopes.getOrPut(envName) { MutableTomlScope() }
+
+    var pendingEnv: String? = null
     var pendingType = ""
     val pendingProps = mutableMapOf<String, String>()
 
     fun flushPendingTable() {
       if (pendingProps.isEmpty()) return
+      val target = scopeFor(pendingEnv)
       when (pendingType) {
         "kv_namespaces" -> {
           val b = pendingProps["binding"].orEmpty()
           val id = pendingProps["id"].orEmpty()
-          if (b.isNotBlank()) bindings.add(CfWorkerBinding(name = b, type = "kv_namespace", namespaceId = id))
+          if (b.isNotBlank()) target.bindings.add(CfWorkerBinding(name = b, type = "kv_namespace", namespaceId = id))
         }
         "d1_databases" -> {
           val b = pendingProps["binding"].orEmpty()
           val id = pendingProps["database_id"].orEmpty()
-          if (b.isNotBlank()) bindings.add(CfWorkerBinding(name = b, type = "d1", databaseId = id))
+          if (b.isNotBlank()) target.bindings.add(CfWorkerBinding(name = b, type = "d1", databaseId = id))
         }
         "r2_buckets" -> {
           val b = pendingProps["binding"].orEmpty()
           val bucket = pendingProps["bucket_name"].orEmpty()
-          if (b.isNotBlank()) bindings.add(CfWorkerBinding(name = b, type = "r2_bucket", bucketName = bucket))
+          if (b.isNotBlank()) target.bindings.add(CfWorkerBinding(name = b, type = "r2_bucket", bucketName = bucket))
         }
         "services" -> {
           val b = pendingProps["binding"].orEmpty()
           val svc = pendingProps["service"].orEmpty()
           val env = pendingProps["environment"]
           if (b.isNotBlank() && svc.isNotBlank()) {
-            bindings.add(CfWorkerBinding(name = b, type = "service", service = svc, environment = env))
+            target.bindings.add(CfWorkerBinding(name = b, type = "service", service = svc, environment = env))
           }
         }
         "durable_objects.bindings" -> {
@@ -289,17 +377,18 @@ object WranglerSyncParser {
           val cls = pendingProps["class_name"]
           val scr = pendingProps["script_name"]
           if (b.isNotBlank()) {
-            bindings.add(CfWorkerBinding(name = b, type = "durable_object_namespace", className = cls, scriptName = scr))
+            target.bindings.add(CfWorkerBinding(name = b, type = "durable_object_namespace", className = cls, scriptName = scr))
           }
         }
         "queues.producers" -> {
           val b = pendingProps["binding"].orEmpty()
           val q = pendingProps["queue"]
-          if (b.isNotBlank()) bindings.add(CfWorkerBinding(name = b, type = "queue", queueName = q))
+          if (b.isNotBlank()) target.bindings.add(CfWorkerBinding(name = b, type = "queue", queueName = q))
         }
       }
       pendingProps.clear()
       pendingType = ""
+      pendingEnv = null
     }
 
     for (rawLine in content.lines()) {
@@ -307,8 +396,11 @@ object WranglerSyncParser {
       if (line.isEmpty()) continue
       if (line.startsWith("[[") && line.endsWith("]]")) {
         flushPendingTable()
-        pendingType = line.removePrefix("[[").removeSuffix("]]").trim()
-        currentSection = pendingType
+        val rawSec = line.removePrefix("[[").removeSuffix("]]").trim()
+        val (envName, subSec) = splitEnvSection(rawSec)
+        pendingEnv = envName
+        pendingType = subSec
+        currentSection = rawSec
         continue
       }
       if (line.startsWith("[") && line.endsWith("]")) {
@@ -327,36 +419,39 @@ object WranglerSyncParser {
         continue
       }
 
-      when (currentSection) {
+      val (envName, subSection) = splitEnvSection(currentSection)
+      val target = scopeFor(envName)
+      when (subSection) {
         "" ->
           when (key) {
-            "name" -> scriptName = unquoted
-            "main" -> main = unquoted.removePrefix("./")
-            "compatibility_date" -> compatDate = unquoted
-            "workers_dev" -> workersDev = unquoted.toBooleanStrictOrNull()
+            "name" -> target.scriptName = unquoted
+            "main" -> target.main = unquoted.removePrefix("./")
+            "compatibility_date" -> target.compatDate = unquoted
+            "workers_dev" -> target.workersDev = unquoted.toBooleanStrictOrNull()
             "compatibility_flags" -> {
-              Regex(""""([^"]+)"""").findAll(rawVal).forEach { compatFlags.add(it.groupValues[1]) }
+              Regex(""""([^"]+)"""").findAll(rawVal).forEach { target.compatFlags.add(it.groupValues[1]) }
             }
           }
-        "vars" -> bindings.add(CfWorkerBinding(name = key, type = "plain_text", text = unquoted))
+        "vars" -> target.bindings.add(CfWorkerBinding(name = key, type = "plain_text", text = unquoted))
         "ai" -> if (key == "binding" && unquoted.isNotBlank()) {
-          bindings.add(CfWorkerBinding(name = unquoted, type = "ai"))
+          target.bindings.add(CfWorkerBinding(name = unquoted, type = "ai"))
         }
         "triggers" -> if (key == "crons") {
-          Regex(""""([^"]+)"""").findAll(rawVal).forEach { crons.add(it.groupValues[1]) }
+          Regex(""""([^"]+)"""").findAll(rawVal).forEach { target.crons.add(it.groupValues[1]) }
         }
       }
     }
     flushPendingTable()
 
     return ParsedWranglerConfig(
-      scriptName = scriptName,
-      main = main,
-      compatibilityDate = compatDate,
-      compatibilityFlags = compatFlags,
-      workersDev = workersDev,
-      bindings = bindings,
-      crons = crons,
+      scriptName = root.scriptName,
+      main = root.main,
+      compatibilityDate = root.compatDate,
+      compatibilityFlags = root.compatFlags,
+      workersDev = root.workersDev,
+      bindings = root.bindings,
+      crons = root.crons,
+      environments = envScopes.mapValues { it.value.toEnv() },
     )
   }
 

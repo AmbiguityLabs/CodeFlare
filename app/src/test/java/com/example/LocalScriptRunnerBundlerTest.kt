@@ -322,4 +322,75 @@ class LocalScriptRunnerBundlerTest {
       tmpDir.deleteRecursively()
     }
   }
+
+  @Test
+  fun synthesizeDenoImportMapJsonBuildsNpmImportsFromPackageJson() {
+    val pkgJson =
+      """
+      {
+        "name": "worker-app",
+        "dependencies": {
+          "hono": "^4.6.0",
+          "itty-router": "~5.0.0"
+        },
+        "devDependencies": {
+          "local-pkg": "workspace:*"
+        }
+      }
+      """.trimIndent()
+    val pkgFile = WorkerFile("package.json", pkgJson, "", "application/json", false)
+    val indexFile = WorkerFile("src/index.ts", "export default {}", "", "application/javascript+module", true)
+
+    val generated = LocalScriptRunner.synthesizeDenoImportMapJson(listOf(pkgFile, indexFile))
+    assertNotNull(generated)
+    assertTrue(generated!!.contains("\"hono\": \"npm:hono@^4.6.0\""))
+    assertTrue(generated.contains("\"hono/\": \"npm:hono@^4.6.0/\""))
+    assertTrue(generated.contains("\"itty-router\": \"npm:itty-router@~5.0.0\""))
+    assertFalse(generated.contains("local-pkg"))
+
+    val explicitDeno = WorkerFile("deno.json", "{\"imports\":{}}", "", "application/json", false)
+    assertEquals(null, LocalScriptRunner.synthesizeDenoImportMapJson(listOf(pkgFile, explicitDeno)))
+
+    val tmpDir = createTempDirectory("deno-import-map").toFile()
+    try {
+      LocalScriptRunner.stageWorkspaceFiles(tmpDir, listOf(pkgFile, indexFile), "// runner")
+      val stagedDenoJson = File(tmpDir, "deno.json")
+      assertTrue(stagedDenoJson.exists())
+      assertTrue(stagedDenoJson.readText().contains("\"hono\": \"npm:hono@^4.6.0\""))
+    } finally {
+      tmpDir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun buildBindingsJsonForwardsDurableObjectQueueAndServiceMetadata() {
+    val json =
+      LocalScriptRunner.buildBindingsJson(
+        listOf(
+          com.example.data.remote.CfWorkerBinding(
+            name = "COUNTER",
+            type = "durable_object_namespace",
+            className = "CounterDO",
+            scriptName = "self-worker",
+          ),
+          com.example.data.remote.CfWorkerBinding(
+            name = "JOBS",
+            type = "queue",
+            queueName = "email-jobs",
+          ),
+          com.example.data.remote.CfWorkerBinding(
+            name = "AUTH_SVC",
+            type = "service",
+            service = "auth-worker",
+            environment = "production",
+          ),
+        ),
+      )
+
+    assertTrue(json.contains("\"className\":\"CounterDO\""))
+    assertTrue(json.contains("\"queueName\":\"email-jobs\""))
+    assertTrue(json.contains("\"service\":\"auth-worker\""))
+    assertTrue(json.contains("\"environment\":\"production\""))
+  }
 }
+
