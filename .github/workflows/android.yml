@@ -226,6 +226,11 @@ jobs:
 
       - name: Build release APK
         run: |
+          if [ ! -f .env ]; then
+            echo "APP_ENV=production" > .env
+          elif ! grep -qE '^APP_ENV=[^[:space:]]+' .env; then
+            printf '\nAPP_ENV=production\n' >> .env
+          fi
           for attempt in 1 2 3; do
             if gradle assembleRelease --stacktrace; then
               exit 0
