@@ -59,9 +59,13 @@ import com.example.data.security.FloatingBarStyleConfig
 import com.example.data.security.IconLabelBehavior
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalBarStylePreferences
+import com.example.ui.theme.LocalEditorSettings
 import com.example.ui.theme.LocalIconLabelBehavior
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.UiStyleVersion
+import com.example.ui.theme.liquidGlassSurface
+import com.example.ui.theme.liquidGlassTouchGlow
+import com.example.ui.theme.rememberLiquidGlassAdaptiveColors
 
 data class EdgeBottomDockItem(
   val label: String,
@@ -115,22 +119,32 @@ private fun LiquidGlassFloatingDock(
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
+  val settings = LocalEditorSettings.current
   val isDark = palette.isDark
   val labelBehavior = LocalIconLabelBehavior.current
   val capsuleShape = RoundedCornerShape(cfg.cornerRadiusDp.dp)
   val hideOrbSize = (cfg.heightDp - 10).coerceIn(34, 44).dp
+  val liquidEnabled = settings.liquidGlassEnabled
+
+  val adaptiveGlass =
+    rememberLiquidGlassAdaptiveColors(
+      palette = palette,
+      tintFraction = settings.liquidGlassTint,
+      thickness = 1.25f,
+      surfaceOpacityMultiplier = (cfg.opacity / 0.65f).coerceIn(0.45f, 1.35f),
+    )
 
   val topGlassTint =
     if (isDark) {
-      lerp(Color(0xFF2B282A), palette.chromeSurface, 0.85f).copy(alpha = (cfg.opacity * 0.96f).coerceIn(0.12f, 1f))
+      lerp(Color(0xFF2B282A), palette.chromeSurface, 0.35f).copy(alpha = (cfg.opacity * 0.96f).coerceIn(0.12f, 1f))
     } else {
-      lerp(Color(0xFFFAFAFC), palette.chromeSurface, 0.85f).copy(alpha = (cfg.opacity * 0.96f).coerceIn(0.18f, 1f))
+      lerp(Color(0xFFFAFAFC), palette.chromeSurface, 0.30f).copy(alpha = (cfg.opacity * 0.96f).coerceIn(0.18f, 1f))
     }
   val bottomGlassTint =
     if (isDark) {
-      lerp(Color(0xFF151416), palette.chromeBg, 0.85f).copy(alpha = (cfg.opacity * 1.04f).coerceIn(0.15f, 1f))
+      lerp(Color(0xFF151416), palette.chromeBg, 0.32f).copy(alpha = (cfg.opacity * 1.04f).coerceIn(0.15f, 1f))
     } else {
-      lerp(Color(0xFFE7E9EF), palette.chromeSurface, 0.85f).copy(alpha = (cfg.opacity * 1.02f).coerceIn(0.22f, 1f))
+      lerp(Color(0xFFE7E9EF), palette.chromeSurface, 0.35f).copy(alpha = (cfg.opacity * 1.02f).coerceIn(0.22f, 1f))
     }
   val glassBodyBrush = Brush.verticalGradient(listOf(topGlassTint, bottomGlassTint))
 
@@ -182,17 +196,31 @@ private fun LiquidGlassFloatingDock(
           Modifier
             .width(capsuleWidth)
             .height(cfg.heightDp.dp)
-            .shadow(
-              elevation = elevationDp,
-              shape = capsuleShape,
-              ambientColor = Color.Black.copy(alpha = if (isDark) 0.65f else 0.25f),
-              spotColor = Color.Black.copy(alpha = if (isDark) 0.75f else 0.30f),
-            )
-            .clip(capsuleShape)
-            .background(glassBodyBrush)
             .then(
-              if (rimBrush != null) Modifier.border(width = 1.dp, brush = rimBrush, shape = capsuleShape)
-              else Modifier,
+              if (liquidEnabled) {
+                Modifier.liquidGlassSurface(
+                  shape = capsuleShape,
+                  cornerRadius = cfg.cornerRadiusDp.dp,
+                  thickness = 1.25f,
+                  surfaceOpacityMultiplier = (cfg.opacity / 0.65f).coerceIn(0.45f, 1.35f),
+                  borderOpacityMultiplier = (cfg.borderOpacity / 0.35f).coerceIn(0f, 1.4f),
+                  drawShadow = true,
+                )
+              } else {
+                Modifier
+                  .shadow(
+                    elevation = elevationDp,
+                    shape = capsuleShape,
+                    ambientColor = Color.Black.copy(alpha = if (isDark) 0.65f else 0.25f),
+                    spotColor = Color.Black.copy(alpha = if (isDark) 0.75f else 0.30f),
+                  )
+                  .clip(capsuleShape)
+                  .background(glassBodyBrush)
+                  .then(
+                    if (rimBrush != null) Modifier.border(width = 1.dp, brush = rimBrush, shape = capsuleShape)
+                    else Modifier,
+                  )
+              },
             ),
       ) {
         if (sheenAlpha > 0.005f) {
@@ -227,7 +255,7 @@ private fun LiquidGlassFloatingDock(
               val active = item.selected
               val activeBgTarget =
                 if (active) {
-                  palette.activePillBg.copy(alpha = (cfg.activePillOpacity + 0.62f).coerceIn(0.28f, 0.96f))
+                  palette.activePillBg.copy(alpha = (cfg.activePillOpacity + 0.56f).coerceIn(0.42f, 0.94f))
                 } else {
                   Color.Transparent
                 }
@@ -237,7 +265,13 @@ private fun LiquidGlassFloatingDock(
                 label = "v2_dock_pill_bg",
               )
               val iconTint by animateColorAsState(
-                targetValue = if (active) palette.activePillFg else palette.textSecondary,
+                targetValue =
+                  when {
+                    active -> palette.activePillFg
+                    liquidEnabled -> adaptiveGlass.foregroundSecondary
+                    isDark -> Color.White.copy(alpha = 0.76f)
+                    else -> palette.textSecondary
+                  },
                 animationSpec = tween(durationMillis = 170),
                 label = "v2_dock_icon_tint",
               )
@@ -273,13 +307,14 @@ private fun LiquidGlassFloatingDock(
                       if (active && cfg.borderOpacity > 0.02f) {
                         Modifier.border(
                           width = 0.75.dp,
-                          color = palette.activePillFg.copy(alpha = (cfg.borderOpacity * 0.45f).coerceIn(0.14f, 0.36f)),
+                          color = palette.activePillFg.copy(alpha = 0.34f),
                           shape = innerShape,
                         )
                       } else {
                         Modifier
                       },
                     )
+                    .liquidGlassTouchGlow(glowColor = palette.activePillFg)
                     .clickable(
                       interactionSource = interactionSource,
                       indication = null,
@@ -348,18 +383,33 @@ private fun LiquidGlassFloatingDock(
           modifier =
             Modifier
               .size(hideOrbSize)
-              .shadow(
-                elevation = (elevationDp.value * 0.85f).dp,
-                shape = CircleShape,
-                ambientColor = Color.Black.copy(alpha = if (isDark) 0.6f else 0.22f),
-                spotColor = Color.Black.copy(alpha = if (isDark) 0.7f else 0.28f),
-              )
-              .clip(CircleShape)
-              .background(glassBodyBrush)
               .then(
-                if (rimBrush != null) Modifier.border(width = 1.dp, brush = rimBrush, shape = CircleShape)
-                else Modifier,
+                if (liquidEnabled) {
+                  Modifier.liquidGlassSurface(
+                    shape = CircleShape,
+                    cornerRadius = hideOrbSize / 2,
+                    thickness = 1.25f,
+                    surfaceOpacityMultiplier = (cfg.opacity / 0.65f).coerceIn(0.45f, 1.35f),
+                    borderOpacityMultiplier = (cfg.borderOpacity / 0.35f).coerceIn(0f, 1.4f),
+                    drawShadow = true,
+                  )
+                } else {
+                  Modifier
+                    .shadow(
+                      elevation = (elevationDp.value * 0.85f).dp,
+                      shape = CircleShape,
+                      ambientColor = Color.Black.copy(alpha = if (isDark) 0.6f else 0.22f),
+                      spotColor = Color.Black.copy(alpha = if (isDark) 0.7f else 0.28f),
+                    )
+                    .clip(CircleShape)
+                    .background(glassBodyBrush)
+                    .then(
+                      if (rimBrush != null) Modifier.border(width = 1.dp, brush = rimBrush, shape = CircleShape)
+                      else Modifier,
+                    )
+                },
               )
+              .liquidGlassTouchGlow(glowColor = palette.activePillFg)
               .clickable(role = Role.Button, onClick = onHideDock)
               .testTag(hideDockTestTag),
           contentAlignment = Alignment.Center,
@@ -367,7 +417,7 @@ private fun LiquidGlassFloatingDock(
           Icon(
             imageVector = Icons.Outlined.KeyboardArrowDown,
             contentDescription = "Hide bottom menu",
-            tint = palette.textSecondary,
+            tint = if (liquidEnabled) adaptiveGlass.foregroundPrimary else palette.textSecondary,
             modifier = Modifier.size(19.dp),
           )
         }
@@ -445,6 +495,7 @@ private fun ClassicDockedBar(
                 Modifier
                   .height((cfg.heightDp - 12).coerceIn(36, 52).dp)
                   .clip(RoundedCornerShape(cfg.cornerRadiusDp.dp))
+                  .liquidGlassTouchGlow(glowColor = palette.activePillFg)
                   .clickable(
                     interactionSource = interactionSource,
                     indication = null,
@@ -552,15 +603,13 @@ private fun DockInlineCounterBadge(
   val badgeBg =
     when {
       customColor != null -> customColor
-      isV2Glass && active -> palette.ctaBg
-      isV2Glass -> palette.activePillBg.copy(alpha = 0.75f)
+      isV2Glass -> palette.activePillFg.copy(alpha = if (active) 0.24f else 0.16f)
       active -> palette.ctaBg
       else -> palette.chromePill
     }
   val badgeFg =
     when {
       customColor != null -> Color(0xFF141806)
-      isV2Glass && active -> palette.ctaFg
       isV2Glass -> palette.activePillFg
       active -> palette.ctaFg
       else -> palette.textSecondary

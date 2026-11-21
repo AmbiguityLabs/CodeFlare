@@ -177,11 +177,16 @@ import com.example.ui.screens.settings.SettingsCategory
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
+import com.example.ui.theme.LiquidGlassBackdropState
+import com.example.ui.theme.LiquidGlassEmergeVisibility
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.LocalLiquidGlassBackdrop
 import com.example.ui.theme.LocalPopupMenuStyle
 import com.example.ui.theme.UiStyleVersion
 import com.example.ui.theme.edgeGlassDock
 import com.example.ui.theme.edgeGlassSurface
+import com.example.ui.theme.liquidGlassSurface
+import com.example.ui.theme.liquidGlassTouchGlow
 import com.example.ui.theme.rememberGlassBorderStroke
 import com.example.ui.viewmodel.BottomPanelTab
 import com.example.ui.viewmodel.IdeUiState
@@ -996,8 +1001,22 @@ fun IdeWorkspaceScreen(
   val dockClearanceBottom =
     if (isV2Workspace) (editorBarStyle.heightDp + editorBarStyle.bottomMarginDp + 14).dp
     else (editorBarStyle.heightDp + 10).dp
+  val activeTextLen = uiState.activeFile?.content?.length ?: 0
+  val workspaceBackdrop =
+    LiquidGlassBackdropState(
+      luminance = if (palette.isDark) 0.10f else 0.89f,
+      contentDensity =
+        if (uiState.projectMode == ProjectMode.CODE && activeTextLen > 12) 0.85f
+        else if (uiState.projectMode == ProjectMode.CONSOLE || uiState.projectMode == ProjectMode.TEST) 0.65f
+        else 0.45f,
+      scrollOffsetPx = (uiState.activeFilePath?.hashCode()?.rem(120)?.toFloat() ?: 0f),
+      accentHint = palette.ctaBg,
+    )
 
-  CompositionLocalProvider(LocalPopupMenuStyle provides uiState.editorSettings.editorMenuStyle) {
+  CompositionLocalProvider(
+    LocalPopupMenuStyle provides uiState.editorSettings.editorMenuStyle,
+    LocalLiquidGlassBackdrop provides workspaceBackdrop,
+  ) {
   BoxWithConstraints(
     modifier = Modifier.fillMaxSize().background(palette.chromeBg),
   ) {
@@ -1869,10 +1888,8 @@ fun IdeWorkspaceScreen(
         val baseDockPad = if (uiState.isBottomDockHidden) 14.dp else dockClearanceBottom
         val floatingOverlayBottomPad = baseDockPad + editorBottomBarsClearance
 
-        AnimatedVisibility(
+        LiquidGlassEmergeVisibility(
           visible = !isFullScreenPreview && anyUiHidden,
-          enter = fadeIn(tween(180)) + slideInVertically(tween(180)) { it / 2 },
-          exit = fadeOut(tween(140)) + slideOutVertically(tween(140)) { it / 2 },
           modifier =
             Modifier
               .align(Alignment.BottomEnd)
@@ -1880,22 +1897,23 @@ fun IdeWorkspaceScreen(
                 end = 14.dp,
                 bottom = floatingOverlayBottomPad,
               ),
-        ) {
+        ) { emerge ->
+          val capsuleShape = RoundedCornerShape(999.dp)
           Row(
             modifier =
-              Modifier
-                .clip(RoundedCornerShape(999.dp))
-                .background(palette.chromeSurface)
-                .then(
-                  if (palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED) Modifier
-                  else Modifier.edgeGlassSurface(RoundedCornerShape(999.dp), elevated = true),
-                ),
+              Modifier.liquidGlassSurface(
+                shape = capsuleShape,
+                cornerRadius = 999.dp,
+                thickness = 1.35f,
+                emergenceProgress = emerge,
+              ),
             verticalAlignment = Alignment.CenterVertically,
           ) {
             Box(
               modifier =
                 Modifier
                   .clip(RoundedCornerShape(topStart = 999.dp, bottomStart = 999.dp))
+                  .liquidGlassTouchGlow(glowColor = palette.activePillFg)
                   .clickable { viewModel.toggleAllUiChrome(false) }
                   .padding(horizontal = 12.dp, vertical = 9.dp)
                   .testTag("show_workspace_bottom_menus_button"),
@@ -1919,6 +1937,7 @@ fun IdeWorkspaceScreen(
               modifier =
                 Modifier
                   .clip(RoundedCornerShape(topEnd = 999.dp, bottomEnd = 999.dp))
+                  .liquidGlassTouchGlow(glowColor = palette.activePillFg)
                   .clickable { overflowMenuOpen = true }
                   .padding(horizontal = 10.dp, vertical = 9.dp)
                   .testTag("zen_overflow_menu_button"),

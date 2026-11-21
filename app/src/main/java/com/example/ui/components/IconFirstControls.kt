@@ -60,9 +60,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.security.IconLabelBehavior
 import com.example.ui.theme.JetBrainsMono
+import com.example.ui.theme.LocalEditorSettings
 import com.example.ui.theme.LocalIconLabelBehavior
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.UiStyleVersion
+import com.example.ui.theme.liquidGlassSurface
+import com.example.ui.theme.liquidGlassTouchGlow
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -161,6 +164,7 @@ fun IconRevealButton(
     modifier =
       modifier
         .height(height)
+        .liquidGlassTouchGlow(glowColor = if (accentContainer) palette.ctaFg else palette.activePillFg)
         .animateContentSize(animationSpec = tween(170))
         .then(if (tag != null) Modifier.testTag(tag) else Modifier),
   ) {
@@ -289,6 +293,7 @@ fun IconSegmentTab(
     modifier =
       modifier
         .height(32.dp)
+        .liquidGlassTouchGlow(glowColor = palette.activePillFg)
         .animateContentSize(animationSpec = tween(170))
         .then(if (tag != null) Modifier.testTag(tag) else Modifier),
   ) {
@@ -627,11 +632,24 @@ fun EdgeLoadingOverlay(
           .testTag("edge_loading_overlay"),
       contentAlignment = Alignment.Center,
     ) {
+      val glassEnabled = LocalEditorSettings.current.liquidGlassEnabled
+      val cardShape = RoundedCornerShape(if (isV2) 24.dp else 18.dp)
       Box(
         modifier =
           Modifier
-            .clip(RoundedCornerShape(if (isV2) 24.dp else 18.dp))
-            .background(palette.chromeSurface.copy(alpha = 0.92f))
+            .then(
+              if (glassEnabled) {
+                Modifier.liquidGlassSurface(
+                  shape = cardShape,
+                  cornerRadius = if (isV2) 24.dp else 18.dp,
+                  thickness = 1.3f,
+                )
+              } else {
+                Modifier
+                  .clip(cardShape)
+                  .background(palette.chromeSurface.copy(alpha = 0.92f))
+              },
+            )
             .size(indicatorSize + 36.dp),
         contentAlignment = Alignment.Center,
       ) {

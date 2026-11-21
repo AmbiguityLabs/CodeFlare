@@ -1597,7 +1597,17 @@ fun SettingsPanel(
     }
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
       Text("System Dynamic Color", style = MaterialTheme.typography.bodyMedium, color = palette.textPrimary)
-      Switch(checked = settings.dynamicColor, onCheckedChange = { dyn -> onUpdateSettings { it.copy(dynamicColor = dyn) } })
+      Switch(
+        checked = settings.dynamicColor,
+        onCheckedChange = { dyn ->
+          onUpdateSettings {
+            it.copy(
+              dynamicColor = dyn,
+              accent = if (dyn) EditorSettings.ACCENT_DYNAMIC else EditorSettings.accentForPreset(it.themePreset),
+            )
+          }
+        },
+      )
     }
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
       Text("Word Wrap", style = MaterialTheme.typography.bodyMedium, color = palette.textPrimary)

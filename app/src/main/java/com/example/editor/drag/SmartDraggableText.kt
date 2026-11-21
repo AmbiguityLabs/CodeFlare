@@ -78,9 +78,12 @@ import com.example.editor.selection.SmartTextDomain
 import com.example.editor.selection.SmartTextSelectionEngine
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
+import com.example.ui.theme.LocalEditorSettings
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.LocalSelectionDragConfig
 import com.example.ui.theme.UiStyleVersion
+import com.example.ui.theme.liquidGlassSurface
+import com.example.ui.theme.liquidGlassTouchGlow
 import com.example.ui.theme.selectionColorsFor
 import kotlin.math.hypot
 import kotlin.math.roundToInt
@@ -400,7 +403,7 @@ fun SmartDraggableText(
       val rawLocalY =
         if (containerPosInWindow.y + aboveLocalY >= safeTopScreenY) {
           aboveLocalY
-        } else if (containerPosInWindow.y + belowLocalY <= maxScreenY) {
+        } else if (!fullTextSelected && containerPosInWindow.y + belowLocalY <= maxScreenY) {
           belowLocalY
         } else {
           // Selection spans full viewport (e.g. Select All): anchor cleanly at top visible band
@@ -410,6 +413,7 @@ fun SmartDraggableText(
 
       val canShrinkNow = fullTextSelected || currentState.canShrink
       val canExpandNow = !fullTextSelected && currentState.canExpand
+      val glassEnabled = LocalEditorSettings.current.liquidGlassEnabled
 
       Popup(
         alignment = Alignment.TopStart,
@@ -421,14 +425,25 @@ fun SmartDraggableText(
         },
         properties = PopupProperties(focusable = false),
       ) {
-        Surface(
-          shape = RoundedCornerShape(999.dp),
-          color = palette.glassElevated.copy(alpha = 0.96f),
-          border = BorderStroke(1.dp, palette.ctaBg.copy(alpha = 0.40f)),
-          shadowElevation = if (isV2) 3.dp else 5.dp,
+        val pillShape = RoundedCornerShape(999.dp)
+        Box(
           modifier =
             Modifier
               .onSizeChanged { popupSize = it }
+              .then(
+                if (glassEnabled) {
+                  Modifier.liquidGlassSurface(
+                    shape = pillShape,
+                    cornerRadius = 999.dp,
+                    thickness = 1.45f,
+                  )
+                } else {
+                  Modifier
+                    .clip(pillShape)
+                    .background(palette.glassElevated.copy(alpha = 0.96f), pillShape)
+                    .border(BorderStroke(1.dp, palette.ctaBg.copy(alpha = 0.40f)), pillShape)
+                },
+              )
               .testTag("smart_text_popup_$surfaceId"),
         ) {
           Row(
@@ -524,6 +539,7 @@ fun SmartDraggableText(
                   Modifier
                     .size(28.dp)
                     .clip(RoundedCornerShape(7.dp))
+                    .liquidGlassTouchGlow()
                     .clickable {
                       fullTextSelected = !fullTextSelected
                       haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -544,6 +560,7 @@ fun SmartDraggableText(
                   Modifier
                     .size(28.dp)
                     .clip(RoundedCornerShape(7.dp))
+                    .liquidGlassTouchGlow()
                     .clickable {
                       clipboard.setText(AnnotatedString(selectedSnippet))
                       onCopied?.invoke(selectedSnippet)
@@ -568,6 +585,7 @@ fun SmartDraggableText(
                 Modifier
                   .size(26.dp)
                   .clip(RoundedCornerShape(7.dp))
+                  .liquidGlassTouchGlow()
                   .clickable {
                     showSelectionPopup = false
                     fullTextSelected = false

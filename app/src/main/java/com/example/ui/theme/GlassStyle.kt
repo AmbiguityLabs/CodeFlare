@@ -54,8 +54,20 @@ fun Modifier.edgeGlassSurface(
   borderWidth: Dp = 0.75.dp,
 ): Modifier {
   val palette = LocalIdePalette.current
+  val settings = LocalEditorSettings.current
   val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
-  val resolvedShape = if (isV2 && shape == RoundedCornerShape(14.dp)) RoundedCornerShape(22.dp) else shape
+  val cornerDp = if (isV2) 22.dp else 14.dp
+  val resolvedShape = if (isV2 && shape == RoundedCornerShape(14.dp)) RoundedCornerShape(cornerDp) else shape
+  if (settings.liquidGlassEnabled) {
+    return this.liquidGlassSurface(
+      shape = resolvedShape,
+      cornerRadius = cornerDp,
+      thickness = if (elevated) 1.25f else 1.0f,
+      surfaceOpacityMultiplier = if (elevated) 1.05f else 0.96f,
+      borderOpacityMultiplier = if (elevated) 1.1f else 0.85f,
+      drawShadow = elevated,
+    )
+  }
   val fillColor = if (elevated) palette.glassElevated else palette.glassSurface
   if (isV2 && !elevated) {
     return this
@@ -75,6 +87,17 @@ fun Modifier.edgeGlassDock(
   shape: Shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp),
 ): Modifier {
   val palette = LocalIdePalette.current
+  val settings = LocalEditorSettings.current
+  if (settings.liquidGlassEnabled) {
+    return this.liquidGlassSurface(
+      shape = shape,
+      cornerRadius = 14.dp,
+      thickness = 1.12f,
+      surfaceOpacityMultiplier = 0.98f,
+      borderOpacityMultiplier = 0.7f,
+      drawShadow = false,
+    )
+  }
   return this
     .clip(shape)
     .background(palette.glassDockBg, shape)

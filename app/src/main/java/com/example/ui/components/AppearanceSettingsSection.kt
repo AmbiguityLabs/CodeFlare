@@ -104,6 +104,7 @@ import com.example.data.security.FloatingBarStyleConfig
 import com.example.data.security.IconLabelBehavior
 import com.example.data.security.PopupMenuStyleConfig
 import com.example.editor.SyntaxHighlighter
+import androidx.compose.runtime.CompositionLocalProvider
 import com.example.ui.theme.Ca
 import com.example.ui.theme.CaAccent
 import com.example.ui.theme.CaMotion
@@ -111,10 +112,15 @@ import com.example.ui.theme.CodeStylePreset
 import com.example.ui.theme.EditorBackgroundPreset
 import com.example.ui.theme.EditorThemePreset
 import com.example.ui.theme.JetBrainsMono
+import com.example.ui.theme.LiquidGlassBackdropState
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.LocalLiquidGlassBackdrop
 import com.example.ui.theme.UiStyleVersion
 import com.example.ui.theme.applyCodeStylePreset
+import com.example.ui.theme.liquidGlassSurface
+import com.example.ui.theme.liquidGlassTouchGlow
 import com.example.ui.theme.paletteFor
+import com.example.ui.theme.rememberLiquidGlassAdaptiveColors
 import java.io.File
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -362,6 +368,231 @@ fun AppearanceHubContent(
           }
         }
       }
+    }
+
+    SettingsCard(title = "Liquid Glass") {
+      SettingsToggleRow(
+        title = "Liquid Glass Material",
+        description = "Real-time edge lensing, adaptive shadows, and internal touch glow",
+        checked = settings.liquidGlassEnabled,
+        horizontalPadding = 0.dp,
+        modifier = Modifier.testTag("settings_liquid_glass_toggle"),
+        onCheckedChange = { enabled -> onUpdateSettings { it.copy(liquidGlassEnabled = enabled) } },
+      )
+
+      var previewBrightBackdrop by remember(effectiveDark) { mutableStateOf(!effectiveDark) }
+      val previewBackdrop =
+        LiquidGlassBackdropState(
+          luminance = if (previewBrightBackdrop) 0.88f else 0.12f,
+          contentDensity = 0.84f,
+          scrollOffsetPx = 24f,
+          accentHint = scheme.primary,
+        )
+      val previewShape = RoundedCornerShape(Ca.radius.control)
+      val bgStart = if (previewBrightBackdrop) Color(0xFFF3F6FB) else Color(0xFF0C1018)
+      val bgMid = if (previewBrightBackdrop) scheme.primaryContainer else scheme.primary.copy(alpha = 0.30f)
+      val codeInk = if (previewBrightBackdrop) Color(0xFF1F2937) else Color(0xFFD6E2F0)
+
+      Box(
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .height(104.dp)
+            .clip(previewShape)
+            .background(Brush.linearGradient(listOf(bgStart, bgMid, bgStart)))
+            .border(0.75.dp, scheme.outlineVariant.copy(alpha = 0.55f), previewShape),
+      ) {
+        Column(
+          modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp),
+          verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Text(
+            text = "export default { fetch(req) { return Response.json({ ok: true }); } }",
+            fontFamily = JetBrainsMono,
+            fontSize = 10.sp,
+            color = codeInk.copy(alpha = 0.72f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          Text(
+            text = "const lens = refract(backdrop, thickness * tint);",
+            fontFamily = JetBrainsMono,
+            fontSize = 10.sp,
+            color = scheme.primary.copy(alpha = if (previewBrightBackdrop) 0.85f else 0.90f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+
+        CompositionLocalProvider(LocalLiquidGlassBackdrop provides previewBackdrop) {
+          val adaptive =
+            rememberLiquidGlassAdaptiveColors(
+              palette = palette,
+              tintFraction = settings.liquidGlassTint,
+              thickness = 1.3f,
+              backdropOverride = previewBackdrop,
+            )
+          Row(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            Row(
+              modifier =
+                Modifier
+                  .height(38.dp)
+                  .liquidGlassSurface(
+                    shape = RoundedCornerShape(999.dp),
+                    cornerRadius = 999.dp,
+                    thickness = 1.25f,
+                    tintFraction = settings.liquidGlassTint,
+                    enabled = settings.liquidGlassEnabled,
+                    backdropOverride = previewBackdrop,
+                  )
+                  .liquidGlassTouchGlow(glowColor = scheme.primary, enabled = settings.liquidGlassEnabled)
+                  .padding(horizontal = 10.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Box(
+                modifier =
+                  Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(palette.activePillBg.copy(alpha = 0.85f))
+                    .clickable {}
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+              ) {
+                Text(
+                  text = "Code",
+                  fontSize = 11.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = palette.activePillFg,
+                )
+              }
+              Text(
+                text = "Preview",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = adaptive.foregroundPrimary,
+              )
+            }
+
+            Box(
+              modifier =
+                Modifier
+                  .height(32.dp)
+                  .liquidGlassSurface(
+                    shape = RoundedCornerShape(12.dp),
+                    cornerRadius = 12.dp,
+                    thickness = 1.65f,
+                    tintFraction = settings.liquidGlassTint,
+                    enabled = settings.liquidGlassEnabled,
+                    backdropOverride = previewBackdrop,
+                  )
+                  .liquidGlassTouchGlow(glowColor = scheme.primary, enabled = settings.liquidGlassEnabled)
+                  .clickable { previewBrightBackdrop = !previewBrightBackdrop }
+                  .padding(horizontal = 10.dp)
+                  .testTag("settings_liquid_glass_preview_backdrop"),
+              contentAlignment = Alignment.Center,
+            ) {
+              Text(
+                text = if (previewBrightBackdrop) "Bright" else "Dark",
+                fontFamily = JetBrainsMono,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = adaptive.foregroundPrimary,
+              )
+            }
+          }
+        }
+      }
+
+      val tintPercent = (settings.liquidGlassTint.coerceIn(0f, 1f) * 100f).roundToInt()
+      val tintStyleLabel =
+        when {
+          tintPercent <= 18 -> "Clear"
+          tintPercent >= 78 -> "Tinted"
+          else -> "Balanced"
+        }
+      Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+              text = "Glass Appearance",
+              color = scheme.onSurface,
+              style = MaterialTheme.typography.bodyLarge,
+              fontWeight = FontWeight.Medium,
+            )
+            Text(
+              text = "Slide between transparent optical lensing and rich frosted tint",
+              color = scheme.onSurfaceVariant,
+              style = MaterialTheme.typography.bodySmall,
+            )
+          }
+          Box(
+            modifier =
+              Modifier
+                .clip(RoundedCornerShape(Ca.radius.pill))
+                .background(scheme.primaryContainer)
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+          ) {
+            Text(
+              text = "$tintStyleLabel · $tintPercent%",
+              fontFamily = JetBrainsMono,
+              fontSize = 10.5.sp,
+              fontWeight = FontWeight.SemiBold,
+              color = scheme.onPrimaryContainer,
+            )
+          }
+        }
+
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          Text(
+            text = "Clear",
+            fontFamily = JetBrainsMono,
+            fontSize = 10.5.sp,
+            color = if (tintPercent < 40) scheme.primary else scheme.onSurfaceVariant,
+            fontWeight = if (tintPercent < 40) FontWeight.SemiBold else FontWeight.Medium,
+          )
+          Slider(
+            value = settings.liquidGlassTint.coerceIn(0f, 1f),
+            onValueChange = { next ->
+              onUpdateSettings { it.copy(liquidGlassTint = next.coerceIn(0f, 1f)) }
+            },
+            valueRange = 0f..1f,
+            enabled = settings.liquidGlassEnabled,
+            modifier = Modifier.weight(1f).testTag("settings_liquid_glass_tint_slider"),
+          )
+          Text(
+            text = "Tinted",
+            fontFamily = JetBrainsMono,
+            fontSize = 10.5.sp,
+            color = if (tintPercent > 60) scheme.primary else scheme.onSurfaceVariant,
+            fontWeight = if (tintPercent > 60) FontWeight.SemiBold else FontWeight.Medium,
+          )
+        }
+      }
+
+      SettingsDivider()
+
+      SettingsToggleRow(
+        title = "Tilt Light Reflections",
+        description = "Shift edge specular sheen dynamically as you tilt your phone",
+        checked = settings.liquidGlassMotionHighlights,
+        horizontalPadding = 0.dp,
+        modifier = Modifier.testTag("settings_liquid_glass_tilt_toggle"),
+        onCheckedChange = { enabled ->
+          onUpdateSettings { it.copy(liquidGlassMotionHighlights = enabled) }
+        },
+      )
     }
 
     SettingsFoldableSection(
