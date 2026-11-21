@@ -123,6 +123,7 @@ import com.example.ui.components.BatchUploadOptionsDialog
 import com.example.ui.components.ChangeSubdomainDialog
 import com.example.ui.components.CloudflareInfraPanel
 import com.example.ui.components.CodeEditorPane
+import com.example.ui.components.CodeflareAutoEmblem
 import com.example.ui.components.CommandPaletteDialog
 import com.example.ui.components.ConflictResolverModal
 import com.example.ui.components.ConsoleView
@@ -941,6 +942,23 @@ fun IdeWorkspaceScreen(
                 modifier = Modifier.size(18.dp),
               )
             }
+
+            CodeflareAutoEmblem(
+              actionNonce = uiState.emblemActivityNonce,
+              isSyncing =
+                uiState.isOpeningWorker ||
+                  uiState.isDeploying ||
+                  uiState.isGitHubBusy ||
+                  uiState.isPagesBusy ||
+                  uiState.isPagesDirectUploading ||
+                  uiState.isInfraBusy ||
+                  uiState.isKvBusy ||
+                  uiState.isRunningLocalScript ||
+                  uiState.isRunningHttpTest ||
+                  uiState.isRunningPreviewHttp,
+              modifier = Modifier.size(24.dp),
+              testTag = "workspace_animated_emblem",
+            )
 
             Row(
               modifier =

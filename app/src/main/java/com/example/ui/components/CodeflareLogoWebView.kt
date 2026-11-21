@@ -10,47 +10,35 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import com.example.R
 import com.example.ui.theme.LocalIdePalette
 import com.example.util.HardwareSpeedProfiler
 import java.util.Locale
+import kotlin.random.Random
+import kotlinx.coroutines.delay
 
 private const val CODEFLARE_LOGO_ASSET_BASE = "file:///android_asset/codeflare_logo_flame_top_neon_heat.html"
 
@@ -89,6 +77,7 @@ fun CodeflareAnimatedLogoView(
   replayTrigger: Int = 0,
   tapToReplay: Boolean = false,
   speedMultiplier: Float = rememberHardwareAnimationSpeed(),
+  onPageReady: () -> Unit = {},
   testTag: String = "codeflare_animated_logo",
 ) {
   val palette = LocalIdePalette.current
@@ -169,6 +158,11 @@ fun CodeflareAnimatedLogoView(
                 overScrollMode = View.OVER_SCROLL_NEVER
                 setOnLongClickListener { true }
                 isLongClickable = false
+                if (embedOnly && !tapToReplay) {
+                  isClickable = false
+                  isFocusable = false
+                  isFocusableInTouchMode = false
+                }
 
                 settings.apply {
                   javaScriptEnabled = true
@@ -206,6 +200,7 @@ fun CodeflareAnimatedLogoView(
                     override fun onPageFinished(view: WebView?, url: String?) {
                       super.onPageFinished(view, url)
                       isPageReady = true
+                      onPageReady()
                       val formatted = String.format(Locale.US, "%.2f", speedMultiplier.coerceIn(0.5f, 3.0f))
                       view?.evaluateJavascript(
                         "window.setHostTheme && window.setHostTheme(${palette.isDark}); window.setHardwareSpeed && window.setHardwareSpeed($formatted, false);",
@@ -230,72 +225,97 @@ fun CodeflareAnimatedLogoView(
   }
 }
 
+/**
+ * Compact inline CodeFlare emblem that renders the HTML logo animation directly
+ * inside a small header slot (no click-to-popup dialog), replaying automatically
+ * at randomized idle intervals as well as on save, sync, and user actions.
+ */
 @Composable
-fun CodeflareEmblemDialog(
-  onDismiss: () -> Unit,
+fun CodeflareAutoEmblem(
+  modifier: Modifier = Modifier,
+  actionNonce: Long = 0L,
+  isSyncing: Boolean = false,
+  minIntervalMs: Long = 9_000L,
+  maxIntervalMs: Long = 22_000L,
+  testTag: String = "codeflare_auto_emblem",
 ) {
-  val palette = LocalIdePalette.current
+  val context = LocalContext.current
   val speed = rememberHardwareAnimationSpeed()
-  var replayNonce by remember { mutableStateOf(0) }
+  val reducedMotion =
+    remember(context) {
+      HardwareSpeedProfiler.inspectDevice(context).isReducedMotionPreferred
+    }
+  val sequenceDurationMs = remember(speed) { HardwareSpeedProfiler.computeSequenceDurationMs(speed) }
 
-  Dialog(
-    onDismissRequest = onDismiss,
-    properties = DialogProperties(usePlatformDefaultWidth = false),
-  ) {
-    Surface(
-      shape = RoundedCornerShape(24.dp),
-      color = if (palette.isDark) Color(0xFF0B0D1E) else Color(0xFFF4F5FB),
-      tonalElevation = 6.dp,
-      modifier =
-        Modifier
-          .fillMaxWidth(0.94f)
-          .widthIn(max = 540.dp)
-          .padding(vertical = 16.dp),
-    ) {
-      Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-          modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 8.dp, top = 10.dp, bottom = 2.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-          Text(
-            text = "CodeFlare",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = if (palette.isDark) Color(0xFFEEF0FF) else Color(0xFF10122E),
-          )
-          Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(
-              onClick = { replayNonce += 1 },
-              modifier = Modifier.testTag("emblem_dialog_replay"),
-            ) {
-              Icon(
-                imageVector = Icons.Outlined.Refresh,
-                contentDescription = "Replay animation",
-                tint = if (palette.isDark) Color(0xFFEEF0FF) else Color(0xFF10122E),
-              )
-            }
-            IconButton(
-              onClick = onDismiss,
-              modifier = Modifier.testTag("emblem_dialog_close"),
-            ) {
-              Icon(
-                imageVector = Icons.Outlined.Close,
-                contentDescription = "Close",
-                tint = if (palette.isDark) Color(0xFFA3A8D0) else Color(0xFF5A5F86),
-              )
-            }
-          }
-        }
-        CodeflareAnimatedLogoView(
-          embedOnly = false,
-          replayTrigger = replayNonce,
-          tapToReplay = false,
-          speedMultiplier = speed,
-          modifier = Modifier.fillMaxWidth().height(540.dp),
-          testTag = "codeflare_emblem_showcase",
-        )
+  var replayNonce by remember { mutableIntStateOf(0) }
+  var isPageReady by remember { mutableStateOf(false) }
+  var lastPlayStartMs by remember { mutableLongStateOf(0L) }
+  var hasInitializedObserver by remember { mutableStateOf(false) }
+  var prevActionNonce by remember { mutableLongStateOf(actionNonce) }
+  var prevSyncing by remember { mutableStateOf(isSyncing) }
+
+  // Random-interval idle auto-playback (resets whenever replayNonce changes)
+  LaunchedEffect(replayNonce, isPageReady, reducedMotion, minIntervalMs, maxIntervalMs) {
+    if (!isPageReady || reducedMotion) return@LaunchedEffect
+    if (lastPlayStartMs == 0L) {
+      lastPlayStartMs = System.currentTimeMillis()
+    }
+    val safeMin = minIntervalMs.coerceAtLeast(3_000L)
+    val safeMax = maxIntervalMs.coerceAtLeast(safeMin + 1_000L)
+    val randomGap = Random.nextLong(safeMin, safeMax + 1L)
+    delay(sequenceDurationMs + randomGap)
+    lastPlayStartMs = System.currentTimeMillis()
+    replayNonce += 1
+  }
+
+  // Automatic small inline playback on save, sync, or workspace/app actions
+  LaunchedEffect(actionNonce, isSyncing, isPageReady, reducedMotion) {
+    if (!hasInitializedObserver) {
+      hasInitializedObserver = true
+      prevActionNonce = actionNonce
+      prevSyncing = isSyncing
+      return@LaunchedEffect
+    }
+    val actionChanged = actionNonce != prevActionNonce
+    val syncToggled = isSyncing != prevSyncing
+    prevActionNonce = actionNonce
+    prevSyncing = isSyncing
+
+    if (!isPageReady || reducedMotion) return@LaunchedEffect
+    if (actionChanged || syncToggled) {
+      val now = System.currentTimeMillis()
+      if (now - lastPlayStartMs >= 2_500L) {
+        lastPlayStartMs = now
+        replayNonce += 1
       }
+    }
+  }
+
+  Box(
+    modifier = modifier.testTag(testTag),
+    contentAlignment = Alignment.Center,
+  ) {
+    CodeflareAnimatedLogoView(
+      embedOnly = true,
+      replayTrigger = replayNonce,
+      tapToReplay = false,
+      speedMultiplier = speed,
+      onPageReady = {
+        isPageReady = true
+        if (lastPlayStartMs == 0L) {
+          lastPlayStartMs = System.currentTimeMillis()
+        }
+      },
+      modifier = Modifier.fillMaxSize(),
+      testTag = "${testTag}_webview",
+    )
+    if (!isPageReady) {
+      Image(
+        painter = painterResource(id = R.drawable.codeflare_boot_emblem),
+        contentDescription = "CodeFlare emblem",
+        contentScale = ContentScale.Fit,
+        modifier = Modifier.fillMaxSize(),
+      )
     }
   }
 }

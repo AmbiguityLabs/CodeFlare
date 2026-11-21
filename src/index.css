@@ -1,0 +1,88 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("/fonts/plus_jakarta_sans.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/jetbrains_mono.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --cf-bg: #0b0d10;
+  --cf-surface: #12161c;
+  --cf-surface-2: #181e26;
+  --cf-surface-elevated: #1e2530;
+  --cf-outline: #26303d;
+  --cf-text: #e6edf3;
+  --cf-text-muted: #93a1b1;
+  --cf-accent: #f38020;
+  --cf-accent-soft: rgba(243, 128, 32, 0.16);
+  --cf-cyan: #58a6ff;
+  --cf-green: #2ee59d;
+  --cf-red: #ff5d6c;
+  --cf-amber: #fbbf24;
+  --cf-bar-opacity: 0.94;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background-color: var(--cf-bg);
+  color: var(--cf-text);
+  overflow: hidden;
+}
+
+.font-mono-code {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Thin subtle scrollbars for IDE panes */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.22);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.38);
+}
+
+@keyframes candle-blink {
+  0%, 49% {
+    opacity: 1;
+  }
+  50%, 100% {
+    opacity: 0.18;
+  }
+}
+
+.animate-candle-blink {
+  animation: candle-blink 1.05s infinite ease-in-out;
+}

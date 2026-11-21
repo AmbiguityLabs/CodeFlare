@@ -135,6 +135,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -150,6 +151,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
@@ -393,6 +395,7 @@ data class IdeUiState(
   val zipImportPreview: ZipPreviewState? = null,
   val pendingUnsavedWarning: PendingUnsavedWarning? = null,
   val statusMessage: String? = null,
+  val emblemActivityNonce: Long = 0L,
 ) {
   val activeFile: WorkerFile?
     get() = workspace?.files?.firstOrNull { it.path == activeFilePath }
@@ -516,6 +519,16 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   private val pendingCloudDrafts = ConcurrentHashMap<String, AutoSavedWorkspaceDraft>()
   private var pendingRestoreSessionPointer: AutoSaveSessionPointer? = null
   private var hasAttemptedAutoReopen = false
+  private val lastEmblemActivityMs = AtomicLong(0L)
+
+  fun noteEmblemActivity(force: Boolean = false) {
+    val now = System.currentTimeMillis()
+    val prev = lastEmblemActivityMs.get()
+    if (!force && now - prev < 750L) return
+    if (lastEmblemActivityMs.compareAndSet(prev, now) || force) {
+      _uiState.update { it.copy(emblemActivityNonce = it.emblemActivityNonce + 1L) }
+    }
+  }
 
   private fun clearLocalAutoSaveTrackingForWorkspace(workspaceKey: String) {
     lastPersistedDraftDigests.remove(workspaceKey)
@@ -584,13 +597,58 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
         }
         is WorkspaceEvent.FileDeleted -> {
           ideCoreIndexExecutor.execute { memberUsageIndexer.removeFile(event.path) }
+          noteEmblemActivity()
         }
         is WorkspaceEvent.FilesRefactored -> {
           val ws = _uiState.value.workspace
           ideCoreIndexExecutor.execute { memberUsageIndexer.indexWorkspace(ws) }
+          noteEmblemActivity()
+        }
+        is WorkspaceEvent.FileCreated,
+        is WorkspaceEvent.FileRenamed -> {
+          noteEmblemActivity()
         }
         else -> Unit
       }
+    }
+
+    viewModelScope.launch {
+      _uiState
+        .map { state ->
+          listOf(
+            state.isBootstrapping,
+            state.isLoadingWorkers,
+            state.isOpeningWorker,
+            state.isDeploying,
+            state.isGitHubBusy,
+            state.isPagesBusy,
+            state.isPagesDirectUploading,
+            state.isInfraBusy,
+            state.isKvBusy,
+            state.isRunningLocalScript,
+            state.isRunningHttpTest,
+            state.isRunningPreviewHttp,
+            state.isTestingCfCredentials,
+            state.lastAutoSavedEpochMs,
+            state.statusMessage,
+            state.deployBannerMessage,
+            state.gitPushStatusMessage,
+            state.editorSettings,
+            state.selectedAccount?.id,
+            state.workspace?.scriptName,
+            state.ramWorkspaces.size,
+            state.workers.size,
+            state.pagesDeployments.size,
+            state.localGitCommits.size,
+          )
+        }
+        .distinctUntilChanged()
+        .drop(1)
+        .collect {
+          if (!_uiState.value.isBootstrapping) {
+            noteEmblemActivity()
+          }
+        }
     }
 
     viewModelScope.launch {
@@ -8749,6 +8807,7 @@ jobs:
               lastLocallyAutoSavedNonSpacing["${draft.workspaceKey}::${f.path}"] =
                 AutoSaveDraftStore.stripSpacing(f.content)
             }
+            noteEmblemActivity()
           }
           if (activeKey != null) {
             ramDb.getWorkspace(activeKey)?.let { projectDirManager.saveWorkspaceRecord(it) }
@@ -8764,6 +8823,7 @@ jobs:
             if (wsFile != null && liveContent != null && liveContent != wsFile.originalContent) {
               runCatching { Uri.parse(uriStr) }.getOrNull()?.let { uri ->
                 DeviceFileHelper.writeTextToUri(getApplication(), uri, liveContent)
+                noteEmblemActivity()
               }
             }
           }
@@ -8880,6 +8940,7 @@ jobs:
           activeFilePath = draft.activeFilePath,
           entryModulePath = draft.entryModulePath,
         )
+      noteEmblemActivity()
     } else if (forceSessionPointer) {
       autoSaveStore.saveLastActiveSession(pointer)
     }
@@ -9309,6 +9370,7 @@ jobs:
     val snapshot = ramDb.getWorkspace(workspaceKey) ?: return
     autoSaveIoScope.launch {
       projectDirManager.saveWorkspaceRecord(snapshot)
+      noteEmblemActivity()
       if (refreshSummary) {
         val summary = projectDirManager.computeStorageSummary()
         _uiState.update { it.copy(projectStorageSummary = summary) }

@@ -3,12 +3,12 @@
   "private": true,
   "version": "1.1.0",
   "type": "module",
-  "main": "server.js",
+  "main": "server.ts",
   "scripts": {
-    "dev": "node server.js",
-    "build": "node -e \"console.log('CodeFlare server build complete')\"",
-    "start": "node server.js",
-    "lint": "node --check server.js"
+    "dev": "tsx server.ts",
+    "build": "vite build",
+    "start": "node server.ts",
+    "lint": "tsc --noEmit"
   },
   "engines": {
     "node": ">=20"

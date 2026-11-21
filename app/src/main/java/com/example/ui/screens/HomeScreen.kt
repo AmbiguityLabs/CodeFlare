@@ -14,7 +14,6 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -91,21 +90,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.R
 import com.example.data.local.RamWorkspaceRecord
 import com.example.data.local.ZipImportTargetMode
 import com.example.data.remote.CfWorkerScript
 import com.example.data.repository.WorkerTemplate
 import com.example.ui.components.ChangeSubdomainDialog
-import com.example.ui.components.CodeflareEmblemDialog
+import com.example.ui.components.CodeflareAutoEmblem
 import com.example.ui.components.EdgeMenu
 import com.example.ui.components.EdgeMenuCompactItem
 import com.example.ui.components.EdgeMenuHeader
@@ -154,7 +150,6 @@ fun HomeScreen(
   var pendingDeleteLocalKey by remember { mutableStateOf<Pair<String, String>?>(null) }
   var pendingRenameTarget by remember { mutableStateOf<HomeRenameTarget?>(null) }
   var showChangeSubdomainDialog by remember { mutableStateOf(false) }
-  var showCodeflareEmblemDialog by remember { mutableStateOf(false) }
 
   val newWorkerFilesLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -364,10 +359,6 @@ fun HomeScreen(
         viewModel.updateAccountWorkersSubdomain(newSub)
       },
     )
-  }
-
-  if (showCodeflareEmblemDialog) {
-    CodeflareEmblemDialog(onDismiss = { showCodeflareEmblemDialog = false })
   }
 
   if (uiState.showHomeSettings) {
@@ -596,20 +587,24 @@ fun HomeScreen(
               Modifier
                 .widthIn(min = 84.dp)
                 .clip(RoundedCornerShape(10.dp))
-                .clickable(enabled = uiState.homeTab == HomeTab.PROJECTS) {
-                  showCodeflareEmblemDialog = true
-                }
                 .padding(horizontal = 4.dp, vertical = 2.dp)
                 .testTag("home_emblem_trigger"),
           ) {
-            if (uiState.homeTab == HomeTab.PROJECTS) {
-              Image(
-                painter = painterResource(id = R.drawable.codeflare_boot_emblem),
-                contentDescription = "CodeFlare emblem",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.size(26.dp).clip(RoundedCornerShape(7.dp)),
-              )
-            }
+            CodeflareAutoEmblem(
+              actionNonce = uiState.emblemActivityNonce,
+              isSyncing =
+                uiState.isLoadingWorkers ||
+                  uiState.isOpeningWorker ||
+                  uiState.isDeploying ||
+                  uiState.isGitHubBusy ||
+                  uiState.isPagesBusy ||
+                  uiState.isPagesDirectUploading ||
+                  uiState.isInfraBusy ||
+                  uiState.isKvBusy ||
+                  uiState.isTestingCfCredentials,
+              modifier = Modifier.size(30.dp),
+              testTag = "home_animated_emblem",
+            )
             Text(
               text =
                 when (uiState.homeTab) {
