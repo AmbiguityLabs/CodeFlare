@@ -38,6 +38,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.CallMade
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.Add
@@ -810,6 +811,7 @@ fun BoxScope.EdgeSelectionToolbar(
   onSelectAll: () -> Unit,
   onComment: () -> Unit,
   onRename: () -> Unit,
+  onGoToDefinition: () -> Unit = {},
 ) {
   val palette = LocalIdePalette.current
   val labelBehavior = LocalIconLabelBehavior.current
@@ -841,7 +843,7 @@ fun BoxScope.EdgeSelectionToolbar(
   val hasCollapsedActions = !hasSelection && (!readOnly || canSelectAll)
   val hasVisibleQuickActions =
     if (hasSelection) showQuickActions else hasCollapsedActions
-  val hasCodeTools = hasSelection && showCodeActions && !readOnly
+  val hasCodeTools = hasSelection && showCodeActions
   val hasAnyControl = hasSmartTools || hasVisibleQuickActions || hasCodeTools
 
   AnimatedVisibility(
@@ -1051,16 +1053,28 @@ fun BoxScope.EdgeSelectionToolbar(
                   .background(palette.border.copy(alpha = 0.65f)),
             )
           }
-          ToolbarSlashButton(onClick = onComment, tag = "sel_comment")
+          if (!readOnly) {
+            ToolbarSlashButton(onClick = onComment, tag = "sel_comment")
+            IconRevealButton(
+              icon = Icons.Outlined.DriveFileRenameOutline,
+              revealedLabel = "Rename",
+              minimal = true,
+              contentTint = palette.textPrimary,
+              height = 28.dp,
+              iconSize = 15.dp,
+              onClick = onRename,
+              tag = "sel_rename",
+            )
+          }
           IconRevealButton(
-            icon = Icons.Outlined.DriveFileRenameOutline,
-            revealedLabel = "Rename",
+            icon = Icons.AutoMirrored.Outlined.CallMade,
+            revealedLabel = "Def",
             minimal = true,
-            contentTint = palette.textPrimary,
+            contentTint = palette.activePillFg,
             height = 28.dp,
             iconSize = 15.dp,
-            onClick = onRename,
-            tag = "sel_rename",
+            onClick = onGoToDefinition,
+            tag = "sel_go_to_def",
           )
         }
       }

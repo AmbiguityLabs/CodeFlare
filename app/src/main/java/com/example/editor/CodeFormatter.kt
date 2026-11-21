@@ -7,6 +7,24 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 object CodeFormatter {
+  private val VOID_HTML_TAGS =
+    setOf(
+      "area",
+      "base",
+      "br",
+      "col",
+      "embed",
+      "hr",
+      "img",
+      "input",
+      "link",
+      "meta",
+      "param",
+      "source",
+      "track",
+      "wbr",
+    )
+
   fun format(code: String, language: WorkerLanguage, tabSize: Int = 2): String {
     if (language == WorkerLanguage.JSON) {
       val trimmed = code.trim()
@@ -16,11 +34,20 @@ object CodeFormatter {
         }
         .getOrDefault(code)
     }
+    if (language == WorkerLanguage.CSS) {
+      return formatBraceLanguage(code, tabSize)
+    }
+    if (language == WorkerLanguage.HTML) {
+      return formatHtml(code, tabSize)
+    }
     if (language != WorkerLanguage.JAVASCRIPT && language != WorkerLanguage.TYPESCRIPT) {
       return code
     }
+    return formatBraceLanguage(code, tabSize)
+  }
 
-    val indentUnit = " ".repeat(tabSize)
+  private fun formatBraceLanguage(code: String, tabSize: Int): String {
+    val indentUnit = " ".repeat(tabSize.coerceIn(1, 8))
     var indent = 0
     val out = StringBuilder()
     val lines = code.lines()
@@ -46,6 +73,42 @@ object CodeFormatter {
         indent += delta
       } else if (delta < 0 && !trimmed.startsWith("}") && !trimmed.startsWith("]")) {
         indent = (indent + delta).coerceAtLeast(0)
+      }
+    }
+    return out.toString()
+  }
+
+  private fun formatHtml(code: String, tabSize: Int): String {
+    val indentUnit = " ".repeat(tabSize.coerceIn(1, 8))
+    var indent = 0
+    val out = StringBuilder()
+    val lines = code.lines()
+    val closingTagRegex = Regex("""^</([a-zA-Z0-9:-]+)\b[^>]*>""")
+    val openingTagRegex = Regex("""^<([a-zA-Z0-9:-]+)\b[^>]*>""")
+
+    lines.forEachIndexed { idx, rawLine ->
+      val trimmed = rawLine.trim()
+      if (trimmed.isEmpty()) {
+        if (idx < lines.lastIndex) out.append('\n')
+        return@forEachIndexed
+      }
+
+      val startsWithClose = closingTagRegex.containsMatchIn(trimmed)
+      if (startsWithClose) {
+        indent = (indent - 1).coerceAtLeast(0)
+      }
+
+      out.append(indentUnit.repeat(indent)).append(trimmed)
+      if (idx < lines.lastIndex) out.append('\n')
+
+      val openMatch = openingTagRegex.find(trimmed)
+      if (!startsWithClose && openMatch != null && !trimmed.startsWith("<!") && !trimmed.startsWith("<?")) {
+        val tagName = openMatch.groupValues[1].lowercase()
+        val isSelfClosing = trimmed.endsWith("/>") || tagName in VOID_HTML_TAGS
+        val closesOnSameLine = trimmed.contains("</$tagName>", ignoreCase = true)
+        if (!isSelfClosing && !closesOnSameLine) {
+          indent++
+        }
       }
     }
     return out.toString()

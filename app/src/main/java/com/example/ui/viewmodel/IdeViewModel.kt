@@ -36,6 +36,7 @@ import com.example.data.local.ZipImportPlan
 import com.example.data.local.ZipImportTargetMode
 import com.example.data.local.ZipPreviewState
 import com.example.data.local.ZipWorkspaceImporter
+import com.example.data.local.WorkspaceZipExporter
 import com.example.data.remote.ApiAssertionResult
 import com.example.data.remote.ApiCollectionImporter
 import com.example.data.remote.ApiEnvVar
@@ -104,6 +105,7 @@ import com.example.editor.CodeAnalyzer
 import com.example.editor.CodeEditHelper
 import com.example.editor.CodeFormatter
 import com.example.editor.ConflictChoice
+import com.example.editor.DenoToolingEngine
 import com.example.editor.DiffFileOrigin
 import com.example.editor.FileDiffEntry
 import com.example.editor.LocalRunLogEntry
@@ -124,11 +126,13 @@ import com.example.idecore.completion.CompletionStatsStore
 import com.example.idecore.completion.EdgeCompletionEngine
 import com.example.idecore.completion.EdgeCompletionItem
 import com.example.idecore.completion.MemberUsageIndexer
+import com.example.idecore.search.DefinitionResolver
 import com.example.idecore.search.ProjectSearchOptions
 import com.example.idecore.search.ProjectSymbolHit
 import com.example.idecore.search.ProjectTextMatch
 import com.example.idecore.search.RenamePreview
 import com.example.idecore.search.WorkspaceSearchAndRefactor
+import com.example.idecore.snippets.CodeSnippetItem
 import com.example.ui.components.DiffReviewIntent
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -170,6 +174,12 @@ enum class ProjectMode {
   TEST,
   CONFIG,
   CONSOLE,
+}
+
+enum class SplitViewMode {
+  NONE,
+  CODE_PREVIEW,
+  DUAL_FILE,
 }
 
 enum class SidebarSection {
@@ -306,6 +316,9 @@ data class IdeUiState(
   val isEditorTopChromeHidden: Boolean = false,
   val isBottomDockHidden: Boolean = false,
   val isEditorBottomBarsHidden: Boolean = false,
+  val splitViewMode: SplitViewMode = SplitViewMode.NONE,
+  val secondaryFilePath: String? = null,
+  val isRunningDenoCheck: Boolean = false,
   val showHomeGitHubHub: Boolean = false,
   val showHomeSettings: Boolean = false,
   val isTestingCfCredentials: Boolean = false,
@@ -2509,6 +2522,140 @@ export default {
       }
   }
 
+  fun exportActiveWorkspaceZipToUri(uri: Uri) {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val ws = state.workspace
+    if (ws == null) {
+      _uiState.update { it.copy(statusMessage = "Open a workspace first") }
+      return
+    }
+    val filesSnapshot =
+      ws.files.map { wf ->
+        val liveText = state.editorFieldValues[wf.path]?.text
+        if (liveText != null && liveText != wf.content) wf.copy(content = liveText) else wf
+      }
+    val binarySnapshot = state.externalBinaryAssets.toMap()
+    val projectName = ws.scriptName
+    viewModelScope.launch {
+      val result =
+        withContext(Dispatchers.IO) {
+          runCatching {
+            val resolver = getApplication<Application>().contentResolver
+            resolver.openOutputStream(uri)?.use { os ->
+              WorkspaceZipExporter.exportToStream(filesSnapshot, os, binarySnapshot).getOrThrow()
+            } ?: error("Cannot open destination ZIP stream")
+          }
+        }
+      result
+        .onSuccess { summary ->
+          noteEmblemActivity()
+          _uiState.update {
+            it.copy(
+              statusMessage =
+                "Exported '$projectName.zip' (${summary.entryCount} file${if (summary.entryCount == 1) "" else "s"})",
+            )
+          }
+          appendLog("INFO", "Exported ZIP archive for '$projectName' (${summary.entryCount} files)")
+        }
+        .onFailure { err ->
+          _uiState.update {
+            it.copy(statusMessage = err.localizedMessage ?: "ZIP export failed")
+          }
+        }
+    }
+  }
+
+  fun exportRamWorkspaceZipToUri(ramKey: String, uri: Uri) {
+    syncActiveStateToRamDb()
+    val record = ramDb.getWorkspace(ramKey)
+    if (record == null) {
+      _uiState.update { it.copy(statusMessage = "Project not found in workspace store") }
+      return
+    }
+    val files = record.workingWorkspace.files
+    val projectName = record.scriptName
+    viewModelScope.launch {
+      val result =
+        withContext(Dispatchers.IO) {
+          runCatching {
+            val resolver = getApplication<Application>().contentResolver
+            resolver.openOutputStream(uri)?.use { os ->
+              WorkspaceZipExporter.exportToStream(files, os).getOrThrow()
+            } ?: error("Cannot open destination ZIP stream")
+          }
+        }
+      result
+        .onSuccess { summary ->
+          noteEmblemActivity()
+          _uiState.update {
+            it.copy(
+              statusMessage =
+                "Exported '$projectName.zip' (${summary.entryCount} file${if (summary.entryCount == 1) "" else "s"})",
+            )
+          }
+        }
+        .onFailure { err ->
+          _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "ZIP export failed") }
+        }
+    }
+  }
+
+  fun prepareShareWorkspaceZip(
+    ramKey: String? = null,
+    onReady: (File, String) -> Unit,
+  ) {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val activeKey = activeWorkspaceKey(state)
+    val files: List<WorkerFile>
+    val binaryAssets: Map<String, ByteArray>
+    val projectName: String
+    if (ramKey != null && ramKey != activeKey) {
+      val rec = ramDb.getWorkspace(ramKey)
+      if (rec == null) {
+        _uiState.update { it.copy(statusMessage = "Project not found to share") }
+        return
+      }
+      files = rec.workingWorkspace.files
+      binaryAssets = emptyMap()
+      projectName = rec.scriptName
+    } else {
+      val ws = state.workspace
+      if (ws == null) {
+        _uiState.update { it.copy(statusMessage = "Open a workspace first") }
+        return
+      }
+      files =
+        ws.files.map { wf ->
+          val liveText = state.editorFieldValues[wf.path]?.text
+          if (liveText != null && liveText != wf.content) wf.copy(content = liveText) else wf
+        }
+      binaryAssets = state.externalBinaryAssets.toMap()
+      projectName = ws.scriptName
+    }
+
+    viewModelScope.launch {
+      val fileResult =
+        withContext(Dispatchers.IO) {
+          WorkspaceZipExporter.exportToCacheFile(
+            cacheDir = getApplication<Application>().cacheDir,
+            projectName = projectName,
+            files = files,
+            binaryAssets = binaryAssets,
+          )
+        }
+      fileResult
+        .onSuccess { zipFile ->
+          noteEmblemActivity()
+          onReady(zipFile, projectName)
+        }
+        .onFailure { err ->
+          _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Could not prepare ZIP share") }
+        }
+    }
+  }
+
   fun importWorkspaceBundleFromUri(uri: Uri) {
     syncActiveStateToRamDb()
     viewModelScope.launch {
@@ -3353,15 +3500,59 @@ export default {
 
   fun formatActiveFile() {
     flushActiveEditorBuffer()
-    val file = _uiState.value.activeFile ?: return
+    val state = _uiState.value
+    val file = state.activeFile ?: return
     if (file.isVirtualReadOnly) return
-    val formatted = CodeFormatter.format(file.content, file.language, _uiState.value.editorSettings.tabSize)
-    if (formatted != file.content) {
-      val wsKey = activeWorkspaceKey() ?: "default"
-      localHistoryStore.recordSnapshot(wsKey, file.path, file.content, formatted, label = "Format")
-      val cursor = formatted.length.coerceAtMost(_uiState.value.activeTextFieldValue.selection.start)
-      updateEditorValue(TextFieldValue(formatted, TextRange(cursor)), bumpRevision = true)
-      _uiState.update { it.copy(statusMessage = "Formatted ${file.fileName}") }
+    val currentText = state.editorFieldValues[file.path]?.text ?: file.content
+    val tabSize = state.editorSettings.tabSize
+    viewModelScope.launch {
+      val res =
+        DenoToolingEngine.formatFileWithDenoOrFallback(
+          context = getApplication(),
+          filePath = file.path,
+          content = currentText,
+          language = file.language,
+          tabSize = tabSize,
+        )
+      val latest = _uiState.value.activeFile
+      if (latest == null || latest.path != file.path) return@launch
+      if (res.formatted != currentText) {
+        val wsKey = activeWorkspaceKey() ?: "default"
+        localHistoryStore.recordSnapshot(wsKey, file.path, currentText, res.formatted, label = "Format")
+        val cursor = res.formatted.length.coerceAtMost(_uiState.value.activeTextFieldValue.selection.start)
+        updateEditorValue(TextFieldValue(res.formatted, TextRange(cursor)), bumpRevision = true)
+        noteEmblemActivity()
+        _uiState.update { it.copy(statusMessage = "${res.note}: ${file.fileName}") }
+      } else {
+        _uiState.update { it.copy(statusMessage = "${file.fileName} is already formatted") }
+      }
+    }
+  }
+
+  fun saveActiveFileWithOptionalFormat() {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val file = state.activeFile
+    if (file != null && !file.isVirtualReadOnly && state.editorSettings.formatOnSave) {
+      val currentText = state.editorFieldValues[file.path]?.text ?: file.content
+      val formatted = CodeFormatter.format(currentText, file.language, state.editorSettings.tabSize)
+      if (formatted != currentText) {
+        val cursor = formatted.length.coerceAtMost(state.activeTextFieldValue.selection.start)
+        updateEditorValue(TextFieldValue(formatted, TextRange(cursor)), bumpRevision = true)
+      }
+    }
+    flushAutoSaveNow()
+    if (file != null && state.externalFileUris.containsKey(file.path)) {
+      saveActiveExternalFileNow()
+    } else if (file != null) {
+      noteEmblemActivity()
+      _uiState.update {
+        it.copy(
+          statusMessage =
+            if (state.editorSettings.formatOnSave) "Formatted & saved ${file.fileName}"
+            else "Saved ${file.fileName}",
+        )
+      }
     }
   }
 
@@ -4122,10 +4313,21 @@ export default {
     val active = state.activeFile ?: return
     val uriStr = state.externalFileUris[active.path] ?: return
     val uri = runCatching { Uri.parse(uriStr) }.getOrNull() ?: return
-    val content = state.editorFieldValues[active.path]?.text ?: active.content
+    val rawContent = state.editorFieldValues[active.path]?.text ?: active.content
+    val content =
+      if (state.editorSettings.formatOnSave && !active.isVirtualReadOnly) {
+        CodeFormatter.format(rawContent, active.language, state.editorSettings.tabSize)
+      } else {
+        rawContent
+      }
+    if (content != rawContent) {
+      val cursor = content.length.coerceAtMost(state.activeTextFieldValue.selection.start)
+      updateEditorValue(TextFieldValue(content, TextRange(cursor)), bumpRevision = true)
+    }
     viewModelScope.launch {
       DeviceFileHelper.writeTextToUri(getApplication(), uri, content)
         .onSuccess {
+          noteEmblemActivity()
           _uiState.update { cur ->
             val ws = cur.workspace ?: return@update cur
             val updated = ws.files.map { f -> if (f.path == active.path) f.copy(originalContent = content, content = content) else f }
@@ -9121,25 +9323,36 @@ jobs:
                 ?: error("Unable to read selected image")
 
             val bgDir = File(getApplication<Application>().filesDir, "editor_backgrounds").apply { mkdirs() }
-            bgDir.listFiles()?.forEach { runCatching { it.delete() } }
             val outFile = File(bgDir, "editor_bg_${System.currentTimeMillis()}.jpg")
             FileOutputStream(outFile).use { fos ->
               decoded.compress(Bitmap.CompressFormat.JPEG, 90, fos)
             }
             decoded.recycle()
+
+            // Prune oldest images beyond MAX_SAVED_BG_PATHS gallery capacity
+            val allSaved =
+              bgDir.listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() }.orEmpty()
+            allSaved.drop(EditorSettings.MAX_SAVED_BG_PATHS).forEach { old ->
+              runCatching { old.delete() }
+            }
             outFile.absolutePath
           }
         }
       savedResult
         .onSuccess { path ->
-          prefsStore.updateEditorSettings {
-            it.copy(
+          prefsStore.updateEditorSettings { cur ->
+            val updatedGallery =
+              (listOf(path) + cur.editorBgSavedPaths.filter { it != path && File(it).isFile })
+                .take(EditorSettings.MAX_SAVED_BG_PATHS)
+            cur.copy(
               editorBgPreset = "CUSTOM",
               editorBgImagePath = path,
+              editorBgSavedPaths = updatedGallery,
               editorBgOffsetX = 0f,
               editorBgOffsetY = 0f,
             )
           }
+          noteEmblemActivity()
           _uiState.update { it.copy(statusMessage = "Custom editor background updated") }
         }
         .onFailure { err ->
@@ -9148,22 +9361,60 @@ jobs:
     }
   }
 
-  fun clearCustomEditorBackground() {
+  fun selectSavedEditorBackground(path: String) {
+    if (path.isBlank()) return
+    if (!File(path).isFile) {
+      removeSavedEditorBackground(path)
+      return
+    }
+    updateEditorSettings { cur ->
+      val updatedGallery =
+        (listOf(path) + cur.editorBgSavedPaths.filter { it != path })
+          .take(EditorSettings.MAX_SAVED_BG_PATHS)
+      cur.copy(
+        editorBgPreset = "CUSTOM",
+        editorBgImagePath = path,
+        editorBgSavedPaths = updatedGallery,
+        editorBgOffsetX = 0f,
+        editorBgOffsetY = 0f,
+      )
+    }
+    _uiState.update { it.copy(statusMessage = "Switched saved backdrop") }
+  }
+
+  fun removeSavedEditorBackground(path: String) {
     viewModelScope.launch {
       withContext(Dispatchers.IO) {
-        val bgDir = File(getApplication<Application>().filesDir, "editor_backgrounds")
-        bgDir.listFiles()?.forEach { runCatching { it.delete() } }
+        runCatching { File(path).delete() }
       }
-      prefsStore.updateEditorSettings {
-        it.copy(
-          editorBgPreset = "NONE",
-          editorBgImagePath = "",
-          editorBgOffsetX = 0f,
-          editorBgOffsetY = 0f,
-        )
+      prefsStore.updateEditorSettings { cur ->
+        val remaining = cur.editorBgSavedPaths.filterNot { it == path }
+        val wasActive = cur.editorBgImagePath == path
+        if (wasActive) {
+          val fallbackPath = remaining.firstOrNull().orEmpty()
+          cur.copy(
+            editorBgSavedPaths = remaining,
+            editorBgImagePath = fallbackPath,
+            editorBgPreset = if (fallbackPath.isNotEmpty()) "CUSTOM" else "NONE",
+          )
+        } else {
+          cur.copy(editorBgSavedPaths = remaining)
+        }
       }
-      _uiState.update { it.copy(statusMessage = "Editor background reset to solid") }
+      _uiState.update { it.copy(statusMessage = "Removed saved wallpaper") }
     }
+  }
+
+  fun clearCustomEditorBackground() {
+    updateEditorSettings { cur ->
+      cur.copy(
+        editorBgPreset = "NONE",
+        editorBgImagePath = "",
+        editorBgOffsetX = 0f,
+        editorBgOffsetY = 0f,
+      )
+    }
+    _uiState.update { it.copy(statusMessage = "Editor background reset to solid") }
   }
 
   fun clearCloudflareCredentialTestMessage() {
@@ -9402,6 +9653,7 @@ jobs:
         documentText = documentText,
         cursor = cursor,
         language = language,
+        customSnippets = _uiState.value.editorSettings.customSnippets,
       )
     idePerfSampler.record("completion", (System.nanoTime() - t0) / 1_000_000L)
     return items
@@ -9667,5 +9919,168 @@ jobs:
         scheduleDraftSave()
       }
     }
+  }
+
+  // --- Deno Check & Lint / Go to Definition / Split View / Custom Snippets ---
+
+  fun runDenoCheckAndLint() {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val ws = state.workspace
+    if (ws == null) {
+      _uiState.update { it.copy(statusMessage = "Open a workspace to run Deno Check") }
+      return
+    }
+    if (state.isRunningDenoCheck) return
+
+    val liveFiles =
+      ws.files.map { wf ->
+        val live = state.editorFieldValues[wf.path]?.text
+        if (live != null && live != wf.content) wf.copy(content = live) else wf
+      }
+
+    _uiState.update {
+      it.copy(
+        isRunningDenoCheck = true,
+        statusMessage = "Running Deno check & lint…",
+      )
+    }
+
+    viewModelScope.launch {
+      val summary = DenoToolingEngine.runWorkspaceCheckAndLint(getApplication(), liveFiles)
+      noteEmblemActivity()
+      appendLog(
+        if (summary.diagnostics.any { it.severity == com.example.data.remote.DiagnosticSeverity.ERROR }) "WARN" else "INFO",
+        summary.summaryMessage,
+      )
+      _uiState.update { cur ->
+        cur.copy(
+          isRunningDenoCheck = false,
+          diagnostics = summary.diagnostics,
+          showBottomPanel =
+            if (summary.diagnostics.isNotEmpty()) true else cur.showBottomPanel,
+          activeBottomTab =
+            if (summary.diagnostics.isNotEmpty()) BottomPanelTab.PROBLEMS else cur.activeBottomTab,
+          statusMessage = summary.summaryMessage,
+        )
+      }
+    }
+  }
+
+  fun goToDefinitionAtCursor(
+    filePath: String? = _uiState.value.activeFilePath,
+    documentText: CharSequence? = null,
+    cursor: Int? = null,
+  ): Boolean {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val targetPath = filePath ?: state.activeFilePath
+    if (targetPath == null) {
+      _uiState.update { it.copy(statusMessage = "Open a file first") }
+      return false
+    }
+    val tfv = state.editorFieldValues[targetPath]
+    val textStr = documentText?.toString() ?: tfv?.text ?: state.workspace?.files?.firstOrNull { it.path == targetPath }?.content.orEmpty()
+    val offset = cursor ?: tfv?.selection?.end ?: 0
+
+    val resolved =
+      DefinitionResolver.resolveAt(
+        workspace = state.workspace,
+        editorFieldValues = state.editorFieldValues,
+        activeFilePath = targetPath,
+        documentText = textStr,
+        offset = offset,
+      )
+    if (resolved == null) {
+      _uiState.update { it.copy(statusMessage = "No definition found at cursor") }
+      return false
+    }
+    jumpToLine(resolved.filePath, resolved.line, resolved.column)
+    _uiState.update {
+      it.copy(
+        statusMessage = "Defined ${resolved.symbolName} → ${resolved.filePath.substringAfterLast('/')}:${resolved.line}",
+      )
+    }
+    return true
+  }
+
+  fun setSplitViewMode(mode: SplitViewMode) {
+    _uiState.update { cur ->
+      val editablePaths = cur.workspace?.files.orEmpty().filterNot { it.isVirtualReadOnly }.map { it.path }
+      val resolvedSecondary =
+        when (mode) {
+          SplitViewMode.DUAL_FILE -> {
+            val currentSec = cur.secondaryFilePath
+            if (currentSec != null && currentSec != cur.activeFilePath && currentSec in editablePaths) {
+              currentSec
+            } else {
+              cur.openTabPaths.firstOrNull { it != cur.activeFilePath && it in editablePaths }
+                ?: editablePaths.firstOrNull { it != cur.activeFilePath }
+                ?: cur.activeFilePath
+            }
+          }
+          SplitViewMode.CODE_PREVIEW -> {
+            val previewCandidate =
+              LocalWorkspacePreviewRenderer.findDefaultPreviewPath(cur.workspace, cur.activeFilePath)
+            previewCandidate ?: cur.secondaryFilePath
+          }
+          SplitViewMode.NONE -> cur.secondaryFilePath
+        }
+      cur.copy(
+        splitViewMode = mode,
+        secondaryFilePath = resolvedSecondary,
+        projectMode = if (mode != SplitViewMode.NONE) ProjectMode.CODE else cur.projectMode,
+      )
+    }
+  }
+
+  fun setSecondarySplitFile(path: String?) {
+    _uiState.update { cur -> cur.copy(secondaryFilePath = path) }
+  }
+
+  fun swapSplitFiles() {
+    val cur = _uiState.value
+    if (cur.splitViewMode != SplitViewMode.DUAL_FILE) return
+    val primary = cur.activeFilePath ?: return
+    val secondary = cur.secondaryFilePath ?: return
+    if (primary == secondary) return
+    openFileTab(secondary, recordHistory = true)
+    _uiState.update { it.copy(secondaryFilePath = primary) }
+  }
+
+  fun addCustomSnippet(
+    abbrev: String,
+    title: String,
+    tag: String,
+    code: String,
+    description: String = "",
+  ) {
+    val cleanAbbrev = abbrev.trim()
+    val cleanTitle = title.trim().ifBlank { cleanAbbrev }
+    val cleanTag = tag.trim().uppercase().ifBlank { "CUSTOM" }
+    if (cleanAbbrev.isEmpty() || code.isBlank()) return
+
+    val newItem =
+      CodeSnippetItem(
+        id = "custom_${System.currentTimeMillis()}",
+        abbrev = cleanAbbrev,
+        title = cleanTitle,
+        tag = cleanTag,
+        code = code,
+        description = description.trim(),
+        isCustom = true,
+      )
+    updateEditorSettings { cur ->
+      val deduped = cur.customSnippets.filterNot { it.abbrev.equals(cleanAbbrev, ignoreCase = true) }
+      cur.copy(customSnippets = listOf(newItem) + deduped)
+    }
+    _uiState.update { it.copy(statusMessage = "Saved snippet '$cleanAbbrev'") }
+  }
+
+  fun deleteCustomSnippet(snippetId: String) {
+    updateEditorSettings { cur ->
+      cur.copy(customSnippets = cur.customSnippets.filterNot { it.id == snippetId })
+    }
+    _uiState.update { it.copy(statusMessage = "Deleted custom snippet") }
   }
 }

@@ -16,9 +16,11 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,6 +29,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -36,13 +39,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.CallMade
 import androidx.compose.material.icons.automirrored.outlined.FormatIndentIncrease
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CheckCircleOutline
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.ErrorOutline
@@ -54,12 +60,16 @@ import androidx.compose.material.icons.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.ListAlt
 import androidx.compose.material.icons.outlined.NoteAdd
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.RocketLaunch
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.StarOutline
+import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.Sync
+import androidx.compose.material.icons.outlined.VerifiedUser
+import androidx.compose.material.icons.outlined.VerticalSplit
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material.icons.outlined.ZoomIn
@@ -112,9 +122,16 @@ import com.example.data.remote.DiagnosticSeverity
 import com.example.data.remote.WorkerLanguage
 import com.example.data.remote.WorkerWorkspace
 import com.example.data.security.EditorSettings
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.compose.ui.viewinterop.AndroidView
 import com.example.editor.CodeSymbol
 import com.example.editor.EditorCursorTelemetry
+import com.example.editor.LocalWorkspacePreviewRenderer
 import com.example.editor.MergeConflictResolver
+import com.example.editor.SyntaxHighlighter
 import com.example.editor.WranglerSyncParser
 import com.example.editor.canvas.EdgeCodeEditorSurface
 import com.example.editor.canvas.EdgeEditorController
@@ -129,6 +146,7 @@ import com.example.ui.theme.RoseError
 import com.example.ui.theme.UiStyleVersion
 import com.example.ui.theme.rememberGlassBorderStroke
 import com.example.ui.viewmodel.IdeUiState
+import com.example.ui.viewmodel.SplitViewMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -190,6 +208,13 @@ fun CodeEditorPane(
   onOpenLocalHistory: () -> Unit = {},
   onOpenProjectSearch: () -> Unit = {},
   onRunLocalScript: () -> Unit = {},
+  onRegisterInsertHook: (((String, Int) -> Unit)?) -> Unit = {},
+  onGoToDefinition: (filePath: String, text: CharSequence, cursor: Int) -> Unit = { _, _, _ -> },
+  onRunDenoCheck: () -> Unit = {},
+  onOpenSnippetsDialog: () -> Unit = {},
+  onSetSplitViewMode: (SplitViewMode) -> Unit = {},
+  onSelectSecondarySplitFile: (String?) -> Unit = {},
+  onSwapSplitFiles: () -> Unit = {},
   editorCommandRequest: Pair<Long, String>? = null,
   modifier: Modifier = Modifier,
 ) {
@@ -200,6 +225,15 @@ fun CodeEditorPane(
   val editorController = remember { EdgeEditorController() }
   val hudHolder = remember { EditorLiveHudHolder(uiState.editorSettings.zoomPercent) }
   val latestOnCodeChange by rememberUpdatedState(onCodeChange)
+
+  DisposableEffect(editorController) {
+    onRegisterInsertHook { text, cursorBack ->
+      editorController.insertSnippet(text, cursorBack)
+    }
+    onDispose {
+      onRegisterInsertHook(null)
+    }
+  }
 
   LaunchedEffect(editorCommandRequest) {
     val cmd = editorCommandRequest?.second ?: return@LaunchedEffect
@@ -354,6 +388,7 @@ fun CodeEditorPane(
         activeFile.path.equals("wrangler.json", ignoreCase = true) ||
         activeFile.path.equals("wrangler.toml", ignoreCase = true)
     var showSymbolOutlineMenu by remember { mutableStateOf(false) }
+    var showSplitModeMenu by remember { mutableStateOf(false) }
     var isDiagPillDismissed by remember(activeFile.path) { mutableStateOf(false) }
 
     var symbols by remember(activeFile.path, activeFile.language) {
@@ -568,6 +603,91 @@ fun CodeEditorPane(
                 iconSize = 15.dp,
                 tag = "rename_symbol_button",
               )
+              IconRevealButton(
+                icon = Icons.AutoMirrored.Outlined.CallMade,
+                revealedLabel = "Go to Def",
+                minimal = true,
+                onClick = {
+                  val text = editorController.currentCharSequence()
+                  val offset = hudHolder.telemetry.selectionEnd.coerceIn(0, text.length)
+                  flushThen { onGoToDefinition(activeFile.path, text, offset) }
+                },
+                height = 24.dp,
+                iconSize = 15.dp,
+                tag = "go_to_def_button",
+              )
+              IconRevealButton(
+                icon = Icons.Outlined.VerifiedUser,
+                revealedLabel = "Check",
+                minimal = true,
+                isBusy = uiState.isRunningDenoCheck,
+                onClick = { flushThen(onRunDenoCheck) },
+                height = 24.dp,
+                iconSize = 15.dp,
+                tag = "deno_check_button",
+              )
+            }
+
+            if (!activeFile.isVirtualReadOnly) {
+              IconRevealButton(
+                icon = Icons.Outlined.Code,
+                revealedLabel = "Snippets",
+                minimal = true,
+                onClick = { flushThen(onOpenSnippetsDialog) },
+                height = 24.dp,
+                iconSize = 15.dp,
+                tag = "snippets_dialog_button",
+              )
+            }
+
+            Box {
+              IconRevealButton(
+                icon = Icons.Outlined.VerticalSplit,
+                revealedLabel = "Split",
+                minimal = true,
+                active = uiState.splitViewMode != SplitViewMode.NONE,
+                onClick = { showSplitModeMenu = true },
+                height = 24.dp,
+                iconSize = 15.dp,
+                tag = "split_view_toggle_button",
+              )
+              EdgeMenu(
+                expanded = showSplitModeMenu,
+                onDismissRequest = { showSplitModeMenu = false },
+                minWidth = 200.dp,
+                maxWidth = 248.dp,
+              ) {
+                EdgeMenuHeader(
+                  title = "Split Workspace",
+                  leadingIcon = Icons.Outlined.VerticalSplit,
+                )
+                EdgeMenuCompactItem(
+                  label = "Single Editor",
+                  selected = uiState.splitViewMode == SplitViewMode.NONE,
+                  onClick = {
+                    showSplitModeMenu = false
+                    onSetSplitViewMode(SplitViewMode.NONE)
+                  },
+                )
+                EdgeMenuCompactItem(
+                  label = "Code + Live Preview",
+                  badgeText = "WEB",
+                  selected = uiState.splitViewMode == SplitViewMode.CODE_PREVIEW,
+                  onClick = {
+                    showSplitModeMenu = false
+                    onSetSplitViewMode(SplitViewMode.CODE_PREVIEW)
+                  },
+                )
+                EdgeMenuCompactItem(
+                  label = "Dual File Compare",
+                  badgeText = "2×",
+                  selected = uiState.splitViewMode == SplitViewMode.DUAL_FILE,
+                  onClick = {
+                    showSplitModeMenu = false
+                    onSetSplitViewMode(SplitViewMode.DUAL_FILE)
+                  },
+                )
+              }
             }
 
             if (isPreviewableFile) {
@@ -988,104 +1108,142 @@ fun CodeEditorPane(
     val hasBackdrop = rememberHasActiveEditorBackdrop(uiState.editorSettings)
     val bubbleController = remember { EditorBubbleController() }
 
-    Box(
+    BoxWithConstraints(
       modifier =
         Modifier
           .weight(1f)
           .fillMaxWidth()
           .clipToBounds(),
     ) {
-      if (hasBackdrop) {
-        EditorBackgroundLayer(
-          settings = uiState.editorSettings,
-          bubbleController = bubbleController,
-          modifier = Modifier.matchParentSize(),
-        )
+      val splitActive = uiState.splitViewMode != SplitViewMode.NONE
+      val sideBySide = splitActive && maxWidth >= 600.dp
+
+      val primaryEditorBox: @Composable (Modifier) -> Unit = { boxModifier ->
+        Box(modifier = boxModifier.clipToBounds()) {
+          if (hasBackdrop) {
+            EditorBackgroundLayer(
+              settings = uiState.editorSettings,
+              bubbleController = bubbleController,
+              modifier = Modifier.matchParentSize(),
+            )
+          }
+
+          EdgeCodeEditorSurface(
+            filePath = activeFile.path,
+            externalTfv = syncedTfv,
+            editorRevision = uiState.editorRevision,
+            originalContent = activeFile.originalContent,
+            language = activeFile.language,
+            editorSettings = uiState.editorSettings,
+            zoomPercent = committedZoomPercent,
+            hasCustomBg = hasBackdrop,
+            readOnly = activeFile.isVirtualReadOnly,
+            diagnostics = fileDiagnostics,
+            symbols = symbols,
+            findMatches = activeFindMatches,
+            activeFindMatchIndex = activeFindMatchIndex,
+            controller = editorController,
+            bubbleController = bubbleController,
+            onDebouncedSync = { synced -> latestOnCodeChange(synced) },
+            onTelemetryUpdate = { telemetry -> hudHolder.telemetry = telemetry },
+            onPinchZoomChanged = { zoom, pinching ->
+              hudHolder.liveZoomPercent = zoom
+              hudHolder.isPinching = pinching
+            },
+            onPinchZoomCommitted = { finalZoom ->
+              hudHolder.liveZoomPercent = finalZoom
+              hudHolder.isPinching = false
+              val prev = committedZoomPercent
+              committedZoomPercent = finalZoom
+              zoomHudBump++
+              if (finalZoom != prev) {
+                latestOnZoomPercentChange(finalZoom)
+              }
+            },
+            onRequestSmartRename = { ident -> flushThen { onRequestSmartRename(ident) } },
+            onToggleFindBar = { flushThen(onToggleFindBar) },
+            onGoToDefinition = { fp, txt, off -> flushThen { onGoToDefinition(fp, txt, off) } },
+            modifier = Modifier.fillMaxSize(),
+          )
+
+          FloatingSyntaxDiagnosticPill(
+            visible = actionableDiagnostics.isNotEmpty() && !uiState.isEditorTopChromeHidden && !isDiagPillDismissed,
+            filePath = activeFile.path,
+            diagnostics = actionableDiagnostics,
+            hudHolder = hudHolder,
+            onJumpToLocation = { path, line, col ->
+              flushThen { onJumpToLocation(path, line, col) }
+            },
+            onDismiss = { isDiagPillDismissed = true },
+            modifier =
+              Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = if (uiState.editorSettings.stickyHeaders) 28.dp else 6.dp, end = 8.dp),
+          )
+
+          EditorZoomHud(
+            visible = hudHolder.isPinching || showZoomHud,
+            zoomPercentProvider = { hudHolder.liveZoomPercent },
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 10.dp),
+          )
+
+          if (!activeFile.isVirtualReadOnly &&
+            !uiState.isEditorBottomBarsHidden &&
+            activeFile.language in setOf(
+              WorkerLanguage.JAVASCRIPT,
+              WorkerLanguage.TYPESCRIPT,
+              WorkerLanguage.JSON,
+              WorkerLanguage.HTML,
+              WorkerLanguage.CSS,
+            )
+          ) {
+            FloatingAutocompleteOverlay(
+              filePath = activeFile.path,
+              workspace = uiState.workspace,
+              language = activeFile.language,
+              editorSettings = uiState.editorSettings,
+              hudHolder = hudHolder,
+              editorController = editorController,
+              onComputeCompletions = onComputeCompletions,
+              onAcceptCompletion = onAcceptCompletion,
+              modifier =
+                Modifier
+                  .align(Alignment.BottomCenter)
+                  .fillMaxWidth()
+                  .padding(horizontal = 8.dp, vertical = 6.dp),
+            )
+          }
+        }
       }
 
-      EdgeCodeEditorSurface(
-        filePath = activeFile.path,
-        externalTfv = syncedTfv,
-        editorRevision = uiState.editorRevision,
-        originalContent = activeFile.originalContent,
-        language = activeFile.language,
-        editorSettings = uiState.editorSettings,
-        zoomPercent = committedZoomPercent,
-        hasCustomBg = hasBackdrop,
-        readOnly = activeFile.isVirtualReadOnly,
-        diagnostics = fileDiagnostics,
-        symbols = symbols,
-        findMatches = activeFindMatches,
-        activeFindMatchIndex = activeFindMatchIndex,
-        controller = editorController,
-        bubbleController = bubbleController,
-        onDebouncedSync = { synced -> latestOnCodeChange(synced) },
-        onTelemetryUpdate = { telemetry -> hudHolder.telemetry = telemetry },
-        onPinchZoomChanged = { zoom, pinching ->
-          hudHolder.liveZoomPercent = zoom
-          hudHolder.isPinching = pinching
-        },
-        onPinchZoomCommitted = { finalZoom ->
-          hudHolder.liveZoomPercent = finalZoom
-          hudHolder.isPinching = false
-          val prev = committedZoomPercent
-          committedZoomPercent = finalZoom
-          zoomHudBump++
-          if (finalZoom != prev) {
-            latestOnZoomPercentChange(finalZoom)
-          }
-        },
-        onRequestSmartRename = { ident -> flushThen { onRequestSmartRename(ident) } },
-        onToggleFindBar = { flushThen(onToggleFindBar) },
-        modifier = Modifier.fillMaxSize(),
-      )
-
-      FloatingSyntaxDiagnosticPill(
-        visible = actionableDiagnostics.isNotEmpty() && !uiState.isEditorTopChromeHidden && !isDiagPillDismissed,
-        filePath = activeFile.path,
-        diagnostics = actionableDiagnostics,
-        hudHolder = hudHolder,
-        onJumpToLocation = { path, line, col ->
-          flushThen { onJumpToLocation(path, line, col) }
-        },
-        onDismiss = { isDiagPillDismissed = true },
-        modifier =
-          Modifier
-            .align(Alignment.TopEnd)
-            .padding(top = if (uiState.editorSettings.stickyHeaders) 28.dp else 6.dp, end = 8.dp),
-      )
-
-      EditorZoomHud(
-        visible = hudHolder.isPinching || showZoomHud,
-        zoomPercentProvider = { hudHolder.liveZoomPercent },
-        modifier = Modifier.align(Alignment.TopCenter).padding(top = 10.dp),
-      )
-
-      if (!activeFile.isVirtualReadOnly &&
-        !uiState.isEditorBottomBarsHidden &&
-        activeFile.language in setOf(
-          WorkerLanguage.JAVASCRIPT,
-          WorkerLanguage.TYPESCRIPT,
-          WorkerLanguage.JSON,
-          WorkerLanguage.HTML,
-          WorkerLanguage.CSS,
-        )
-      ) {
-        FloatingAutocompleteOverlay(
-          filePath = activeFile.path,
-          workspace = uiState.workspace,
-          language = activeFile.language,
-          editorSettings = uiState.editorSettings,
-          hudHolder = hudHolder,
-          editorController = editorController,
-          onComputeCompletions = onComputeCompletions,
-          onAcceptCompletion = onAcceptCompletion,
-          modifier =
-            Modifier
-              .align(Alignment.BottomCenter)
-              .fillMaxWidth()
-              .padding(horizontal = 8.dp, vertical = 6.dp),
-        )
+      if (!splitActive) {
+        primaryEditorBox(Modifier.fillMaxSize())
+      } else if (sideBySide) {
+        Row(modifier = Modifier.fillMaxSize()) {
+          primaryEditorBox(Modifier.weight(1f).fillMaxHeight())
+          VerticalDivider(color = palette.border.copy(alpha = 0.7f), thickness = 1.dp)
+          SplitSecondaryPane(
+            uiState = uiState,
+            onSelectSecondaryFile = onSelectSecondarySplitFile,
+            onSwapSplitFiles = onSwapSplitFiles,
+            onOpenInPrimary = onSelectTab,
+            onCloseSplit = { onSetSplitViewMode(SplitViewMode.NONE) },
+            modifier = Modifier.weight(1f).fillMaxHeight(),
+          )
+        }
+      } else {
+        Column(modifier = Modifier.fillMaxSize()) {
+          primaryEditorBox(Modifier.weight(0.55f).fillMaxWidth())
+          HorizontalDivider(color = palette.border.copy(alpha = 0.7f), thickness = 1.dp)
+          SplitSecondaryPane(
+            uiState = uiState,
+            onSelectSecondaryFile = onSelectSecondarySplitFile,
+            onSwapSplitFiles = onSwapSplitFiles,
+            onOpenInPrimary = onSelectTab,
+            onCloseSplit = { onSetSplitViewMode(SplitViewMode.NONE) },
+            modifier = Modifier.weight(0.45f).fillMaxWidth(),
+          )
+        }
       }
     }
 
@@ -2267,6 +2425,253 @@ private fun EditorZoomControlCluster(
         tint = if (displayZoomPercent < 220) palette.textSecondary else palette.textMuted.copy(alpha = 0.4f),
         modifier = Modifier.size(12.dp),
       )
+    }
+  }
+}
+
+@Composable
+private fun SplitSecondaryPane(
+  uiState: IdeUiState,
+  onSelectSecondaryFile: (String?) -> Unit,
+  onSwapSplitFiles: () -> Unit,
+  onOpenInPrimary: (String) -> Unit,
+  onCloseSplit: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val palette = LocalIdePalette.current
+  val editableFiles =
+    remember(uiState.workspace) {
+      uiState.workspace?.files.orEmpty().filterNot { it.isVirtualReadOnly }
+    }
+  val previewableFiles =
+    remember(editableFiles) {
+      editableFiles.filter { LocalWorkspacePreviewRenderer.isPreviewableFile(it.path) }
+    }
+  var fileMenuOpen by remember { mutableStateOf(false) }
+  var previewReloadTick by remember { mutableIntStateOf(0) }
+
+  Column(modifier = modifier.background(palette.editorBg).testTag("split_secondary_pane")) {
+    Row(
+      modifier =
+        Modifier
+          .fillMaxWidth()
+          .height(30.dp)
+          .background(palette.chromeSurface)
+          .padding(horizontal = 8.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+      val headerTitle =
+        if (uiState.splitViewMode == SplitViewMode.CODE_PREVIEW) {
+          val previewTarget =
+            uiState.secondaryFilePath?.takeIf { LocalWorkspacePreviewRenderer.isPreviewableFile(it) }
+              ?: LocalWorkspacePreviewRenderer.findDefaultPreviewPath(uiState.workspace, uiState.activeFilePath)
+          "Preview · ${previewTarget?.substringAfterLast('/') ?: "Local"}"
+        } else {
+          val secPath = uiState.secondaryFilePath ?: "Pick File"
+          "Ref · ${secPath.substringAfterLast('/')}"
+        }
+
+      Box(modifier = Modifier.weight(1f)) {
+        Surface(
+          onClick = { fileMenuOpen = true },
+          shape = RoundedCornerShape(6.dp),
+          color = palette.chromePill,
+          border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.5f)),
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+          ) {
+            Text(
+              text = headerTitle,
+              fontFamily = JetBrainsMono,
+              fontSize = 10.sp,
+              fontWeight = FontWeight.Medium,
+              color = palette.textPrimary,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+            Icon(
+              imageVector = Icons.Outlined.KeyboardArrowDown,
+              contentDescription = "Choose split file",
+              tint = palette.textMuted,
+              modifier = Modifier.size(13.dp),
+            )
+          }
+        }
+        EdgeMenu(
+          expanded = fileMenuOpen,
+          onDismissRequest = { fileMenuOpen = false },
+          minWidth = 200.dp,
+          maxWidth = 260.dp,
+        ) {
+          val choices =
+            if (uiState.splitViewMode == SplitViewMode.CODE_PREVIEW) previewableFiles.ifEmpty { editableFiles }
+            else editableFiles
+          choices.forEach { wf ->
+            EdgeMenuCompactItem(
+              label = wf.path,
+              monospaced = true,
+              selected = wf.path == uiState.secondaryFilePath,
+              onClick = {
+                fileMenuOpen = false
+                onSelectSecondaryFile(wf.path)
+              },
+            )
+          }
+        }
+      }
+
+      if (uiState.splitViewMode == SplitViewMode.CODE_PREVIEW) {
+        IconButton(onClick = { previewReloadTick++ }, modifier = Modifier.size(24.dp)) {
+          Icon(Icons.Outlined.Refresh, contentDescription = "Reload preview", tint = palette.textSecondary, modifier = Modifier.size(14.dp))
+        }
+      } else {
+        IconButton(onClick = onSwapSplitFiles, modifier = Modifier.size(24.dp)) {
+          Icon(Icons.Outlined.SwapHoriz, contentDescription = "Swap panes", tint = palette.textSecondary, modifier = Modifier.size(14.dp))
+        }
+        uiState.secondaryFilePath?.let { secPath ->
+          TextButton(
+            onClick = { onOpenInPrimary(secPath) },
+            modifier = Modifier.height(24.dp),
+          ) {
+            Text("Edit", fontSize = 10.sp, color = palette.activePillFg)
+          }
+        }
+      }
+
+      IconButton(
+        onClick = onCloseSplit,
+        modifier = Modifier.size(24.dp).testTag("split_close_button"),
+      ) {
+        Icon(Icons.Outlined.Close, contentDescription = "Close split", tint = palette.textMuted, modifier = Modifier.size(14.dp))
+      }
+    }
+    HorizontalDivider(color = palette.border.copy(alpha = 0.4f), thickness = 0.5.dp)
+
+    if (uiState.splitViewMode == SplitViewMode.CODE_PREVIEW) {
+      val previewPath =
+        uiState.secondaryFilePath?.takeIf { LocalWorkspacePreviewRenderer.isPreviewableFile(it) }
+          ?: LocalWorkspacePreviewRenderer.findDefaultPreviewPath(uiState.workspace, uiState.activeFilePath)
+      if (previewPath == null) {
+        Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
+          Text(
+            text = "Add an .html, .md, or .svg file in this workspace to preview live side-by-side.",
+            style = MaterialTheme.typography.bodySmall,
+            color = palette.textMuted,
+            textAlign = TextAlign.Center,
+          )
+        }
+      } else {
+        val latestWorkspace by rememberUpdatedState(uiState.workspace)
+        val latestFieldValues by rememberUpdatedState(uiState.editorFieldValues)
+        val latestBinary by rememberUpdatedState(uiState.externalBinaryAssets)
+        val latestRootPath by rememberUpdatedState(uiState.externalProjectRootPath)
+        val isDark = palette.isDark
+        val targetUrl = remember(previewPath) { LocalWorkspacePreviewRenderer.localUrlForPath(previewPath) }
+        val activeRevision = uiState.editorRevision
+
+        var webViewRef by remember { mutableStateOf<WebView?>(null) }
+        DisposableEffect(Unit) {
+          onDispose {
+            webViewRef?.destroy()
+            webViewRef = null
+          }
+        }
+        LaunchedEffect(targetUrl, previewReloadTick, activeRevision) {
+          webViewRef?.loadUrl(targetUrl)
+        }
+
+        AndroidView(
+          factory = { ctx ->
+            WebView(ctx).apply {
+              settings.javaScriptEnabled = true
+              settings.domStorageEnabled = true
+              settings.allowFileAccess = false
+              webViewClient =
+                object : WebViewClient() {
+                  override fun shouldInterceptRequest(
+                    view: WebView?,
+                    request: WebResourceRequest?,
+                  ): WebResourceResponse? {
+                    val reqUrl = request?.url?.toString() ?: return null
+                    if (!LocalWorkspacePreviewRenderer.isLocalPreviewUrl(reqUrl)) return null
+                    val ws = latestWorkspace ?: return null
+                    val mergedFiles =
+                      ws.files.map { f ->
+                        val live = latestFieldValues[f.path]?.text
+                        if (live != null && live != f.content) f.copy(content = live) else f
+                      }
+                    val rootDir = latestRootPath?.let { java.io.File(it) }
+                    return LocalWorkspacePreviewRenderer.resolveWebResource(
+                      workspace = ws.copy(files = mergedFiles),
+                      requestUrl = reqUrl,
+                      isDarkTheme = isDark,
+                      externalBinaryAssets = latestBinary,
+                      externalRootDir = rootDir,
+                    )
+                  }
+                }
+              loadUrl(targetUrl)
+              webViewRef = this
+            }
+          },
+          modifier = Modifier.fillMaxSize(),
+        )
+      }
+    } else {
+      val secPath = uiState.secondaryFilePath
+      val secFile = editableFiles.firstOrNull { it.path == secPath }
+      if (secFile == null) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+          Text("Select another file to inspect side-by-side", style = MaterialTheme.typography.bodySmall, color = palette.textMuted)
+        }
+      } else {
+        val secContent = uiState.editorFieldValues[secFile.path]?.text ?: secFile.content
+        val highlighted =
+          remember(secFile.path, secContent, palette) {
+            SyntaxHighlighter.highlight(secContent, secFile.language, palette)
+          }
+        val lineCount = remember(secContent) { secContent.count { it == '\n' } + 1 }
+        val lineNumbersText = remember(lineCount) { (1..lineCount).joinToString("\n") }
+        val vScroll = rememberScrollState()
+        val hScroll = rememberScrollState()
+        Row(
+          modifier =
+            Modifier
+              .fillMaxSize()
+              .verticalScroll(vScroll)
+              .padding(vertical = 8.dp),
+        ) {
+          Text(
+            text = lineNumbersText,
+            fontFamily = JetBrainsMono,
+            fontSize = 11.5.sp,
+            lineHeight = 17.sp,
+            color = palette.textMuted.copy(alpha = 0.65f),
+            textAlign = TextAlign.End,
+            modifier =
+              Modifier
+                .background(palette.editorGutterBg.copy(alpha = 0.55f))
+                .padding(horizontal = 8.dp),
+          )
+          Text(
+            text = highlighted,
+            fontFamily = JetBrainsMono,
+            fontSize = 11.5.sp,
+            lineHeight = 17.sp,
+            color = palette.textPrimary,
+            softWrap = false,
+            modifier =
+              Modifier
+                .weight(1f)
+                .horizontalScroll(hScroll)
+                .padding(horizontal = 10.dp),
+          )
+        }
+      }
     }
   }
 }

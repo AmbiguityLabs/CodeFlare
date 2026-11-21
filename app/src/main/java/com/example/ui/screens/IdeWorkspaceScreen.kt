@@ -40,6 +40,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.CallMade
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.Api
@@ -70,14 +71,19 @@ import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Sensors
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Tag
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.UploadFile
+import androidx.compose.material.icons.outlined.VerifiedUser
+import androidx.compose.material.icons.outlined.VerticalSplit
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material.icons.outlined.Wallpaper
 import androidx.compose.material.icons.outlined.WarningAmber
+import androidx.core.content.FileProvider
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -117,7 +123,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.R
+import com.example.data.local.WorkspaceZipExporter
 import com.example.data.local.ZipImportTargetMode
+import com.example.idecore.snippets.CodeSnippetRegistry
 import com.example.ui.components.ApiTesterPane
 import com.example.ui.components.BatchUploadOptionsDialog
 import com.example.ui.components.ChangeSubdomainDialog
@@ -160,9 +168,12 @@ import com.example.ui.components.ProjectFilesSidebar
 import com.example.ui.components.RenameFileDialog
 import com.example.ui.components.RenameWorkerDialog
 import com.example.ui.components.SmartRenameSymbolDialog
+import com.example.ui.components.SnippetsLibraryDialog
 import com.example.ui.components.WorkerTestWindow
 import com.example.ui.components.UnsavedChangesWarningDialog
 import com.example.ui.components.ZipImportPreviewDialog
+import com.example.ui.screens.settings.AppearanceSubPage
+import com.example.ui.screens.settings.SettingsCategory
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
@@ -176,6 +187,7 @@ import com.example.ui.viewmodel.BottomPanelTab
 import com.example.ui.viewmodel.IdeUiState
 import com.example.ui.viewmodel.IdeViewModel
 import com.example.ui.viewmodel.ProjectMode
+import com.example.ui.viewmodel.SplitViewMode
 import kotlinx.coroutines.launch
 
 @Composable
@@ -205,7 +217,23 @@ fun IdeWorkspaceScreen(
   var showRenameSymbolDialog by remember { mutableStateOf(false) }
   var renameSymbolInitial by remember { mutableStateOf("") }
   var showGoToLineDialog by remember { mutableStateOf(false) }
+  var showSnippetsDialog by remember { mutableStateOf(false) }
+  var insertSnippetHook by remember { mutableStateOf<((String, Int) -> Unit)?>(null) }
+  var pendingSettingsCategory by remember { mutableStateOf<SettingsCategory?>(null) }
+  var pendingSettingsAppearanceSub by remember { mutableStateOf<AppearanceSubPage?>(null) }
+  var pendingSettingsExpandBg by remember { mutableStateOf(false) }
   var editorCommandRequest by remember { mutableStateOf<Pair<Long, String>?>(null) }
+
+  fun openSettingsScreen(
+    category: SettingsCategory? = null,
+    appearanceSubPage: AppearanceSubPage? = null,
+    expandEditorBg: Boolean = false,
+  ) {
+    pendingSettingsCategory = category
+    pendingSettingsAppearanceSub = appearanceSubPage
+    pendingSettingsExpandBg = expandEditorBg
+    showProjectSettingsModal = true
+  }
 
   fun dispatchEditorCommand(cmd: String) {
     viewModel.setProjectMode(ProjectMode.CODE)
@@ -235,6 +263,11 @@ fun IdeWorkspaceScreen(
   val exportWorkspaceBundleLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
       if (uri != null) viewModel.exportWorkspaceBundleToUri(uri)
+    }
+
+  val exportWorkspaceZipLauncher =
+    rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+      if (uri != null) viewModel.exportActiveWorkspaceZipToUri(uri)
     }
 
   val importWorkspaceBundleLauncher =
@@ -277,6 +310,32 @@ fun IdeWorkspaceScreen(
     val slug = (uiState.workspace?.scriptName ?: "worker").replace(Regex("[^a-zA-Z0-9._-]"), "-")
     exportWorkspaceBundleLauncher.launch("$slug-ram-bundle.json")
   }
+  val triggerExportWorkspaceZip = {
+    val name = WorkspaceZipExporter.suggestZipFileName(uiState.workspace?.scriptName ?: "worker")
+    exportWorkspaceZipLauncher.launch(name)
+  }
+  val triggerShareWorkspaceZip = {
+    viewModel.prepareShareWorkspaceZip { zipFile, projectName ->
+      runCatching {
+        val shareUri =
+          FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            zipFile,
+          )
+        val sendIntent =
+          Intent(Intent.ACTION_SEND).apply {
+            type = "application/zip"
+            putExtra(Intent.EXTRA_STREAM, shareUri)
+            putExtra(Intent.EXTRA_SUBJECT, "$projectName.zip")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+          }
+        context.startActivity(Intent.createChooser(sendIntent, "Share $projectName.zip"))
+      }.onFailure { err ->
+        viewModel.showStatus(err.localizedMessage ?: "Unable to share ZIP archive")
+      }
+    }
+  }
   val triggerImportWorkspaceBundle = {
     importWorkspaceBundleLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
   }
@@ -306,11 +365,17 @@ fun IdeWorkspaceScreen(
 
   BackHandler {
     when {
+      showSnippetsDialog -> showSnippetsDialog = false
       activeIdeSheetTab != null -> activeIdeSheetTab = null
       showGoToLineDialog -> showGoToLineDialog = false
       showRenameSymbolDialog -> showRenameSymbolDialog = false
       showProjectGitModal -> showProjectGitModal = false
-      showProjectSettingsModal -> showProjectSettingsModal = false
+      showProjectSettingsModal -> {
+        showProjectSettingsModal = false
+        pendingSettingsCategory = null
+        pendingSettingsAppearanceSub = null
+        pendingSettingsExpandBg = false
+      }
       drawerState.isOpen -> scope.launch { drawerState.close() }
       uiState.projectMode == ProjectMode.TEST && uiState.isPreviewFullScreen ->
         viewModel.setPreviewFullScreen(false)
@@ -548,6 +613,28 @@ fun IdeWorkspaceScreen(
     )
   }
 
+  if (showSnippetsDialog) {
+    SnippetsLibraryDialog(
+      customSnippets = uiState.editorSettings.customSnippets,
+      hasEditableActiveFile = uiState.activeFile?.isVirtualReadOnly == false,
+      activeFileName = uiState.activeFile?.fileName,
+      onInsertSnippet = { item ->
+        showSnippetsDialog = false
+        val expanded = CodeSnippetRegistry.expandSnippet(item.code)
+        viewModel.setProjectMode(ProjectMode.CODE)
+        val hook = insertSnippetHook
+        if (hook != null) {
+          hook(expanded.text, expanded.cursorBack)
+        } else {
+          viewModel.insertTextAtCursor(expanded.text, expanded.cursorBack)
+        }
+      },
+      onAddCustomSnippet = viewModel::addCustomSnippet,
+      onDeleteCustomSnippet = viewModel::deleteCustomSnippet,
+      onDismiss = { showSnippetsDialog = false },
+    )
+  }
+
   if (showProjectSettingsModal) {
     val requestStorageAccess =
       com.example.ui.components.rememberStorageAccessRequester {
@@ -556,7 +643,12 @@ fun IdeWorkspaceScreen(
     Box(modifier = Modifier.fillMaxSize()) {
       SettingsScreen(
         uiState = uiState,
-        onBack = { showProjectSettingsModal = false },
+        onBack = {
+          showProjectSettingsModal = false
+          pendingSettingsCategory = null
+          pendingSettingsAppearanceSub = null
+          pendingSettingsExpandBg = false
+        },
         onUpdateSettings = viewModel::updateSettings,
         onSelectAccount = viewModel::selectAccount,
         onVerifyCredentials = viewModel::verifyCloudflareCredentials,
@@ -585,6 +677,11 @@ fun IdeWorkspaceScreen(
         onRequestStorageAccess = requestStorageAccess,
         onPickEditorBackgroundImage = viewModel::setCustomEditorBackground,
         onClearEditorBackgroundImage = viewModel::clearCustomEditorBackground,
+        onSelectSavedEditorBackground = viewModel::selectSavedEditorBackground,
+        onDeleteSavedEditorBackground = viewModel::removeSavedEditorBackground,
+        initialCategory = pendingSettingsCategory,
+        initialAppearanceSubPage = pendingSettingsAppearanceSub,
+        initialExpandEditorBg = pendingSettingsExpandBg,
         onNotify = viewModel::showStatus,
       )
       SnackbarHost(
@@ -819,6 +916,12 @@ fun IdeWorkspaceScreen(
         PaletteCommand("Revert Workspace", "DIFF") {
           viewModel.revertWorkspaceToImportedBaseline()
         },
+        PaletteCommand("Export ZIP (.zip)", "IO") {
+          if (uiState.workspace != null) triggerExportWorkspaceZip()
+        },
+        PaletteCommand("Share Project ZIP", "IO") {
+          if (uiState.workspace != null) triggerShareWorkspaceZip()
+        },
         PaletteCommand("Export Bundle (.json)", "IO") {
           if (uiState.workspace != null) triggerExportWorkspaceBundle()
         },
@@ -846,11 +949,39 @@ fun IdeWorkspaceScreen(
         PaletteCommand("Format Document", "EDITOR") {
           viewModel.formatActiveFile()
         },
+        PaletteCommand("Save & Format Document", "EDITOR") {
+          viewModel.saveActiveFileWithOptionalFormat()
+        },
+        PaletteCommand("Deno Check & Lint", "LINT") {
+          viewModel.runDenoCheckAndLint()
+        },
+        PaletteCommand("Go to Definition", "NAV") {
+          viewModel.goToDefinitionAtCursor()
+        },
+        PaletteCommand("Snippets Library", "SNIP") {
+          showSnippetsDialog = true
+        },
+        PaletteCommand("Split: Code + Preview", "VIEW") {
+          viewModel.setSplitViewMode(SplitViewMode.CODE_PREVIEW)
+        },
+        PaletteCommand("Split: Dual File", "VIEW") {
+          viewModel.setSplitViewMode(SplitViewMode.DUAL_FILE)
+        },
+        PaletteCommand("Split: Off", "VIEW") {
+          viewModel.setSplitViewMode(SplitViewMode.NONE)
+        },
+        PaletteCommand("Background & Effects Settings", "THEME") {
+          openSettingsScreen(
+            category = SettingsCategory.APPEARANCE,
+            appearanceSubPage = AppearanceSubPage.EDITOR,
+            expandEditorBg = true,
+          )
+        },
         PaletteCommand("Git Sync", "GIT") {
           showProjectGitModal = true
         },
         PaletteCommand("Settings", "APP") {
-          showProjectSettingsModal = true
+          openSettingsScreen()
         },
         PaletteCommand("All Projects", "HOME") {
           viewModel.closeWorkspaceToHome()
@@ -893,13 +1024,18 @@ fun IdeWorkspaceScreen(
         onReplaceInAllFiles = viewModel::replaceInAllFiles,
         onJumpToLine = viewModel::jumpToLine,
         onInsertSnippet = { snippet ->
-          viewModel.insertTextAtCursor(snippet, 0)
+          val expanded = CodeSnippetRegistry.expandSnippet(snippet)
           viewModel.setProjectMode(ProjectMode.CODE)
+          val hook = insertSnippetHook
+          if (hook != null) hook(expanded.text, expanded.cursorBack)
+          else viewModel.insertTextAtCursor(expanded.text, expanded.cursorBack)
         },
         onCloseDrawerIfCompact = {
           if (!isExpanded) scope.launch { drawerState.close() }
         },
         showCloseButton = !isExpanded,
+        customSnippets = uiState.editorSettings.customSnippets,
+        onOpenSnippetsManager = { showSnippetsDialog = true },
       )
     }
 
@@ -1150,6 +1286,13 @@ fun IdeWorkspaceScreen(
                       onOpenLocalHistory = { activeIdeSheetTab = IdeCoreSheetTab.LOCAL_HISTORY },
                       onOpenProjectSearch = { activeIdeSheetTab = IdeCoreSheetTab.FIND_IN_FILES },
                       onRunLocalScript = { viewModel.runWorkspaceLocally(openTestWorkspace = true) },
+                      onRegisterInsertHook = { hook -> insertSnippetHook = hook },
+                      onGoToDefinition = { path, text, cursor -> viewModel.goToDefinitionAtCursor(path, text, cursor) },
+                      onRunDenoCheck = viewModel::runDenoCheckAndLint,
+                      onOpenSnippetsDialog = { showSnippetsDialog = true },
+                      onSetSplitViewMode = viewModel::setSplitViewMode,
+                      onSelectSecondarySplitFile = viewModel::setSecondarySplitFile,
+                      onSwapSplitFiles = viewModel::swapSplitFiles,
                       editorCommandRequest = editorCommandRequest,
                       modifier = Modifier.fillMaxSize(),
                     )
@@ -1338,7 +1481,7 @@ fun IdeWorkspaceScreen(
                     icon = Icons.Outlined.Settings,
                     onClick = {
                       overflowMenuOpen = false
-                      showProjectSettingsModal = true
+                      openSettingsScreen()
                     },
                   ),
                 )
@@ -1434,6 +1577,58 @@ fun IdeWorkspaceScreen(
                 },
               )
               EdgeMenuItem(
+                label = "Go to Definition",
+                icon = Icons.AutoMirrored.Outlined.CallMade,
+                badgeText = "DEF",
+                onClick = {
+                  overflowMenuOpen = false
+                  viewModel.goToDefinitionAtCursor()
+                },
+              )
+              EdgeMenuItem(
+                label = "Deno Check & Lint",
+                icon = Icons.Outlined.VerifiedUser,
+                badgeText = if (uiState.isRunningDenoCheck) "..." else "DENO",
+                onClick = {
+                  overflowMenuOpen = false
+                  viewModel.runDenoCheckAndLint()
+                },
+              )
+              EdgeMenuItem(
+                label = "Snippets Library",
+                icon = Icons.Outlined.Code,
+                badgeText = "SNIP",
+                onClick = {
+                  overflowMenuOpen = false
+                  showSnippetsDialog = true
+                },
+              )
+              EdgeMenuItem(
+                label =
+                  when (uiState.splitViewMode) {
+                    SplitViewMode.NONE -> "Split: Code + Preview"
+                    SplitViewMode.CODE_PREVIEW -> "Split: Dual File"
+                    SplitViewMode.DUAL_FILE -> "Close Split View"
+                  },
+                icon = Icons.Outlined.VerticalSplit,
+                badgeText =
+                  when (uiState.splitViewMode) {
+                    SplitViewMode.NONE -> "SPLIT"
+                    SplitViewMode.CODE_PREVIEW -> "PREV"
+                    SplitViewMode.DUAL_FILE -> "DUAL"
+                  },
+                onClick = {
+                  overflowMenuOpen = false
+                  val nextMode =
+                    when (uiState.splitViewMode) {
+                      SplitViewMode.NONE -> SplitViewMode.CODE_PREVIEW
+                      SplitViewMode.CODE_PREVIEW -> SplitViewMode.DUAL_FILE
+                      SplitViewMode.DUAL_FILE -> SplitViewMode.NONE
+                    }
+                  viewModel.setSplitViewMode(nextMode)
+                },
+              )
+              EdgeMenuItem(
                 label = "Rename Symbol",
                 icon = Icons.Outlined.DriveFileRenameOutline,
                 badgeText = "REF",
@@ -1443,15 +1638,14 @@ fun IdeWorkspaceScreen(
                   showRenameSymbolDialog = true
                 },
               )
-              if (uiState.activeFilePath != null && uiState.activeFilePath in uiState.externalFileUris) {
+              if (uiState.activeFile != null) {
                 EdgeMenuItem(
-                  label = "Save to Original File",
+                  label = if (uiState.editorSettings.formatOnSave) "Save & Format" else "Save File",
                   icon = Icons.Outlined.Save,
-                  tone = EdgeMenuTone.ACCENT,
-                  badgeText = "URI",
+                  badgeText = if (uiState.activeFilePath in uiState.externalFileUris) "URI" else "SAVE",
                   onClick = {
                     overflowMenuOpen = false
-                    viewModel.saveActiveExternalFileNow()
+                    viewModel.saveActiveFileWithOptionalFormat()
                   },
                 )
               }
@@ -1468,6 +1662,19 @@ fun IdeWorkspaceScreen(
                 )
               }
             }
+            EdgeMenuItem(
+              label = "Background & Effects",
+              icon = Icons.Outlined.Wallpaper,
+              badgeText = "BG",
+              onClick = {
+                overflowMenuOpen = false
+                openSettingsScreen(
+                  category = SettingsCategory.APPEARANCE,
+                  appearanceSubPage = AppearanceSubPage.EDITOR,
+                  expandEditorBg = true,
+                )
+              },
+            )
             EdgeMenuItem(
               label = "Sync wrangler.jsonc",
               icon = Icons.Outlined.Sync,
@@ -1575,6 +1782,27 @@ fun IdeWorkspaceScreen(
               onClick = {
                 overflowMenuOpen = false
                 if (activeWs != null) triggerImportZipIntoActive()
+              },
+            )
+            EdgeMenuItem(
+              label = "Export Project (.zip)",
+              icon = Icons.Outlined.Archive,
+              tone = EdgeMenuTone.ACCENT,
+              badgeText = ".zip",
+              enabled = activeWs != null,
+              onClick = {
+                overflowMenuOpen = false
+                if (activeWs != null) triggerExportWorkspaceZip()
+              },
+            )
+            EdgeMenuItem(
+              label = "Share Project (.zip)",
+              icon = Icons.Outlined.Share,
+              badgeText = "SHARE",
+              enabled = activeWs != null,
+              onClick = {
+                overflowMenuOpen = false
+                if (activeWs != null) triggerShareWorkspaceZip()
               },
             )
             EdgeMenuItem(

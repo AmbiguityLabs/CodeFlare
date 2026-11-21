@@ -62,9 +62,11 @@ import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.Style
 import androidx.compose.material.icons.outlined.Web
+import androidx.core.content.FileProvider
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -97,6 +99,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.RamWorkspaceRecord
+import com.example.data.local.WorkspaceZipExporter
 import com.example.data.local.ZipImportTargetMode
 import com.example.data.remote.CfWorkerScript
 import com.example.data.repository.WorkerTemplate
@@ -112,12 +115,15 @@ import com.example.ui.components.EdgeBottomDock
 import com.example.ui.components.EdgeBottomDockItem
 import com.example.ui.components.EdgeLoadingIndicator
 import com.example.ui.components.EdgeSkeletonProjectList
+import com.example.ui.components.EditorBackgroundLayer
+import com.example.ui.components.EditorBubbleController
 import com.example.ui.components.GitHubAndDiffPanel
 import com.example.ui.components.IconRevealButton
 import com.example.ui.components.NewWorkerDialog
 import com.example.ui.components.RenameWorkerDialog
 import com.example.ui.components.UnsavedChangesWarningDialog
 import com.example.ui.components.ZipImportPreviewDialog
+import com.example.ui.components.rememberHasActiveEditorBackdrop
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
@@ -150,6 +156,7 @@ fun HomeScreen(
   var pendingDeleteLocalKey by remember { mutableStateOf<Pair<String, String>?>(null) }
   var pendingRenameTarget by remember { mutableStateOf<HomeRenameTarget?>(null) }
   var showChangeSubdomainDialog by remember { mutableStateOf(false) }
+  var pendingZipExportRamKey by remember { mutableStateOf<String?>(null) }
 
   val newWorkerFilesLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -171,6 +178,43 @@ fun HomeScreen(
         viewModel.inspectZipForImport(uri, ZipImportTargetMode.NEW_PROJECT)
       }
     }
+
+  val exportRamZipLauncher =
+    rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+      val key = pendingZipExportRamKey
+      pendingZipExportRamKey = null
+      if (uri != null && key != null) {
+        viewModel.exportRamWorkspaceZipToUri(key, uri)
+      }
+    }
+
+  val triggerExportRamZip: (RamWorkspaceRecord) -> Unit = { rec ->
+    pendingZipExportRamKey = rec.key
+    exportRamZipLauncher.launch(WorkspaceZipExporter.suggestZipFileName(rec.workingWorkspace.scriptName))
+  }
+
+  val triggerShareRamZip: (RamWorkspaceRecord) -> Unit = { rec ->
+    viewModel.prepareShareWorkspaceZip(ramKey = rec.key) { zipFile, projectName ->
+      runCatching {
+        val shareUri =
+          FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            zipFile,
+          )
+        val sendIntent =
+          Intent(Intent.ACTION_SEND).apply {
+            type = "application/zip"
+            putExtra(Intent.EXTRA_STREAM, shareUri)
+            putExtra(Intent.EXTRA_SUBJECT, "$projectName.zip")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+          }
+        context.startActivity(Intent.createChooser(sendIntent, "Share $projectName.zip"))
+      }.onFailure { err ->
+        viewModel.showStatus(err.localizedMessage ?: "Unable to share ZIP archive")
+      }
+    }
+  }
 
   val launchZipPicker = {
     importZipProjectLauncher.launch(
@@ -394,6 +438,8 @@ fun HomeScreen(
         onRequestStorageAccess = requestStorageAccess,
         onPickEditorBackgroundImage = viewModel::setCustomEditorBackground,
         onClearEditorBackgroundImage = viewModel::clearCustomEditorBackground,
+        onSelectSavedEditorBackground = viewModel::selectSavedEditorBackground,
+        onDeleteSavedEditorBackground = viewModel::removeSavedEditorBackground,
         onNotify = viewModel::showStatus,
       )
       SnackbarHost(
@@ -552,8 +598,23 @@ fun HomeScreen(
       ),
     )
 
+  val hasActiveHomeBackdrop =
+    uiState.editorSettings.editorBgHomeEnabled &&
+      rememberHasActiveEditorBackdrop(uiState.editorSettings)
+  val homeBubbleController = remember { EditorBubbleController() }
+
+  Box(modifier = Modifier.fillMaxSize().background(palette.chromeBg)) {
+    if (hasActiveHomeBackdrop) {
+      EditorBackgroundLayer(
+        settings = uiState.editorSettings,
+        bubbleController = homeBubbleController,
+        baseColor = palette.chromeBg,
+        modifier = Modifier.fillMaxSize(),
+      )
+    }
+
   Scaffold(
-    containerColor = palette.chromeBg,
+    containerColor = if (hasActiveHomeBackdrop) Color.Transparent else palette.chromeBg,
     snackbarHost = {
       SnackbarHost(
         hostState = snackbarHostState,
@@ -571,7 +632,12 @@ fun HomeScreen(
     topBar = {
       val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
       val activeStyle = UiStyleVersion.fromKey(uiState.editorSettings.uiStyleVersion)
-      Column(modifier = Modifier.background(palette.chromeBg).statusBarsPadding()) {
+      Column(
+        modifier =
+          Modifier
+            .background(if (hasActiveHomeBackdrop) palette.chromeBg.copy(alpha = 0.72f) else palette.chromeBg)
+            .statusBarsPadding(),
+      ) {
         Row(
           modifier =
             Modifier
@@ -747,7 +813,7 @@ fun HomeScreen(
       modifier =
         Modifier
           .fillMaxSize()
-          .background(palette.chromeBg)
+          .background(if (hasActiveHomeBackdrop) Color.Transparent else palette.chromeBg)
           .padding(innerPadding)
           .imePadding(),
     ) {
@@ -763,6 +829,7 @@ fun HomeScreen(
           HomeTab.PROJECTS ->
             HomeProjectsTabContent(
               uiState = uiState,
+              showBackdropTranslucentCards = hasActiveHomeBackdrop,
               bottomContentPadding = floatingBottomClearance,
               searchQuery = projectSearch,
               onSearchChange = { projectSearch = it },
@@ -776,6 +843,8 @@ fun HomeScreen(
               onOpenRamWorkspace = viewModel::openRamWorkspace,
               onQuickCreateTemplate = viewModel::createQuickStarterFromTemplate,
               onDuplicateRamWorkspace = { rec -> viewModel.duplicateRamWorkspace(rec.key) },
+              onExportRamZip = triggerExportRamZip,
+              onShareRamZip = triggerShareRamZip,
               onRequestRenameRamWorkspace = { rec ->
                 val isRemote = !rec.key.startsWith("local_") && !rec.isNewUnexportedWorker && !uiState.isLocalScratchpad
                 pendingRenameTarget =
@@ -938,6 +1007,7 @@ fun HomeScreen(
       }
     }
   }
+  }
 }
 
 private enum class HomeProjectFilter(val label: String) {
@@ -955,6 +1025,7 @@ private enum class HomeProjectSort(val label: String) {
 @Composable
 private fun HomeProjectsTabContent(
   uiState: IdeUiState,
+  showBackdropTranslucentCards: Boolean = false,
   bottomContentPadding: androidx.compose.ui.unit.Dp,
   searchQuery: String,
   onSearchChange: (String) -> Unit,
@@ -966,6 +1037,8 @@ private fun HomeProjectsTabContent(
   onOpenRamWorkspace: (String) -> Unit,
   onQuickCreateTemplate: (WorkerTemplate) -> Unit,
   onDuplicateRamWorkspace: (RamWorkspaceRecord) -> Unit,
+  onExportRamZip: (RamWorkspaceRecord) -> Unit = {},
+  onShareRamZip: (RamWorkspaceRecord) -> Unit = {},
   onRequestRenameRamWorkspace: (RamWorkspaceRecord) -> Unit,
   onRequestDeleteRamWorkspace: (RamWorkspaceRecord) -> Unit,
   onRequestStorageAccess: () -> Unit,
@@ -1381,7 +1454,7 @@ private fun HomeProjectsTabContent(
     } else if (isV2) {
       item(key = "ram_v2_grouped_list") {
         Surface(
-          color = palette.chromeSurface,
+          color = if (showBackdropTranslucentCards) palette.chromeSurface.copy(alpha = 0.86f) else palette.chromeSurface,
           shape = RoundedCornerShape(24.dp),
           modifier = Modifier.fillMaxWidth(),
         ) {
@@ -1399,6 +1472,8 @@ private fun HomeProjectsTabContent(
                 isV2 = true,
                 onOpen = { onOpenRamWorkspace(rec.key) },
                 onDuplicate = { onDuplicateRamWorkspace(rec) },
+                onExportZip = { onExportRamZip(rec) },
+                onShareZip = { onShareRamZip(rec) },
                 onRename = { onRequestRenameRamWorkspace(rec) },
                 onDelete = { onRequestDeleteRamWorkspace(rec) },
                 modifier = Modifier.testTag("home_ram_card_${rec.workingWorkspace.scriptName}"),
@@ -1411,7 +1486,7 @@ private fun HomeProjectsTabContent(
       items(ramWorkspaces, key = { "ram_${it.key}" }) { rec ->
         val ws = rec.workingWorkspace
         Surface(
-          color = palette.glassSurface,
+          color = if (showBackdropTranslucentCards) palette.glassSurface.copy(alpha = 0.88f) else palette.glassSurface,
           shape = RoundedCornerShape(14.dp),
           border =
             if (rec.hasPendingChanges) BorderStroke(0.75.dp, AmberWarn.copy(alpha = 0.55f))
@@ -1423,6 +1498,8 @@ private fun HomeProjectsTabContent(
             isV2 = false,
             onOpen = { onOpenRamWorkspace(rec.key) },
             onDuplicate = { onDuplicateRamWorkspace(rec) },
+            onExportZip = { onExportRamZip(rec) },
+            onShareZip = { onShareRamZip(rec) },
             onRename = { onRequestRenameRamWorkspace(rec) },
             onDelete = { onRequestDeleteRamWorkspace(rec) },
           )
@@ -1594,6 +1671,8 @@ private fun RamProjectRowContent(
   isV2: Boolean,
   onOpen: () -> Unit,
   onDuplicate: () -> Unit,
+  onExportZip: () -> Unit = {},
+  onShareZip: () -> Unit = {},
   onRename: () -> Unit,
   onDelete: () -> Unit,
   modifier: Modifier = Modifier,
@@ -1604,6 +1683,7 @@ private fun RamProjectRowContent(
   val dirty = record.hasPendingChanges
   val langBadge = remember(ws.entryModulePath) { entryLangTag(ws.entryModulePath) }
   val relativeTime = remember(record.importedAtEpochMs) { formatRelativeTimestamp(record.importedAtEpochMs) }
+  var zipMenuOpen by remember { mutableStateOf(false) }
 
   Row(
     modifier =
@@ -1612,7 +1692,7 @@ private fun RamProjectRowContent(
         .clickable(onClick = onOpen)
         .padding(horizontal = if (isV2) 18.dp else 13.dp, vertical = if (isV2) 14.dp else 12.dp),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(if (isV2) 14.dp else 10.dp),
+    horizontalArrangement = Arrangement.spacedBy(if (isV2) 12.dp else 8.dp),
   ) {
     if (isV2) {
       Icon(
@@ -1686,39 +1766,83 @@ private fun RamProjectRowContent(
       )
     }
 
+    Box {
+      IconButton(
+        onClick = { zipMenuOpen = true },
+        modifier = Modifier.size(28.dp).testTag("zip_ram_project_${ws.scriptName}"),
+      ) {
+        Icon(
+          imageVector = Icons.Outlined.Archive,
+          contentDescription = "Export or Share ${ws.scriptName} ZIP",
+          tint = palette.textSecondary,
+          modifier = Modifier.size(16.dp),
+        )
+      }
+      EdgeMenu(
+        expanded = zipMenuOpen,
+        onDismissRequest = { zipMenuOpen = false },
+        minWidth = 186.dp,
+        maxWidth = 228.dp,
+      ) {
+        EdgeMenuHeader(
+          title = ws.scriptName,
+          badgeText = ".zip",
+          leadingIcon = Icons.Outlined.Archive,
+        )
+        EdgeMenuItem(
+          label = "Export .zip",
+          icon = Icons.Outlined.Archive,
+          badgeText = "SAVE",
+          onClick = {
+            zipMenuOpen = false
+            onExportZip()
+          },
+        )
+        EdgeMenuItem(
+          label = "Share .zip",
+          icon = Icons.Outlined.Share,
+          badgeText = "SEND",
+          onClick = {
+            zipMenuOpen = false
+            onShareZip()
+          },
+        )
+      }
+    }
+
     IconButton(
       onClick = onDuplicate,
-      modifier = Modifier.size(30.dp).testTag("duplicate_ram_project_${ws.scriptName}"),
+      modifier = Modifier.size(28.dp).testTag("duplicate_ram_project_${ws.scriptName}"),
     ) {
       Icon(
         imageVector = Icons.Outlined.ContentCopy,
         contentDescription = "Duplicate ${ws.scriptName}",
+        tint = palette.textSecondary,
+        modifier = Modifier.size(15.dp),
+      )
+    }
+
+    IconButton(
+      onClick = onRename,
+      modifier = Modifier.size(28.dp).testTag("rename_ram_project_${ws.scriptName}"),
+    ) {
+      Icon(
+        imageVector = Icons.Outlined.DriveFileRenameOutline,
+        contentDescription = "Rename ${ws.scriptName}",
         tint = palette.textSecondary,
         modifier = Modifier.size(16.dp),
       )
     }
 
     IconButton(
-      onClick = onRename,
-      modifier = Modifier.size(30.dp).testTag("rename_ram_project_${ws.scriptName}"),
-    ) {
-      Icon(
-        imageVector = Icons.Outlined.DriveFileRenameOutline,
-        contentDescription = "Rename ${ws.scriptName}",
-        tint = palette.textSecondary,
-        modifier = Modifier.size(17.dp),
-      )
-    }
-
-    IconButton(
       onClick = onDelete,
-      modifier = Modifier.size(30.dp).testTag("delete_ram_project_${ws.scriptName}"),
+      modifier = Modifier.size(28.dp).testTag("delete_ram_project_${ws.scriptName}"),
     ) {
       Icon(
         imageVector = Icons.Outlined.DeleteOutline,
         contentDescription = "Remove ${ws.scriptName}",
         tint = palette.textMuted,
-        modifier = Modifier.size(17.dp),
+        modifier = Modifier.size(16.dp),
       )
     }
 
@@ -1726,7 +1850,7 @@ private fun RamProjectRowContent(
       imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
       contentDescription = "Open project",
       tint = palette.textSecondary,
-      modifier = Modifier.size(19.dp),
+      modifier = Modifier.size(18.dp),
     )
   }
 }

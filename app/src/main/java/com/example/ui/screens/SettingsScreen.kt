@@ -136,15 +136,21 @@ fun SettingsScreen(
   onRequestStorageAccess: (() -> Unit)? = null,
   onPickEditorBackgroundImage: (Uri) -> Unit = {},
   onClearEditorBackgroundImage: () -> Unit = {},
+  onSelectSavedEditorBackground: (String) -> Unit = {},
+  onDeleteSavedEditorBackground: (String) -> Unit = {},
+  initialCategory: SettingsCategory? = null,
+  initialAppearanceSubPage: AppearanceSubPage? = null,
+  initialExpandEditorBg: Boolean = false,
   onNotify: (String) -> Unit,
 ) {
   val scheme = MaterialTheme.colorScheme
   val settings = uiState.editorSettings
   val creds = uiState.credentials
 
-  var openCategory by rememberSaveable { mutableStateOf<SettingsCategory?>(null) }
-  var wideSelectedCategory by rememberSaveable { mutableStateOf(SettingsCategory.APPEARANCE) }
-  var appearanceSubPage by rememberSaveable { mutableStateOf<AppearanceSubPage?>(null) }
+  var openCategory by rememberSaveable { mutableStateOf<SettingsCategory?>(initialCategory) }
+  var wideSelectedCategory by rememberSaveable { mutableStateOf(initialCategory ?: SettingsCategory.APPEARANCE) }
+  var appearanceSubPage by rememberSaveable { mutableStateOf<AppearanceSubPage?>(initialAppearanceSubPage) }
+  var expandEditorBgOnOpen by remember { mutableStateOf(initialExpandEditorBg) }
   var searchQuery by rememberSaveable { mutableStateOf("") }
   var confirmDisconnect by remember { mutableStateOf(false) }
 
@@ -252,6 +258,10 @@ fun SettingsScreen(
                         HomeAppearanceStudioContent(
                           settings = settings,
                           onUpdateSettings = onUpdateSettings,
+                          onOpenEditorBackground = {
+                            expandEditorBgOnOpen = true
+                            appearanceSubPage = AppearanceSubPage.EDITOR
+                          },
                         )
                       }
                     }
@@ -263,6 +273,9 @@ fun SettingsScreen(
                           onUpdateSettings = onUpdateSettings,
                           onPickEditorBackgroundImage = onPickEditorBackgroundImage,
                           onClearEditorBackgroundImage = onClearEditorBackgroundImage,
+                          initialExpandEditorBg = expandEditorBgOnOpen,
+                          onSelectSavedEditorBackground = onSelectSavedEditorBackground,
+                          onDeleteSavedEditorBackground = onDeleteSavedEditorBackground,
                         )
                       }
                     }
@@ -274,6 +287,12 @@ fun SettingsScreen(
                     settings = settings,
                     onUpdateSettings = onUpdateSettings,
                     onClearAutoSavedDrafts = onClearAutoSavedDrafts,
+                    onOpenBackgroundSettings = {
+                      expandEditorBgOnOpen = true
+                      openCategory = SettingsCategory.APPEARANCE
+                      wideSelectedCategory = SettingsCategory.APPEARANCE
+                      appearanceSubPage = AppearanceSubPage.EDITOR
+                    },
                   )
                 }
 

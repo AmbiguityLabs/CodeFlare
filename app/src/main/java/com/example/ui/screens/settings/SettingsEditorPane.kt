@@ -34,6 +34,7 @@ import androidx.compose.material.icons.outlined.Swipe
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.Wallpaper
 import androidx.compose.material.icons.outlined.ZoomIn
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -85,6 +86,7 @@ fun SettingsEditorPane(
   settings: EditorSettings,
   onUpdateSettings: ((EditorSettings) -> EditorSettings) -> Unit,
   onClearAutoSavedDrafts: (() -> Unit)?,
+  onOpenBackgroundSettings: (() -> Unit)? = null,
   modifier: Modifier = Modifier,
 ) {
   val scheme = MaterialTheme.colorScheme
@@ -103,6 +105,18 @@ fun SettingsEditorPane(
     modifier = modifier.fillMaxWidth().testTag("settings_editor_section"),
     verticalArrangement = Arrangement.spacedBy(14.dp),
   ) {
+    if (onOpenBackgroundSettings != null) {
+      SettingsCard(title = "Backdrop & Visuals") {
+        SettingsHubRow(
+          title = "Editor & Home Background",
+          subtitle = "Wallpapers gallery, ambient presets, blur, vignette & floating bubbles",
+          icon = Icons.Outlined.Wallpaper,
+          tag = "settings_editor_open_backdrop",
+          onClick = onOpenBackgroundSettings,
+        )
+      }
+    }
+
     // 1. Typography & Caret
     SettingsCard(title = "Typography & Caret") {
       val sampleLines =
@@ -543,6 +557,15 @@ fun SettingsEditorPane(
         checked = settings.autoSaveEnabled,
         horizontalPadding = 0.dp,
         onCheckedChange = { enabled -> onUpdateSettings { it.copy(autoSaveEnabled = enabled) } },
+      )
+      SettingsDivider()
+      SettingsToggleRow(
+        title = "Format on Save",
+        description = "Automatically format JS, TS, JSON, HTML & CSS when explicitly saving",
+        checked = settings.formatOnSave,
+        horizontalPadding = 0.dp,
+        modifier = Modifier.testTag("settings_format_on_save"),
+        onCheckedChange = { enabled -> onUpdateSettings { it.copy(formatOnSave = enabled) } },
       )
 
       AnimatedVisibility(

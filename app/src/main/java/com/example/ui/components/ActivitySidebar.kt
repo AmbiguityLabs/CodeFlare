@@ -98,6 +98,8 @@ import com.example.data.remote.GitHubIssue
 import com.example.data.remote.GitHubRepo
 import com.example.data.remote.WorkerFile
 import com.example.data.security.EditorSettings
+import com.example.idecore.snippets.CodeSnippetItem
+import com.example.idecore.snippets.CodeSnippetRegistry
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.BadgeJs
 import com.example.ui.theme.BadgeJson
@@ -1395,12 +1397,40 @@ private fun buildVisibleTreeEntries(
 fun SnippetsPanel(
   hasActiveFile: Boolean,
   onInsertSnippet: (String) -> Unit,
+  customSnippets: List<CodeSnippetItem> = emptyList(),
+  onOpenSnippetsManager: (() -> Unit)? = null,
 ) {
   val palette = LocalIdePalette.current
+  var query by remember { mutableStateOf("") }
+  val items =
+    remember(customSnippets, query) {
+      CodeSnippetRegistry.filterSnippets(
+        items = CodeSnippetRegistry.allSnippets(customSnippets),
+        query = query,
+      )
+    }
   Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-    Text("WORKERS EDGE SNIPPETS", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+      Text("SNIPPETS LIBRARY (${items.size})", style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
+      if (onOpenSnippetsManager != null) {
+        TextButton(onClick = onOpenSnippetsManager, modifier = Modifier.height(26.dp)) {
+          Text("+ New / Manage", fontSize = 11.sp, color = palette.activePillFg)
+        }
+      }
+    }
+    OutlinedTextField(
+      value = query,
+      onValueChange = { query = it },
+      placeholder = { Text("Filter snippets…", fontSize = 11.5.sp) },
+      singleLine = true,
+      modifier = Modifier.fillMaxWidth(),
+    )
     LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-      items(workerSnippets) { snippet ->
+      items(items, key = { it.id }) { snippet ->
         Surface(
           onClick = { if (hasActiveFile) onInsertSnippet(snippet.code) },
           shape = RoundedCornerShape(14.dp),
@@ -1409,13 +1439,20 @@ fun SnippetsPanel(
         ) {
           Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Surface(color = palette.activePillBg, shape = RoundedCornerShape(8.dp)) {
-              Text(snippet.tag, style = MaterialTheme.typography.labelSmall, color = palette.activePillFg, modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
+              Text(
+                text = if (snippet.isCustom) "${snippet.abbrev}★" else snippet.abbrev,
+                style = MaterialTheme.typography.labelSmall,
+                color = palette.activePillFg,
+                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+              )
             }
             Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
               Text(snippet.title, style = MaterialTheme.typography.bodyMedium, color = palette.textPrimary)
               Text(
-                text = if (hasActiveFile) "Tap to insert at cursor" else "Open an editable JS file",
+                text =
+                  if (hasActiveFile) "${snippet.tag} · Tap to insert at cursor"
+                  else "Open an editable file",
                 style = MaterialTheme.typography.labelSmall,
                 color = palette.textMuted,
               )

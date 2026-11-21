@@ -4,6 +4,8 @@ import com.example.data.remote.WorkerLanguage
 import com.example.data.remote.WorkerWorkspace
 import com.example.editor.EmmetExpander
 import com.example.editor.WranglerSyncParser
+import com.example.idecore.snippets.CodeSnippetItem
+import com.example.idecore.snippets.CodeSnippetRegistry
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -470,6 +472,7 @@ class EdgeCompletionEngine(
     cursor: Int,
     language: WorkerLanguage,
     maxItems: Int = 18,
+    customSnippets: List<CodeSnippetItem> = emptyList(),
   ): List<EdgeCompletionItem> {
     val isEmmetPath = EmmetExpander.isSupportedPath(filePath)
     if ((language == WorkerLanguage.TEXT && !isEmmetPath) || documentText.isEmpty()) return emptyList()
@@ -549,24 +552,68 @@ class EdgeCompletionEngine(
     // 3. Postfix templates (order 5000) — e.g. data.json, resp.await, err.log
     raw.addAll(EdgePostfixContributor.contribute(documentText, safeCursor, language))
 
-    // 4. Built-in Live Templates with MacroVariableResolver (order 6000)
-    if (!isMemberAccess && (language == WorkerLanguage.JAVASCRIPT || language == WorkerLanguage.TYPESCRIPT)) {
+    // 4. Built-in & Custom Snippets + Live Templates with MacroVariableResolver (order 6000)
+    if (!isMemberAccess) {
       val fileName = filePath.substringAfterLast('/')
-      for (tpl in builtInTemplates) {
-        if (!tpl.abbrev.startsWith(fullToken, ignoreCase = true)) continue
-        val (expanded, cursorBack) = EdgeMacroResolver.expand(tpl.template, fileName, documentText, wordBounds.first)
-        raw.add(
-          EdgeCompletionItem(
-            label = tpl.abbrev,
-            insertText = expanded,
-            kind = EdgeCompletionKind.TEMPLATE,
-            detail = tpl.detail,
-            cursorBackOffset = cursorBack,
-            replaceStart = wordBounds.first,
-            replaceEnd = safeCursor,
-            sortPriority = if (tpl.abbrev.equals(fullToken, ignoreCase = true)) -35 else 64,
-          ),
-        )
+      val supportsRegistrySnippets =
+        language == WorkerLanguage.JAVASCRIPT ||
+          language == WorkerLanguage.TYPESCRIPT ||
+          language == WorkerLanguage.HTML ||
+          language == WorkerLanguage.CSS
+      if (supportsRegistrySnippets) {
+        CodeSnippetRegistry.allSnippets(customSnippets).forEach { snip ->
+          val tagCompatible =
+            when (language) {
+              WorkerLanguage.HTML -> snip.isCustom || snip.tag.equals("HTML", ignoreCase = true)
+              WorkerLanguage.CSS -> snip.isCustom || snip.tag.equals("CSS", ignoreCase = true)
+              else -> snip.isCustom || (!snip.tag.equals("HTML", ignoreCase = true) && !snip.tag.equals("CSS", ignoreCase = true))
+            }
+          if (!tagCompatible) return@forEach
+          if (!snip.abbrev.startsWith(fullToken, ignoreCase = true)) return@forEach
+          val expanded =
+            CodeSnippetRegistry.expandSnippet(
+              rawCode = snip.code,
+              fileName = fileName,
+              documentText = documentText,
+              offset = wordBounds.first,
+            )
+          raw.add(
+            EdgeCompletionItem(
+              label = snip.abbrev,
+              insertText = expanded.text,
+              kind = EdgeCompletionKind.TEMPLATE,
+              detail = if (snip.isCustom) "${snip.title} (custom)" else snip.title,
+              cursorBackOffset = expanded.cursorBackOffset,
+              replaceStart = wordBounds.first,
+              replaceEnd = safeCursor,
+              sortPriority =
+                when {
+                  snip.abbrev.equals(fullToken, ignoreCase = true) && snip.isCustom -> -42
+                  snip.abbrev.equals(fullToken, ignoreCase = true) -> -35
+                  snip.isCustom -> 58
+                  else -> 64
+                },
+            ),
+          )
+        }
+      }
+      if (language == WorkerLanguage.JAVASCRIPT || language == WorkerLanguage.TYPESCRIPT) {
+        for (tpl in builtInTemplates) {
+          if (!tpl.abbrev.startsWith(fullToken, ignoreCase = true)) continue
+          val (expanded, cursorBack) = EdgeMacroResolver.expand(tpl.template, fileName, documentText, wordBounds.first)
+          raw.add(
+            EdgeCompletionItem(
+              label = tpl.abbrev,
+              insertText = expanded,
+              kind = EdgeCompletionKind.TEMPLATE,
+              detail = tpl.detail,
+              cursorBackOffset = cursorBack,
+              replaceStart = wordBounds.first,
+              replaceEnd = safeCursor,
+              sortPriority = if (tpl.abbrev.equals(fullToken, ignoreCase = true)) -35 else 64,
+            ),
+          )
+        }
       }
     }
 

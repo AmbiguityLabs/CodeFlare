@@ -1,6 +1,10 @@
 package com.example.ui.components
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.os.Build
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -9,14 +13,19 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -29,6 +38,9 @@ import com.example.data.security.EditorSettings
 import com.example.ui.theme.EditorBackgroundPreset
 import com.example.ui.theme.LocalIdePalette
 import java.io.File
+import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun rememberHasActiveEditorBackground(settings: EditorSettings): Boolean {
@@ -47,18 +59,111 @@ fun rememberHasActiveEditorBackground(settings: EditorSettings): Boolean {
 fun rememberHasActiveEditorBackdrop(settings: EditorSettings): Boolean =
   rememberHasActiveEditorBackground(settings) || settings.editorBubbles.enabled
 
+internal fun mapBgContentScale(fitMode: String): ContentScale =
+  when (fitMode.uppercase()) {
+    EditorSettings.BG_FIT_FIT -> ContentScale.Fit
+    EditorSettings.BG_FIT_FILL -> ContentScale.FillBounds
+    else -> ContentScale.Crop
+  }
+
 /**
- * Renders the customizable code editor backdrop: either a user-selected custom photo
- * or a curated lightweight ambient backdrop, plus optional interactive bottom-to-top
- * floating bubbles rendered in a zero-allocation Canvas pass.
+ * Fast two-pass separable stack/box blur for API 24–30 devices where Modifier.blur (RenderEffect)
+ * is unavailable. Operates on a downsampled thumbnail so blurring finishes in a couple of ms.
+ */
+private fun fastBoxBlurBitmap(src: Bitmap, radiusInput: Int): Bitmap {
+  val radius = radiusInput.coerceIn(1, 24)
+  val w = src.width
+  val h = src.height
+  if (w < 2 || h < 2) return src
+  val config = Bitmap.Config.ARGB_8888
+  val working = src.copy(config, true) ?: return src
+  val pix = IntArray(w * h)
+  working.getPixels(pix, 0, w, 0, 0, w, h)
+  val tmp = IntArray(w * h)
+
+  val window = radius * 2 + 1
+  // Repeat 2 passes for smooth Gaussian-like blur
+  repeat(2) {
+    // Horizontal pass
+    for (y in 0 until h) {
+      val rowOffset = y * w
+      var rSum = 0
+      var gSum = 0
+      var bSum = 0
+      var aSum = 0
+      for (dx in -radius..radius) {
+        val sx = dx.coerceIn(0, w - 1)
+        val c = pix[rowOffset + sx]
+        aSum += (c ushr 24) and 0xFF
+        rSum += (c ushr 16) and 0xFF
+        gSum += (c ushr 8) and 0xFF
+        bSum += c and 0xFF
+      }
+      for (x in 0 until w) {
+        tmp[rowOffset + x] =
+          ((aSum / window) shl 24) or
+            ((rSum / window) shl 16) or
+            ((gSum / window) shl 8) or
+            (bSum / window)
+        val removeX = (x - radius).coerceIn(0, w - 1)
+        val addX = (x + radius + 1).coerceIn(0, w - 1)
+        val cOld = pix[rowOffset + removeX]
+        val cNew = pix[rowOffset + addX]
+        aSum += ((cNew ushr 24) and 0xFF) - ((cOld ushr 24) and 0xFF)
+        rSum += ((cNew ushr 16) and 0xFF) - ((cOld ushr 16) and 0xFF)
+        gSum += ((cNew ushr 8) and 0xFF) - ((cOld ushr 8) and 0xFF)
+        bSum += (cNew and 0xFF) - (cOld and 0xFF)
+      }
+    }
+    // Vertical pass
+    for (x in 0 until w) {
+      var rSum = 0
+      var gSum = 0
+      var bSum = 0
+      var aSum = 0
+      for (dy in -radius..radius) {
+        val sy = dy.coerceIn(0, h - 1)
+        val c = tmp[sy * w + x]
+        aSum += (c ushr 24) and 0xFF
+        rSum += (c ushr 16) and 0xFF
+        gSum += (c ushr 8) and 0xFF
+        bSum += c and 0xFF
+      }
+      for (y in 0 until h) {
+        pix[y * w + x] =
+          ((aSum / window) shl 24) or
+            ((rSum / window) shl 16) or
+            ((gSum / window) shl 8) or
+            (bSum / window)
+        val removeY = (y - radius).coerceIn(0, h - 1)
+        val addY = (y + radius + 1).coerceIn(0, h - 1)
+        val cOld = tmp[removeY * w + x]
+        val cNew = tmp[addY * w + x]
+        aSum += ((cNew ushr 24) and 0xFF) - ((cOld ushr 24) and 0xFF)
+        rSum += ((cNew ushr 16) and 0xFF) - ((cOld ushr 16) and 0xFF)
+        gSum += ((cNew ushr 8) and 0xFF) - ((cOld ushr 8) and 0xFF)
+        bSum += (cNew and 0xFF) - (cOld and 0xFF)
+      }
+    }
+  }
+  working.setPixels(pix, 0, w, 0, 0, w, h)
+  return working
+}
+
+/**
+ * Renders the customizable editor/home backdrop: either a user-selected custom photo
+ * or a curated lightweight ambient backdrop, with blur, fit mode, vignette, scrim,
+ * and optional interactive bottom-to-top floating bubbles rendered in a Canvas pass.
  */
 @Composable
 fun EditorBackgroundLayer(
   settings: EditorSettings,
   modifier: Modifier = Modifier,
   bubbleController: EditorBubbleController? = null,
+  baseColor: Color? = null,
 ) {
   val palette = LocalIdePalette.current
+  val effectiveBaseColor = baseColor ?: palette.editorBg
   val density = LocalDensity.current.density
   val preset = EditorBackgroundPreset.fromKey(settings.editorBgPreset)
   val customFile =
@@ -75,6 +180,45 @@ fun EditorBackgroundLayer(
   val scrimAlpha = settings.editorBgScrim.coerceIn(0f, 0.85f)
   val offsetX = settings.editorBgOffsetX.coerceIn(-0.5f, 0.5f)
   val offsetY = settings.editorBgOffsetY.coerceIn(-0.5f, 0.5f)
+  val blurDp = settings.editorBgBlurDp.coerceIn(0f, 25f)
+  val vignette = settings.editorBgVignette.coerceIn(0f, 0.75f)
+  val contentScale = mapBgContentScale(settings.normalizedBgFitMode())
+
+  // API 24-30 software downsampled blur fallback for custom photos
+  val legacyBlurredBitmap by
+    produceState<ImageBitmap?>(
+      initialValue = null,
+      key1 = customFile?.absolutePath,
+      key2 = blurDp.roundToInt(),
+      key3 = preset,
+    ) {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ||
+        preset != EditorBackgroundPreset.CUSTOM ||
+        customFile == null ||
+        blurDp < 1f
+      ) {
+        value = null
+      } else {
+        value =
+          withContext(Dispatchers.Default) {
+            runCatching {
+              val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+              BitmapFactory.decodeFile(customFile.absolutePath, bounds)
+              val rawMax = maxOf(bounds.outWidth, bounds.outHeight).coerceAtLeast(1)
+              var sample = 1
+              while (rawMax / sample > 420) sample *= 2
+              val decoded =
+                BitmapFactory.decodeFile(
+                  customFile.absolutePath,
+                  BitmapFactory.Options().apply { inSampleSize = sample },
+                ) ?: return@runCatching null
+              val blurred = fastBoxBlurBitmap(decoded, (blurDp * 0.75f).roundToInt().coerceIn(1, 20))
+              if (blurred !== decoded) decoded.recycle()
+              blurred.asImageBitmap()
+            }.getOrNull()
+          }
+      }
+    }
 
   var canvasSize by remember { mutableStateOf(IntSize.Zero) }
   var bubbleFrameTick by remember { mutableLongStateOf(0L) }
@@ -121,26 +265,45 @@ fun EditorBackgroundLayer(
       modifier
         .fillMaxSize()
         .clipToBounds()
-        .background(palette.editorBg)
+        .background(effectiveBaseColor)
         .onSizeChanged { canvasSize = it },
   ) {
     if (hasActiveBg) {
+      val blurModifier =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && blurDp >= 0.5f) {
+          Modifier.blur(blurDp.dp, BlurredEdgeTreatment.Rectangle)
+        } else {
+          Modifier
+        }
+
       if (preset == EditorBackgroundPreset.CUSTOM && customFile != null) {
-        AsyncImage(
-          model = customFile,
-          contentDescription = null,
-          contentScale = ContentScale.Crop,
-          modifier =
-            Modifier
-              .fillMaxSize()
-              .graphicsLayer {
-                scaleX = zoom
-                scaleY = zoom
-                translationX = offsetX * size.width
-                translationY = offsetY * size.height
-                alpha = opacity
-              },
-        )
+        val transformModifier =
+          Modifier
+            .fillMaxSize()
+            .then(blurModifier)
+            .graphicsLayer {
+              scaleX = zoom
+              scaleY = zoom
+              translationX = offsetX * size.width
+              translationY = offsetY * size.height
+              alpha = opacity
+            }
+        val legacyBmp = legacyBlurredBitmap
+        if (legacyBmp != null) {
+          Image(
+            bitmap = legacyBmp,
+            contentDescription = null,
+            contentScale = contentScale,
+            modifier = transformModifier,
+          )
+        } else {
+          AsyncImage(
+            model = customFile,
+            contentDescription = null,
+            contentScale = contentScale,
+            modifier = transformModifier,
+          )
+        }
       } else {
         val isDark = palette.isDark
         val accent = palette.activePillFg
@@ -148,6 +311,7 @@ fun EditorBackgroundLayer(
           modifier =
             Modifier
               .fillMaxSize()
+              .then(blurModifier)
               .graphicsLayer {
                 scaleX = zoom
                 scaleY = zoom
@@ -263,13 +427,33 @@ fun EditorBackgroundLayer(
         }
       }
 
+      // Optional radial vignette to deepen frame edges and keep gutter/chrome legible
+      if (vignette > 0.01f) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+          val radius = (maxOf(size.width, size.height) * 0.78f).coerceAtLeast(1f)
+          drawRect(
+            brush =
+              Brush.radialGradient(
+                colors =
+                  listOf(
+                    Color.Transparent,
+                    effectiveBaseColor.copy(alpha = (vignette * 0.45f).coerceIn(0f, 0.9f)),
+                    effectiveBaseColor.copy(alpha = vignette.coerceIn(0f, 0.92f)),
+                  ),
+                center = center,
+                radius = radius,
+              ),
+          )
+        }
+      }
+
       // Readability tint scrim for high-contrast code legibility over custom/ambient backdrop
       if (scrimAlpha > 0.005f) {
         Box(
           modifier =
             Modifier
               .fillMaxSize()
-              .background(palette.editorBg.copy(alpha = scrimAlpha)),
+              .background(effectiveBaseColor.copy(alpha = scrimAlpha)),
         )
       }
     }

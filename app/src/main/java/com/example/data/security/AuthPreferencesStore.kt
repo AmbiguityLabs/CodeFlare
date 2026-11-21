@@ -9,6 +9,8 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.editor.selection.SmartSelectionInitialDepth
+import com.example.idecore.snippets.CodeSnippetItem
+import com.example.idecore.snippets.CodeSnippetRegistry
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -421,6 +423,11 @@ data class EditorSettings(
   val editorBgScrim: Float = 0.35f,
   val editorBgOffsetX: Float = 0f,
   val editorBgOffsetY: Float = 0f,
+  val editorBgBlurDp: Float = 0f,
+  val editorBgVignette: Float = 0.15f,
+  val editorBgFitMode: String = BG_FIT_CROP,
+  val editorBgHomeEnabled: Boolean = false,
+  val editorBgSavedPaths: List<String> = emptyList(),
   val editorBubbles: EditorBubbleConfig = EditorBubbleConfig.DEFAULT,
   val fontSizeSp: Int = 13,
   val zoomPercent: Int = 100,
@@ -461,6 +468,8 @@ data class EditorSettings(
   val closeUnsavedPolicy: String = CLOSE_UNSAVED_ASK,
   val warnOnLeaveDirtyWorkspace: Boolean = true,
   val warnOnCloudOverwrite: Boolean = true,
+  val formatOnSave: Boolean = false,
+  val customSnippets: List<CodeSnippetItem> = emptyList(),
 ) {
   fun resolveDarkTheme(systemIsDark: Boolean): Boolean =
     when (themeMode.lowercase()) {
@@ -521,6 +530,13 @@ data class EditorSettings(
       else -> CODE_STYLE_DEFAULT
     }
 
+  fun normalizedBgFitMode(): String =
+    when (editorBgFitMode.uppercase()) {
+      BG_FIT_FIT -> BG_FIT_FIT
+      BG_FIT_FILL -> BG_FIT_FILL
+      else -> BG_FIT_CROP
+    }
+
   companion object {
     const val CODE_STYLE_DEFAULT = "DEFAULT"
     const val THEME_LIGHT = "light"
@@ -546,6 +562,17 @@ data class EditorSettings(
     const val CLOSE_UNSAVED_ASK = "ask"
     const val CLOSE_UNSAVED_SAVE = "save"
     const val CLOSE_UNSAVED_DISCARD = "discard"
+
+    const val BG_FIT_CROP = "CROP"
+    const val BG_FIT_FIT = "FIT"
+    const val BG_FIT_FILL = "FILL"
+    const val MAX_SAVED_BG_PATHS = 5
+
+    fun encodeSavedPaths(paths: List<String>): String =
+      paths.map { it.trim() }.filter { it.isNotEmpty() }.distinct().take(MAX_SAVED_BG_PATHS).joinToString("|")
+
+    fun decodeSavedPaths(raw: String?): List<String> =
+      raw?.split('|')?.map { it.trim() }?.filter { it.isNotEmpty() }?.distinct()?.take(MAX_SAVED_BG_PATHS).orEmpty()
 
     const val MIN_COMPLETION_DELAY_MS = 0
     const val MAX_COMPLETION_DELAY_MS = 1000
@@ -610,6 +637,11 @@ class AuthPreferencesStore(private val context: Context) {
     val EDITOR_BG_SCRIM = floatPreferencesKey("editor_bg_scrim")
     val EDITOR_BG_OFFSET_X = floatPreferencesKey("editor_bg_offset_x")
     val EDITOR_BG_OFFSET_Y = floatPreferencesKey("editor_bg_offset_y")
+    val EDITOR_BG_BLUR_DP = floatPreferencesKey("editor_bg_blur_dp")
+    val EDITOR_BG_VIGNETTE = floatPreferencesKey("editor_bg_vignette")
+    val EDITOR_BG_FIT_MODE = stringPreferencesKey("editor_bg_fit_mode")
+    val EDITOR_BG_HOME_ENABLED = booleanPreferencesKey("editor_bg_home_enabled")
+    val EDITOR_BG_SAVED_PATHS = stringPreferencesKey("editor_bg_saved_paths")
     val EDITOR_BUBBLES = stringPreferencesKey("editor_bubbles_config")
     val FONT_SIZE_SP = intPreferencesKey("editor_font_size_sp")
     val ZOOM_PERCENT = intPreferencesKey("editor_zoom_percent")
@@ -635,6 +667,8 @@ class AuthPreferencesStore(private val context: Context) {
     val REPARSE_DELAY_MS = intPreferencesKey("analysis_reparse_delay_ms")
     val AUTO_SAVE_ENABLED = booleanPreferencesKey("editor_auto_save_enabled")
     val AUTO_SAVE_INTERVAL_SEC = intPreferencesKey("editor_auto_save_interval_sec")
+    val FORMAT_ON_SAVE = booleanPreferencesKey("editor_format_on_save")
+    val CUSTOM_SNIPPETS = stringPreferencesKey("editor_custom_snippets")
     val DEFAULT_COMPAT_DATE = stringPreferencesKey("deploy_default_compat_date")
     val DEFAULT_NODEJS_COMPAT = booleanPreferencesKey("deploy_default_nodejs_compat")
     val DEFAULT_WORKERS_DEV = booleanPreferencesKey("deploy_default_workers_dev")
@@ -726,6 +760,22 @@ class AuthPreferencesStore(private val context: Context) {
         editorBgScrim = (prefs[Keys.EDITOR_BG_SCRIM] ?: 0.35f).coerceIn(0.0f, 0.85f),
         editorBgOffsetX = (prefs[Keys.EDITOR_BG_OFFSET_X] ?: 0f).coerceIn(-0.5f, 0.5f),
         editorBgOffsetY = (prefs[Keys.EDITOR_BG_OFFSET_Y] ?: 0f).coerceIn(-0.5f, 0.5f),
+        editorBgBlurDp = (prefs[Keys.EDITOR_BG_BLUR_DP] ?: 0f).coerceIn(0f, 25f),
+        editorBgVignette = (prefs[Keys.EDITOR_BG_VIGNETTE] ?: 0.15f).coerceIn(0f, 0.75f),
+        editorBgFitMode =
+          when (prefs[Keys.EDITOR_BG_FIT_MODE]?.uppercase()) {
+            EditorSettings.BG_FIT_FIT -> EditorSettings.BG_FIT_FIT
+            EditorSettings.BG_FIT_FILL -> EditorSettings.BG_FIT_FILL
+            else -> EditorSettings.BG_FIT_CROP
+          },
+        editorBgHomeEnabled = prefs[Keys.EDITOR_BG_HOME_ENABLED] ?: false,
+        editorBgSavedPaths =
+          EditorSettings.decodeSavedPaths(prefs[Keys.EDITOR_BG_SAVED_PATHS]).let { decoded ->
+            val currentPath = prefs[Keys.EDITOR_BG_IMAGE_PATH].orEmpty().trim()
+            if (currentPath.isNotEmpty() && currentPath !in decoded) {
+              (listOf(currentPath) + decoded).take(EditorSettings.MAX_SAVED_BG_PATHS)
+            } else decoded
+          },
         editorBubbles = EditorBubbleConfig.decode(prefs[Keys.EDITOR_BUBBLES], EditorBubbleConfig.DEFAULT),
         fontSizeSp = (prefs[Keys.FONT_SIZE_SP] ?: 13).coerceIn(10, 20),
         zoomPercent = (prefs[Keys.ZOOM_PERCENT] ?: 100).coerceIn(60, 220),
@@ -793,6 +843,8 @@ class AuthPreferencesStore(private val context: Context) {
         closeUnsavedPolicy = storedClosePolicy,
         warnOnLeaveDirtyWorkspace = prefs[Keys.WARN_LEAVE_DIRTY_WORKSPACE] ?: true,
         warnOnCloudOverwrite = prefs[Keys.WARN_CLOUD_OVERWRITE] ?: true,
+        formatOnSave = prefs[Keys.FORMAT_ON_SAVE] ?: false,
+        customSnippets = CodeSnippetRegistry.decodeCustomSnippets(prefs[Keys.CUSTOM_SNIPPETS]),
       )
     }
 
@@ -932,6 +984,15 @@ class AuthPreferencesStore(private val context: Context) {
             EditorSettings.MIN_REPARSE_DELAY_MS,
             EditorSettings.MAX_REPARSE_DELAY_MS,
           ),
+        editorBgBlurDp = rawNext.editorBgBlurDp.coerceIn(0f, 25f),
+        editorBgVignette = rawNext.editorBgVignette.coerceIn(0f, 0.75f),
+        editorBgFitMode = rawNext.normalizedBgFitMode(),
+        editorBgSavedPaths =
+          rawNext.editorBgSavedPaths
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .take(EditorSettings.MAX_SAVED_BG_PATHS),
       )
     context.edgeCodeDataStore.edit { prefs ->
       prefs[Keys.DARK_THEME] = next.darkTheme
@@ -952,6 +1013,11 @@ class AuthPreferencesStore(private val context: Context) {
       prefs[Keys.EDITOR_BG_SCRIM] = next.editorBgScrim.coerceIn(0.0f, 0.85f)
       prefs[Keys.EDITOR_BG_OFFSET_X] = next.editorBgOffsetX.coerceIn(-0.5f, 0.5f)
       prefs[Keys.EDITOR_BG_OFFSET_Y] = next.editorBgOffsetY.coerceIn(-0.5f, 0.5f)
+      prefs[Keys.EDITOR_BG_BLUR_DP] = next.editorBgBlurDp.coerceIn(0f, 25f)
+      prefs[Keys.EDITOR_BG_VIGNETTE] = next.editorBgVignette.coerceIn(0f, 0.75f)
+      prefs[Keys.EDITOR_BG_FIT_MODE] = next.normalizedBgFitMode()
+      prefs[Keys.EDITOR_BG_HOME_ENABLED] = next.editorBgHomeEnabled
+      prefs[Keys.EDITOR_BG_SAVED_PATHS] = EditorSettings.encodeSavedPaths(next.editorBgSavedPaths)
       prefs[Keys.EDITOR_BUBBLES] = next.editorBubbles.encode()
       prefs[Keys.FONT_SIZE_SP] = next.fontSizeSp.coerceIn(10, 20)
       prefs[Keys.ZOOM_PERCENT] = next.zoomPercent.coerceIn(60, 220)
@@ -977,6 +1043,8 @@ class AuthPreferencesStore(private val context: Context) {
       prefs[Keys.REPARSE_DELAY_MS] = next.reparseDelayMs
       prefs[Keys.AUTO_SAVE_ENABLED] = next.autoSaveEnabled
       prefs[Keys.AUTO_SAVE_INTERVAL_SEC] = next.autoSaveIntervalSeconds.coerceIn(3, 60)
+      prefs[Keys.FORMAT_ON_SAVE] = next.formatOnSave
+      prefs[Keys.CUSTOM_SNIPPETS] = CodeSnippetRegistry.encodeCustomSnippets(next.customSnippets)
       prefs[Keys.DEFAULT_COMPAT_DATE] = next.defaultCompatibilityDate.trim().ifBlank { "2024-11-01" }
       prefs[Keys.DEFAULT_NODEJS_COMPAT] = next.defaultNodejsCompat
       prefs[Keys.DEFAULT_WORKERS_DEV] = next.defaultWorkersDevEnabled

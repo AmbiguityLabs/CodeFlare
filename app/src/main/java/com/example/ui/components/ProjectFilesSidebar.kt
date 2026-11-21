@@ -80,6 +80,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.remote.WorkerFile
+import com.example.idecore.snippets.CodeSnippetItem
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.FolderGreen
@@ -134,6 +135,8 @@ fun ProjectFilesSidebar(
   onInsertSnippet: (String) -> Unit,
   onCloseDrawerIfCompact: () -> Unit,
   showCloseButton: Boolean = true,
+  customSnippets: List<CodeSnippetItem> = emptyList(),
+  onOpenSnippetsManager: (() -> Unit)? = null,
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
@@ -561,6 +564,8 @@ fun ProjectFilesSidebar(
         Box(modifier = Modifier.fillMaxSize()) {
           SnippetsPanel(
             hasActiveFile = uiState.activeFile?.isVirtualReadOnly == false,
+            customSnippets = customSnippets,
+            onOpenSnippetsManager = onOpenSnippetsManager,
             onInsertSnippet = { snippet ->
               onInsertSnippet(snippet)
               onCloseDrawerIfCompact()

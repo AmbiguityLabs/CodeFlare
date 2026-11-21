@@ -36,10 +36,12 @@ import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.BubbleChart
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.CloudQueue
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.RocketLaunch
@@ -93,6 +95,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.example.data.remote.WorkerLanguage
 import com.example.data.security.EditorBubbleColorStyle
 import com.example.data.security.EditorBubbleConfig
@@ -503,8 +506,41 @@ fun AppearanceHubContent(
 fun HomeAppearanceStudioContent(
   settings: EditorSettings,
   onUpdateSettings: ((EditorSettings) -> EditorSettings) -> Unit,
+  onOpenEditorBackground: (() -> Unit)? = null,
 ) {
+  val activePreset = EditorBackgroundPreset.fromKey(settings.editorBgPreset)
+  val hasBg = rememberHasActiveEditorBackground(settings)
+
   Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    SettingsCard(title = "Home Backdrop") {
+      SettingsToggleRow(
+        title = "Show Background on Home Page",
+        description =
+          if (hasBg || settings.editorBubbles.enabled) {
+            "Apply active wallpaper (${activePreset.label}) and bubbles behind your Home dashboard"
+          } else {
+            "Mirror your custom editor wallpaper or ambient backdrop onto the Home page"
+          },
+        leadingIcon = Icons.Outlined.Home,
+        checked = settings.editorBgHomeEnabled,
+        horizontalPadding = 0.dp,
+        modifier = Modifier.testTag("settings_home_bg_toggle"),
+        onCheckedChange = { enabled ->
+          onUpdateSettings { it.copy(editorBgHomeEnabled = enabled) }
+        },
+      )
+      if (onOpenEditorBackground != null) {
+        SettingsDivider()
+        SettingsHubRow(
+          title = "Customize Backdrop & Effects",
+          subtitle = "Pick photo gallery, ambient gradient, blur, vignette & bubbles",
+          icon = Icons.Outlined.Wallpaper,
+          tag = "settings_home_open_backdrop",
+          onClick = onOpenEditorBackground,
+        )
+      }
+    }
+
     FloatingBarCustomizerSection(
       title = "Home Bottom Bar",
       tagPrefix = "home_bar",
@@ -554,6 +590,9 @@ fun EditorAppearanceStudioContent(
   onUpdateSettings: ((EditorSettings) -> EditorSettings) -> Unit,
   onPickEditorBackgroundImage: (Uri) -> Unit,
   onClearEditorBackgroundImage: () -> Unit,
+  initialExpandEditorBg: Boolean = false,
+  onSelectSavedEditorBackground: (String) -> Unit = {},
+  onDeleteSavedEditorBackground: (String) -> Unit = {},
 ) {
   val palette = LocalIdePalette.current
   val activeBgPreset = EditorBackgroundPreset.fromKey(settings.editorBgPreset)
@@ -636,7 +675,7 @@ fun EditorAppearanceStudioContent(
       title = "Editor Background",
       icon = Icons.Outlined.Wallpaper,
       summary = bgSummary,
-      initiallyExpanded = false,
+      initiallyExpanded = initialExpandEditorBg,
       onExpandedChange = { expanded -> if (expanded) floatingController?.select(bgPreviewId) },
       contentPadding = 12.dp,
     ) {
@@ -716,6 +755,82 @@ fun EditorAppearanceStudioContent(
             )
             Spacer(Modifier.width(5.dp))
             Text("Clear", fontSize = 12.sp)
+          }
+        }
+      }
+
+      val validGalleryPaths =
+        remember(settings.editorBgSavedPaths, settings.editorBgImagePath) {
+          (settings.editorBgSavedPaths + listOfNotNull(settings.editorBgImagePath.takeIf { it.isNotBlank() }))
+            .distinct()
+            .filter { File(it).isFile }
+        }
+      if (validGalleryPaths.isNotEmpty()) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          Text(
+            text = "SAVED WALLPAPERS (${validGalleryPaths.size}/${EditorSettings.MAX_SAVED_BG_PATHS})",
+            fontFamily = JetBrainsMono,
+            fontSize = 9.5.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.7.sp,
+            color = palette.textMuted,
+          )
+          Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            validGalleryPaths.forEachIndexed { idx, path ->
+              val isSelected = activeBgPreset == EditorBackgroundPreset.CUSTOM && settings.editorBgImagePath == path
+              Box(
+                modifier =
+                  Modifier
+                    .size(width = 76.dp, height = 52.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .border(
+                      width = if (isSelected) 2.dp else 1.dp,
+                      color = if (isSelected) palette.activePillFg else palette.border.copy(alpha = 0.65f),
+                      shape = RoundedCornerShape(10.dp),
+                    )
+                    .clickable {
+                      if (onSelectSavedEditorBackground != {}) {
+                        onSelectSavedEditorBackground(path)
+                      } else {
+                        onUpdateSettings { cur ->
+                          cur.copy(editorBgPreset = "CUSTOM", editorBgImagePath = path)
+                        }
+                      }
+                    }
+                    .testTag("settings_saved_bg_$idx"),
+              ) {
+                AsyncImage(
+                  model = File(path),
+                  contentDescription = "Saved wallpaper ${idx + 1}",
+                  contentScale = ContentScale.Crop,
+                  modifier = Modifier.fillMaxSize(),
+                )
+                Box(
+                  modifier =
+                    Modifier
+                      .align(Alignment.TopEnd)
+                      .padding(3.dp)
+                      .size(18.dp)
+                      .clip(CircleShape)
+                      .background(Color.Black.copy(alpha = 0.68f))
+                      .clickable {
+                        onDeleteSavedEditorBackground(path)
+                      },
+                  contentAlignment = Alignment.Center,
+                ) {
+                  Icon(
+                    imageVector = Icons.Outlined.Close,
+                    contentDescription = "Delete saved wallpaper",
+                    tint = Color.White,
+                    modifier = Modifier.size(11.dp),
+                  )
+                }
+              }
+            }
           }
         }
       }
@@ -924,6 +1039,102 @@ fun EditorAppearanceStudioContent(
                 modifier = Modifier.testTag("settings_bg_scrim_slider"),
               )
             }
+
+            HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.75.dp)
+
+            val blurDpVal = settings.editorBgBlurDp.coerceIn(0f, 25f)
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Text("Background Blur", style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
+                Text(
+                  text = if (blurDpVal < 0.5f) "Off" else "${blurDpVal.roundToInt()} dp",
+                  fontFamily = JetBrainsMono,
+                  fontSize = 11.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = palette.activePillFg,
+                )
+              }
+              Slider(
+                value = blurDpVal,
+                onValueChange = { b -> onUpdateSettings { it.copy(editorBgBlurDp = b.coerceIn(0f, 25f)) } },
+                valueRange = 0f..25f,
+                modifier = Modifier.testTag("settings_bg_blur_slider"),
+              )
+              Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(0f to "Off", 6f to "6dp", 14f to "14dp", 22f to "22dp").forEach { (bVal, lbl) ->
+                  val close = kotlin.math.abs(blurDpVal - bVal) < 2f
+                  QuickPresetChip(
+                    label = lbl,
+                    selected = close,
+                    onClick = { onUpdateSettings { it.copy(editorBgBlurDp = bVal) } },
+                  )
+                }
+              }
+            }
+
+            HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.75.dp)
+
+            val vignettePct = (settings.editorBgVignette.coerceIn(0f, 0.75f) * 100f).roundToInt()
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Text("Edge Vignette", style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
+                Text(
+                  text = "$vignettePct%",
+                  fontFamily = JetBrainsMono,
+                  fontSize = 11.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = palette.activePillFg,
+                )
+              }
+              Slider(
+                value = settings.editorBgVignette.coerceIn(0f, 0.75f),
+                onValueChange = { v -> onUpdateSettings { it.copy(editorBgVignette = v.coerceIn(0f, 0.75f)) } },
+                valueRange = 0.0f..0.75f,
+                modifier = Modifier.testTag("settings_bg_vignette_slider"),
+              )
+            }
+
+            if (hasCustomPhotoFile && activeBgPreset == EditorBackgroundPreset.CUSTOM) {
+              HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.75.dp)
+              val activeFit = settings.normalizedBgFitMode()
+              Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Image Fit Mode", style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                  listOf(
+                    EditorSettings.BG_FIT_CROP to "Crop",
+                    EditorSettings.BG_FIT_FIT to "Fit",
+                    EditorSettings.BG_FIT_FILL to "Stretch",
+                  ).forEach { (modeKey, modeLabel) ->
+                    QuickPresetChip(
+                      label = modeLabel,
+                      selected = activeFit == modeKey,
+                      onClick = { onUpdateSettings { it.copy(editorBgFitMode = modeKey) } },
+                    )
+                  }
+                }
+              }
+            }
+
+            HorizontalDivider(color = palette.border.copy(alpha = 0.35f), thickness = 0.75.dp)
+
+            SettingsToggleRow(
+              title = "Apply to Home Page",
+              description = "Show this backdrop and effects behind Home screen",
+              checked = settings.editorBgHomeEnabled,
+              horizontalPadding = 0.dp,
+              modifier = Modifier.testTag("settings_bg_apply_home_switch"),
+              onCheckedChange = { enabled ->
+                onUpdateSettings { it.copy(editorBgHomeEnabled = enabled) }
+              },
+            )
           }
         }
       }

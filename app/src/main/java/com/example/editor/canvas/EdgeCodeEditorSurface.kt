@@ -287,6 +287,7 @@ fun EdgeCodeEditorSurface(
   onToggleFindBar: () -> Unit,
   modifier: Modifier = Modifier,
   bubbleController: EditorBubbleController? = null,
+  onGoToDefinition: (String, CharSequence, Int) -> Unit = { _, _, _ -> },
 ) {
   val palette = LocalIdePalette.current
   val density = LocalDensity.current
@@ -302,6 +303,7 @@ fun EdgeCodeEditorSurface(
   val latestOnZoomCommitted by rememberUpdatedState(onPinchZoomCommitted)
   val latestOnRename by rememberUpdatedState(onRequestSmartRename)
   val latestOnFind by rememberUpdatedState(onToggleFindBar)
+  val latestOnGoToDef by rememberUpdatedState(onGoToDefinition)
   val latestBubbleController by rememberUpdatedState(bubbleController)
   val latestBubblesConfig by rememberUpdatedState(editorSettings.editorBubbles)
 
@@ -1668,6 +1670,13 @@ fun EdgeCodeEditorSurface(
           ?: session.currentIdentifierAtCursor()
         flushSyncNow()
         latestOnRename(ident)
+      },
+      onGoToDefinition = {
+        val offset = session.selection.min.coerceIn(0, session.doc.length)
+        val textCopy = session.doc.text
+        showTouchHandles = false
+        flushSyncNow()
+        latestOnGoToDef(filePath, textCopy, offset)
       },
     )
 
