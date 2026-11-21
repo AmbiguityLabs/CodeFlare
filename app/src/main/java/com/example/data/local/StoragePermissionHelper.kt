@@ -17,21 +17,16 @@ import androidx.core.content.ContextCompat
 object StoragePermissionHelper {
 
   fun hasNativeFileAccess(context: Context): Boolean {
-    return when {
-      Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
-        runCatching { Environment.isExternalStorageManager() }.getOrDefault(false)
-      }
-      Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> {
-        val readGranted =
-          ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) ==
-            PackageManager.PERMISSION_GRANTED
-        val writeGranted =
-          ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
-            PackageManager.PERMISSION_GRANTED
-        readGranted && writeGranted
-      }
-      else -> true
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+      return runCatching { Environment.isExternalStorageManager() }.getOrDefault(false)
     }
+    val readGranted =
+      ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) ==
+        PackageManager.PERMISSION_GRANTED
+    val writeGranted =
+      ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
+        PackageManager.PERMISSION_GRANTED
+    return readGranted && writeGranted
   }
 
   fun needsAllFilesAccessSettings(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
