@@ -12,32 +12,23 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
-import androidx.compose.runtime.Stable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -47,8 +38,6 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -57,23 +46,16 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlin.math.PI
-import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.sin
 import kotlinx.coroutines.launch
@@ -651,348 +633,3 @@ fun LiquidGlassEmergeVisibility(
     }
   }
 }
-
-/**
- * Pure hit-test solver for hold-and-slide icon scrubbing across a horizontal strip.
- * Keeps adjacent items seamless across spacing gaps while cancelling cleanly if the finger
- * drifts far outside the bar vertically.
- */
-internal fun findScrubItemIndexAtOffset(
-  itemBounds: Map<Int, Rect>,
-  pointer: Offset,
-  verticalCancelSlopPx: Float,
-  horizontalGapSlopPx: Float = 28f,
-): Int {
-  if (itemBounds.isEmpty() || pointer == Offset.Unspecified) return -1
-  val minTop = itemBounds.values.minOf { it.top }
-  val maxBottom = itemBounds.values.maxOf { it.bottom }
-  if (pointer.y < minTop - verticalCancelSlopPx || pointer.y > maxBottom + verticalCancelSlopPx) {
-    return -1
-  }
-  val directHit =
-    itemBounds.entries.firstOrNull { (_, rect) ->
-      pointer.x in rect.left..rect.right
-    }
-  if (directHit != null) return directHit.key
-
-  val minLeft = itemBounds.values.minOf { it.left } - horizontalGapSlopPx
-  val maxRight = itemBounds.values.maxOf { it.right } + horizontalGapSlopPx
-  if (pointer.x !in minLeft..maxRight) return -1
-
-  return itemBounds.entries
-    .minByOrNull { (_, rect) -> abs(pointer.x - rect.center.x) }
-    ?.key
-    ?: -1
-}
-
-@Stable
-class LiquidGlassScrubState {
-  internal val rootItemBounds = mutableStateMapOf<Int, Rect>()
-  internal var hostOriginInRoot by mutableStateOf(Offset.Zero)
-  var isScrubbing by mutableStateOf(false)
-    internal set
-  var hoveredIndex by mutableIntStateOf(-1)
-    internal set
-  var pointerOffset by mutableStateOf(Offset.Unspecified)
-    internal set
-
-  internal val lensXAnim = Animatable(0f)
-  internal val lensYAnim = Animatable(0f)
-  internal val lensWAnim = Animatable(0f)
-  internal val lensHAnim = Animatable(0f)
-  internal val lensIntensityAnim = Animatable(0f)
-
-  internal fun updateHostCoords(coords: LayoutCoordinates) {
-    if (coords.isAttached) {
-      hostOriginInRoot = coords.positionInRoot()
-    }
-  }
-
-  internal fun registerItem(index: Int, coords: LayoutCoordinates) {
-    if (coords.isAttached) {
-      rootItemBounds[index] = coords.boundsInRoot()
-    }
-  }
-
-  internal fun localBounds(): Map<Int, Rect> =
-    rootItemBounds.mapValues { (_, rect) ->
-      rect.translate(-hostOriginInRoot.x, -hostOriginInRoot.y)
-    }
-
-  fun isItemScrubHovered(index: Int): Boolean = isScrubbing && hoveredIndex == index
-}
-
-@Composable
-fun rememberLiquidGlassScrubState(): LiquidGlassScrubState = remember { LiquidGlassScrubState() }
-
-fun Modifier.liquidGlassScrubItem(
-  state: LiquidGlassScrubState,
-  index: Int,
-): Modifier =
-  onGloballyPositioned { coords ->
-    state.registerItem(index, coords)
-  }
-
-/**
- * Enables Apple-style hold-and-slide icon scrubbing across any icon strip:
- * quick taps and scroll swipes remain untouched; holding >= 185ms illuminates and detaches
- * a gliding Liquid Glass lens that slides between icons with haptic ticks and commits on release.
- */
-fun Modifier.liquidGlassScrubHost(
-  state: LiquidGlassScrubState,
-  itemCount: Int,
-  enabled: Boolean = true,
-  holdActivationMs: Long = 185L,
-  onCommitItem: (Int) -> Unit,
-): Modifier = composed {
-  if (!enabled || itemCount <= 0) return@composed this
-  val scope = rememberCoroutineScope()
-  val density = LocalDensity.current
-  val haptics = LocalHapticFeedback.current
-  val latestItemCount by rememberUpdatedState(itemCount)
-  val latestOnCommit by rememberUpdatedState(onCommitItem)
-  val verticalCancelSlopPx = with(density) { 46.dp.toPx() }
-  val horizontalGapSlopPx = with(density) { 22.dp.toPx() }
-
-  fun animateLensTo(rect: Rect, snap: Boolean) {
-    scope.launch {
-      if (snap) {
-        state.lensXAnim.snapTo(rect.left)
-        state.lensYAnim.snapTo(rect.top)
-        state.lensWAnim.snapTo(rect.width)
-        state.lensHAnim.snapTo(rect.height)
-      } else {
-        launch { state.lensXAnim.animateTo(rect.left, spring(stiffness = 520f, dampingRatio = 0.78f)) }
-        launch { state.lensYAnim.animateTo(rect.top, spring(stiffness = 520f, dampingRatio = 0.82f)) }
-        launch { state.lensWAnim.animateTo(rect.width, spring(stiffness = 480f, dampingRatio = 0.78f)) }
-        launch { state.lensHAnim.animateTo(rect.height, spring(stiffness = 480f, dampingRatio = 0.82f)) }
-      }
-    }
-  }
-
-  this
-    .onGloballyPositioned { state.updateHostCoords(it) }
-    .pointerInput(enabled) {
-      awaitEachGesture {
-        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-        val downPos = down.position
-        var abortedBeforeHold = false
-
-        withTimeoutOrNull(holdActivationMs) {
-          while (true) {
-            val ev = awaitPointerEvent(PointerEventPass.Initial)
-            val ch = ev.changes.firstOrNull { it.id == down.id } ?: ev.changes.firstOrNull()
-            if (ch == null || !ch.pressed) {
-              abortedBeforeHold = true
-              break
-            }
-            if ((ch.position - downPos).getDistance() > viewConfiguration.touchSlop) {
-              abortedBeforeHold = true
-              break
-            }
-          }
-        }
-
-        if (abortedBeforeHold) {
-          return@awaitEachGesture
-        }
-
-        val boundsMap = state.localBounds()
-        val startIdx = findScrubItemIndexAtOffset(boundsMap, downPos, verticalCancelSlopPx, horizontalGapSlopPx)
-        if (startIdx !in 0 until latestItemCount) {
-          return@awaitEachGesture
-        }
-
-        state.isScrubbing = true
-        state.hoveredIndex = startIdx
-        state.pointerOffset = downPos
-        boundsMap[startIdx]?.let { animateLensTo(it, snap = true) }
-        scope.launch {
-          state.lensIntensityAnim.snapTo(0.25f)
-          state.lensIntensityAnim.animateTo(1f, tween(150))
-        }
-        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-
-        var lastPosition = downPos
-        try {
-          while (true) {
-            val ev = awaitPointerEvent(PointerEventPass.Initial)
-            val ch = ev.changes.firstOrNull { it.id == down.id } ?: ev.changes.firstOrNull()
-            if (ch == null || !ch.pressed) {
-              ch?.consume()
-              break
-            }
-            ch.consume()
-            lastPosition = ch.position
-            state.pointerOffset = lastPosition
-            val currentBounds = state.localBounds()
-            val nextIdx = findScrubItemIndexAtOffset(currentBounds, lastPosition, verticalCancelSlopPx, horizontalGapSlopPx)
-            val validIdx = if (nextIdx in 0 until latestItemCount) nextIdx else -1
-            if (validIdx != state.hoveredIndex) {
-              state.hoveredIndex = validIdx
-              if (validIdx >= 0) {
-                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                currentBounds[validIdx]?.let { animateLensTo(it, snap = false) }
-              }
-            }
-          }
-        } finally {
-          val committedIdx = state.hoveredIndex
-          state.isScrubbing = false
-          state.hoveredIndex = -1
-          state.pointerOffset = Offset.Unspecified
-          scope.launch {
-            state.lensIntensityAnim.animateTo(0f, tween(180))
-          }
-          if (committedIdx in 0 until latestItemCount) {
-            latestOnCommit(committedIdx)
-          }
-        }
-      }
-    }
-}
-
-/**
- * Floating Liquid Glass lens overlay rendered above or around scrubbed icons so holding
- * and sliding visibly moves the same chromatic-edge, tilt-lit, finger-glowing glass lens.
- */
-@Composable
-fun LiquidGlassScrubLensOverlay(
-  state: LiquidGlassScrubState,
-  modifier: Modifier = Modifier,
-  cornerRadius: Dp = 18.dp,
-  thickness: Float = 1.4f,
-) {
-  val intensity = state.lensIntensityAnim.value
-  val lensW = state.lensWAnim.value
-  val lensH = state.lensHAnim.value
-  if (intensity <= 0.01f || lensW <= 2f || lensH <= 2f) return
-
-  val palette = LocalIdePalette.current
-  val settings = LocalEditorSettings.current
-  val adaptive =
-    rememberLiquidGlassAdaptiveColors(
-      palette = palette,
-      tintFraction = (settings.liquidGlassTint * 0.85f).coerceIn(0f, 1f),
-      thickness = thickness,
-      emergenceProgress = intensity,
-    )
-  val lightDir = rememberLiquidGlassLightDirection(settings.liquidGlassMotionHighlights)
-  val density = LocalDensity.current
-  val baseCornerPx = with(density) { cornerRadius.toPx() }
-  val glowColor = palette.activePillFg
-
-  Canvas(modifier = modifier) {
-    val expandScale = 1f + 0.07f * intensity
-    val padW = lensW * (expandScale - 1f) * 0.5f + with(density) { 4.dp.toPx() } * intensity
-    val padH = lensH * (expandScale - 1f) * 0.5f + with(density) { 2.dp.toPx() } * intensity
-    val left = state.lensXAnim.value - padW
-    val top = state.lensYAnim.value - padH
-    val w = (lensW + padW * 2f).coerceAtLeast(4f)
-    val h = (lensH + padH * 2f).coerceAtLeast(4f)
-    val rad = baseCornerPx.coerceAtMost(minOf(w, h) * 0.5f)
-    val cr = CornerRadius(rad, rad)
-    val topLeft = Offset(left, top)
-    val rectSize = Size(w, h)
-
-    if (settings.liquidGlassEnabled) {
-      // 1. Floating glass lens tint body
-      drawRoundRect(
-        brush =
-          Brush.verticalGradient(
-            colors =
-              listOf(
-                adaptive.bodyTopTint.copy(alpha = (adaptive.bodyTopTint.alpha * 0.58f * intensity).coerceIn(0f, 0.55f)),
-                adaptive.bodyBottomTint.copy(alpha = (adaptive.bodyBottomTint.alpha * 0.42f * intensity).coerceIn(0f, 0.48f)),
-              ),
-            startY = top,
-            endY = top + h,
-          ),
-        topLeft = topLeft,
-        size = rectSize,
-        cornerRadius = cr,
-      )
-
-      // 2. Finger-origin internal caustic glow sliding directly under the finger
-      val pointer = state.pointerOffset
-      val glowCenter =
-        if (pointer != Offset.Unspecified) {
-          Offset(
-            x = pointer.x.coerceIn(left, left + w),
-            y = pointer.y.coerceIn(top, top + h),
-          )
-        } else {
-          Offset(left + w * 0.5f, top + h * 0.5f)
-        }
-      drawRoundRect(
-        brush =
-          Brush.radialGradient(
-            colors =
-              listOf(
-                glowColor.copy(alpha = 0.42f * intensity),
-                glowColor.copy(alpha = 0.14f * intensity),
-                Color.Transparent,
-              ),
-            center = glowCenter,
-            radius = maxOf(w, h) * 0.85f,
-          ),
-        topLeft = topLeft,
-        size = rectSize,
-        cornerRadius = cr,
-      )
-
-      // 3. Chromatic Fresnel dispersion rim
-      drawRoundRect(
-        brush =
-          Brush.linearGradient(
-            colors =
-              listOf(
-                adaptive.chromaticCoolRim.copy(alpha = (0.55f * intensity).coerceIn(0f, 0.72f)),
-                Color.Transparent,
-                adaptive.chromaticWarmRim.copy(alpha = (0.45f * intensity).coerceIn(0f, 0.62f)),
-              ),
-            start = Offset(left + w * (0.2f + lightDir.x * 0.25f), top),
-            end = Offset(left + w * (0.8f - lightDir.x * 0.25f), top + h),
-          ),
-        topLeft = topLeft,
-        size = rectSize,
-        cornerRadius = cr,
-        style = Stroke(width = 2.dp.toPx()),
-      )
-
-      // 4. Tilt-responsive bright specular highlight border
-      drawRoundRect(
-        brush =
-          Brush.linearGradient(
-            colors =
-              listOf(
-                adaptive.specularHighlight.copy(alpha = (0.86f * intensity).coerceIn(0f, 0.96f)),
-                adaptive.rimSubtle.copy(alpha = 0.26f * intensity),
-                adaptive.specularHighlight.copy(alpha = 0.48f * intensity),
-              ),
-            start = Offset(left + w * (0.5f + lightDir.x * 0.5f), top),
-            end = Offset(left + w * (0.5f - lightDir.x * 0.5f), top + h),
-          ),
-        topLeft = topLeft,
-        size = rectSize,
-        cornerRadius = cr,
-        style = Stroke(width = 1.15.dp.toPx()),
-      )
-    } else {
-      drawRoundRect(
-        color = palette.activePillFg.copy(alpha = 0.18f * intensity),
-        topLeft = topLeft,
-        size = rectSize,
-        cornerRadius = cr,
-      )
-      drawRoundRect(
-        color = palette.activePillFg.copy(alpha = 0.52f * intensity),
-        topLeft = topLeft,
-        size = rectSize,
-        cornerRadius = cr,
-        style = Stroke(width = 1.dp.toPx()),
-      )
-    }
-  }
-}
-

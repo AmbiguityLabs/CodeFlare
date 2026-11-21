@@ -157,7 +157,6 @@ import com.example.ui.components.IconSegmentTab
 import com.example.ui.components.IconToggleRevealText
 import com.example.ui.components.IdeCoreSheetTab
 import com.example.ui.components.IdeSearchAndHistorySheet
-import com.example.ui.components.LiquidGlassIconScrubStrip
 import com.example.ui.components.LiveTailView
 import com.example.ui.components.LocalScriptRunPane
 import com.example.ui.components.NewDirectoryDialog
@@ -1308,7 +1307,7 @@ fun IdeWorkspaceScreen(
                       onOpenProjectSearch = { activeIdeSheetTab = IdeCoreSheetTab.FIND_IN_FILES },
                       onRunLocalScript = { viewModel.runWorkspaceLocally(openTestWorkspace = true) },
                       onRegisterInsertHook = { hook -> insertSnippetHook = hook },
-                      onGoToDefinition = { path, text, cursor -> viewModel.goToDefinitionAtCursor(path, text.toString(), cursor) },
+                      onGoToDefinition = { path, text, cursor -> viewModel.goToDefinitionAtCursor(path, text, cursor) },
                       onRunDenoCheck = viewModel::runDenoCheckAndLint,
                       onOpenSnippetsDialog = { showSnippetsDialog = true },
                       onSetSplitViewMode = viewModel::setSplitViewMode,
@@ -2001,74 +2000,56 @@ private fun ProjectTestModeWorkspace(
 
   Column(modifier = Modifier.fillMaxSize().background(palette.chromeBg)) {
     if (!uiState.isPreviewFullScreen) {
-      LiquidGlassIconScrubStrip(
-        itemCount = 5,
-        onCommitItem = { idx ->
-          when (idx) {
-            0 -> viewModel.toggleBottomPanel(BottomPanelTab.LOCAL_RUN)
-            1 -> viewModel.openDeployedWorkerPreview(maximizeWindow = true)
-            2 -> viewModel.openWorkerTestWindow(maximizeWindow = true)
-            3 -> viewModel.toggleBottomPanel(BottomPanelTab.API_TESTER)
-            4 -> viewModel.setPreviewFullScreen(true)
-          }
-        },
-        modifier = Modifier.fillMaxWidth().edgeGlassDock(shape = RectangleShape),
-      ) { scrubState ->
-        Row(
-          modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
-          verticalAlignment = Alignment.CenterVertically,
+      Row(
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .edgeGlassDock(shape = RectangleShape)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        IconSegmentTab(
+          icon = Icons.Outlined.Terminal,
+          label = "CLI",
+          selected = activeTab == BottomPanelTab.LOCAL_RUN,
+          tag = "test_segment_local_run",
+          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.LOCAL_RUN) },
+          modifier = Modifier.weight(1f),
+        )
+        IconSegmentTab(
+          icon = Icons.Outlined.Visibility,
+          label = "Preview",
+          selected = activeTab == BottomPanelTab.WORKER_PREVIEW,
+          tag = "test_segment_preview",
+          onClick = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
+          modifier = Modifier.weight(1f),
+        )
+        IconSegmentTab(
+          icon = Icons.Outlined.Http,
+          label = "HTTP",
+          selected = activeTab == BottomPanelTab.WORKER_TEST,
+          tag = "test_segment_worker_http",
+          onClick = { viewModel.openWorkerTestWindow(maximizeWindow = true) },
+          modifier = Modifier.weight(1f),
+        )
+        IconSegmentTab(
+          icon = Icons.Outlined.Api,
+          label = "API",
+          selected = activeTab == BottomPanelTab.API_TESTER,
+          tag = "test_segment_api_tester",
+          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.API_TESTER) },
+          modifier = Modifier.weight(1f),
+        )
+        IconButton(
+          onClick = { viewModel.setPreviewFullScreen(true) },
+          modifier = Modifier.size(32.dp).testTag("test_workspace_fullscreen_button"),
         ) {
-          IconSegmentTab(
-            icon = Icons.Outlined.Terminal,
-            label = "CLI",
-            selected = activeTab == BottomPanelTab.LOCAL_RUN,
-            tag = "test_segment_local_run",
-            onClick = { viewModel.toggleBottomPanel(BottomPanelTab.LOCAL_RUN) },
-            modifier = Modifier.weight(1f),
-            scrubState = scrubState,
-            scrubIndex = 0,
-          )
-          IconSegmentTab(
-            icon = Icons.Outlined.Visibility,
-            label = "Preview",
-            selected = activeTab == BottomPanelTab.WORKER_PREVIEW,
-            tag = "test_segment_preview",
-            onClick = { viewModel.openDeployedWorkerPreview(maximizeWindow = true) },
-            modifier = Modifier.weight(1f),
-            scrubState = scrubState,
-            scrubIndex = 1,
-          )
-          IconSegmentTab(
-            icon = Icons.Outlined.Http,
-            label = "HTTP",
-            selected = activeTab == BottomPanelTab.WORKER_TEST,
-            tag = "test_segment_worker_http",
-            onClick = { viewModel.openWorkerTestWindow(maximizeWindow = true) },
-            modifier = Modifier.weight(1f),
-            scrubState = scrubState,
-            scrubIndex = 2,
-          )
-          IconSegmentTab(
-            icon = Icons.Outlined.Api,
-            label = "API",
-            selected = activeTab == BottomPanelTab.API_TESTER,
-            tag = "test_segment_api_tester",
-            onClick = { viewModel.toggleBottomPanel(BottomPanelTab.API_TESTER) },
-            modifier = Modifier.weight(1f),
-            scrubState = scrubState,
-            scrubIndex = 3,
-          )
-          IconRevealButton(
-            icon = Icons.Outlined.Fullscreen,
-            revealedLabel = "Fullscreen",
-            minimal = true,
-            height = 32.dp,
-            iconSize = 18.dp,
-            onClick = { viewModel.setPreviewFullScreen(true) },
-            tag = "test_workspace_fullscreen_button",
-            scrubState = scrubState,
-            scrubIndex = 4,
+          Icon(
+            imageVector = Icons.Outlined.Fullscreen,
+            contentDescription = "Fullscreen Preview",
+            tint = palette.textSecondary,
+            modifier = Modifier.size(18.dp),
           )
         }
       }
@@ -2202,57 +2183,43 @@ private fun ProjectConsoleModeWorkspace(
     }
 
   Column(modifier = Modifier.fillMaxSize().background(palette.chromeBg)) {
-    LiquidGlassIconScrubStrip(
-      itemCount = 3,
-      onCommitItem = { idx ->
-        when (idx) {
-          0 -> viewModel.toggleBottomPanel(BottomPanelTab.TAIL_LOGS)
-          1 -> viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS)
-          2 -> viewModel.toggleBottomPanel(BottomPanelTab.CONSOLE)
-        }
-      },
-      modifier = Modifier.fillMaxWidth().edgeGlassDock(shape = RectangleShape),
-    ) { scrubState ->
-      Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        IconSegmentTab(
-          icon = Icons.Outlined.Sensors,
-          label = "Live Tail",
-          selected = activeTab == BottomPanelTab.TAIL_LOGS,
-          tag = "console_segment_tail",
-          badgeText = if (uiState.isTailRunning) "LIVE" else null,
-          badgeColor = EmeraldLive,
-          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.TAIL_LOGS) },
-          modifier = Modifier.weight(1f),
-          scrubState = scrubState,
-          scrubIndex = 0,
-        )
-        IconSegmentTab(
-          icon = Icons.Outlined.WarningAmber,
-          label = "Problems",
-          selected = activeTab == BottomPanelTab.PROBLEMS,
-          tag = "console_segment_problems",
-          badgeText = uiState.diagnostics.size.takeIf { it > 0 }?.toString(),
-          badgeColor = AmberWarn,
-          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS) },
-          modifier = Modifier.weight(1f),
-          scrubState = scrubState,
-          scrubIndex = 1,
-        )
-        IconSegmentTab(
-          icon = Icons.Outlined.Dvr,
-          label = "Log",
-          selected = activeTab == BottomPanelTab.CONSOLE,
-          tag = "console_segment_log",
-          onClick = { viewModel.toggleBottomPanel(BottomPanelTab.CONSOLE) },
-          modifier = Modifier.weight(1f),
-          scrubState = scrubState,
-          scrubIndex = 2,
-        )
-      }
+    Row(
+      modifier =
+        Modifier
+          .fillMaxWidth()
+          .edgeGlassDock(shape = RectangleShape)
+          .padding(horizontal = 10.dp, vertical = 6.dp),
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      IconSegmentTab(
+        icon = Icons.Outlined.Sensors,
+        label = "Live Tail",
+        selected = activeTab == BottomPanelTab.TAIL_LOGS,
+        tag = "console_segment_tail",
+        badgeText = if (uiState.isTailRunning) "LIVE" else null,
+        badgeColor = EmeraldLive,
+        onClick = { viewModel.toggleBottomPanel(BottomPanelTab.TAIL_LOGS) },
+        modifier = Modifier.weight(1f),
+      )
+      IconSegmentTab(
+        icon = Icons.Outlined.WarningAmber,
+        label = "Problems",
+        selected = activeTab == BottomPanelTab.PROBLEMS,
+        tag = "console_segment_problems",
+        badgeText = uiState.diagnostics.size.takeIf { it > 0 }?.toString(),
+        badgeColor = AmberWarn,
+        onClick = { viewModel.toggleBottomPanel(BottomPanelTab.PROBLEMS) },
+        modifier = Modifier.weight(1f),
+      )
+      IconSegmentTab(
+        icon = Icons.Outlined.Dvr,
+        label = "Log",
+        selected = activeTab == BottomPanelTab.CONSOLE,
+        tag = "console_segment_log",
+        onClick = { viewModel.toggleBottomPanel(BottomPanelTab.CONSOLE) },
+        modifier = Modifier.weight(1f),
+      )
     }
 
     HorizontalDivider(color = palette.border.copy(alpha = 0.45f))

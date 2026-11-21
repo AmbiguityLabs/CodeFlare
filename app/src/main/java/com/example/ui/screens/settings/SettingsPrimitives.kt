@@ -932,7 +932,6 @@ fun SettingsFoldableSection(
   modifier: Modifier = Modifier,
   summary: String? = null,
   initiallyExpanded: Boolean = false,
-  onExpandedChange: (Boolean) -> Unit = {},
   contentPadding: Dp = 0.dp,
   content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -955,11 +954,7 @@ fun SettingsFoldableSection(
         modifier =
           Modifier
             .fillMaxWidth()
-            .clickable {
-              val next = !expanded
-              expanded = next
-              onExpandedChange(next)
-            }
+            .clickable { expanded = !expanded }
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),

@@ -49,9 +49,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -63,51 +60,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.security.IconLabelBehavior
 import com.example.ui.theme.JetBrainsMono
-import com.example.ui.theme.LiquidGlassScrubLensOverlay
-import com.example.ui.theme.LiquidGlassScrubState
 import com.example.ui.theme.LocalEditorSettings
 import com.example.ui.theme.LocalIconLabelBehavior
 import com.example.ui.theme.LocalIdePalette
 import com.example.ui.theme.UiStyleVersion
-import com.example.ui.theme.liquidGlassScrubHost
-import com.example.ui.theme.liquidGlassScrubItem
 import com.example.ui.theme.liquidGlassSurface
 import com.example.ui.theme.liquidGlassTouchGlow
-import com.example.ui.theme.rememberLiquidGlassScrubState
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlinx.coroutines.delay
-
-@Composable
-fun LiquidGlassIconScrubStrip(
-  itemCount: Int,
-  onCommitItem: (Int) -> Unit,
-  modifier: Modifier = Modifier,
-  cornerRadius: Dp = 14.dp,
-  thickness: Float = 1.35f,
-  enabled: Boolean = true,
-  content: @Composable BoxScope.(scrubState: LiquidGlassScrubState) -> Unit,
-) {
-  val scrubState = rememberLiquidGlassScrubState()
-  Box(
-    modifier =
-      modifier.liquidGlassScrubHost(
-        state = scrubState,
-        itemCount = itemCount,
-        enabled = enabled,
-        onCommitItem = onCommitItem,
-      ),
-  ) {
-    content(scrubState)
-    LiquidGlassScrubLensOverlay(
-      state = scrubState,
-      cornerRadius = cornerRadius,
-      thickness = thickness,
-      modifier = Modifier.matchParentSize(),
-    )
-  }
-}
 
 @Composable
 fun IconRevealButton(
@@ -127,20 +89,12 @@ fun IconRevealButton(
   iconSize: Dp = 17.dp,
   revealDurationMs: Long = 2200L,
   labelBehaviorOverride: IconLabelBehavior? = null,
-  scrubState: LiquidGlassScrubState? = null,
-  scrubIndex: Int = -1,
 ) {
   val palette = LocalIdePalette.current
   val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   val behavior = labelBehaviorOverride ?: LocalIconLabelBehavior.current
   var revealBump by remember { mutableIntStateOf(0) }
   var tapRevealed by remember { mutableStateOf(false) }
-  val scrubHovered = scrubState != null && scrubIndex >= 0 && scrubState.isItemScrubHovered(scrubIndex)
-  val scrubIconScale by animateFloatAsState(
-    targetValue = if (scrubHovered) 1.15f else 1f,
-    animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
-    label = "icon_reveal_scrub_scale",
-  )
 
   LaunchedEffect(revealBump, behavior) {
     if (behavior != IconLabelBehavior.REVEAL_ON_TAP) {
@@ -166,7 +120,6 @@ fun IconRevealButton(
       when {
         accentContainer -> palette.ctaBg
         active -> palette.activePillBg
-        scrubHovered -> palette.activePillBg.copy(alpha = 0.42f)
         minimal && isRevealed -> palette.chromeSurface
         minimal -> Color.Transparent
         isV2 -> palette.chromeSurface
@@ -179,7 +132,7 @@ fun IconRevealButton(
     targetValue =
       when {
         accentContainer -> palette.ctaFg
-        scrubHovered || active -> palette.activePillFg
+        active -> palette.activePillFg
         contentTint != null -> contentTint
         minimal -> palette.textSecondary
         else -> palette.textPrimary
@@ -190,8 +143,8 @@ fun IconRevealButton(
 
   val borderStroke =
     when {
-      minimal && !active && !isRevealed && !scrubHovered -> null
-      minimal && (isRevealed || scrubHovered) && !isV2 -> BorderStroke(0.5.dp, palette.glassBorderSubtle)
+      minimal && !active && !isRevealed -> null
+      minimal && isRevealed && !isV2 -> BorderStroke(0.5.dp, palette.glassBorderSubtle)
       isV2 && !active -> null
       active -> BorderStroke(0.75.dp, palette.activePillFg.copy(alpha = 0.35f))
       isV2 -> null
@@ -210,7 +163,6 @@ fun IconRevealButton(
     border = borderStroke,
     modifier =
       modifier
-        .then(if (scrubState != null && scrubIndex >= 0) Modifier.liquidGlassScrubItem(scrubState, scrubIndex) else Modifier)
         .height(height)
         .liquidGlassTouchGlow(glowColor = if (accentContainer) palette.ctaFg else palette.activePillFg)
         .animateContentSize(animationSpec = tween(170))
@@ -241,13 +193,7 @@ fun IconRevealButton(
             imageVector = icon,
             contentDescription = revealedLabel,
             tint = contentColor,
-            modifier =
-              Modifier
-                .size(iconSize)
-                .graphicsLayer {
-                  scaleX = scrubIconScale
-                  scaleY = scrubIconScale
-                },
+            modifier = Modifier.size(iconSize),
           )
         }
         if (statusDotColor != null && !isBusy) {
@@ -307,18 +253,10 @@ fun IconSegmentTab(
   badgeText: String? = null,
   badgeColor: Color? = null,
   labelBehaviorOverride: IconLabelBehavior? = null,
-  scrubState: LiquidGlassScrubState? = null,
-  scrubIndex: Int = -1,
 ) {
   val palette = LocalIdePalette.current
   val isV2 = palette.uiStyle == UiStyleVersion.V2_MINIMAL_OLED
   val behavior = labelBehaviorOverride ?: LocalIconLabelBehavior.current
-  val scrubHovered = scrubState != null && scrubIndex >= 0 && scrubState.isItemScrubHovered(scrubIndex)
-  val scrubIconScale by animateFloatAsState(
-    targetValue = if (scrubHovered) 1.15f else 1f,
-    animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
-    label = "seg_tab_scrub_scale",
-  )
   val showLabel =
     when (behavior) {
       IconLabelBehavior.ICON_ONLY -> false
@@ -330,7 +268,6 @@ fun IconSegmentTab(
     targetValue =
       when {
         selected -> palette.activePillBg
-        scrubHovered -> palette.activePillBg.copy(alpha = 0.45f)
         isV2 -> palette.chromeSurface
         else -> palette.glassSurface
       },
@@ -338,7 +275,7 @@ fun IconSegmentTab(
     label = "seg_tab_bg",
   )
   val fg by animateColorAsState(
-    targetValue = if (selected || scrubHovered) palette.activePillFg else palette.textSecondary,
+    targetValue = if (selected) palette.activePillFg else palette.textSecondary,
     animationSpec = tween(160),
     label = "seg_tab_fg",
   )
@@ -355,7 +292,6 @@ fun IconSegmentTab(
       },
     modifier =
       modifier
-        .then(if (scrubState != null && scrubIndex >= 0) Modifier.liquidGlassScrubItem(scrubState, scrubIndex) else Modifier)
         .height(32.dp)
         .liquidGlassTouchGlow(glowColor = palette.activePillFg)
         .animateContentSize(animationSpec = tween(170))
@@ -370,13 +306,7 @@ fun IconSegmentTab(
         imageVector = icon,
         contentDescription = label,
         tint = fg,
-        modifier =
-          Modifier
-            .size(16.dp)
-            .graphicsLayer {
-              scaleX = scrubIconScale
-              scaleY = scrubIconScale
-            },
+        modifier = Modifier.size(16.dp),
       )
       AnimatedVisibility(
         visible = showLabel,

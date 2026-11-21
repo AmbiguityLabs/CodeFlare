@@ -96,7 +96,6 @@ import com.example.editor.selection.SelectionLadderState
 import com.example.editor.selection.SelectionScope
 import com.example.editor.selection.SmartTextDomain
 import com.example.editor.selection.SmartTextSelectionEngine
-import com.example.ui.components.EditorBubbleController
 import com.example.ui.theme.EmeraldLive
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalIdePalette
@@ -223,29 +222,6 @@ class EdgeEditorController {
     session?.selectAll()
   }
 
-  fun outdentSelection() {
-    session?.outdentSelection()
-  }
-
-  fun deleteLine(): Boolean = session?.deleteLine() == true
-
-  fun selectCurrentLine() {
-    session?.selectCurrentLine()
-  }
-
-  fun joinLines(): Boolean = session?.joinLines() == true
-
-  fun sortSelectedLines(descending: Boolean = false): Boolean =
-    session?.sortSelectedLines(descending) == true
-
-  fun jumpToMatchingBracket(language: WorkerLanguage): Boolean {
-    val s = session ?: return false
-    val match = CodeAnalyzer.findMatchingBracket(s.doc.text, s.selection.end, language) ?: return false
-    val partner = match.partnerOffset ?: return false
-    s.setSelection(TextRange(partner.coerceIn(0, s.doc.length)))
-    return true
-  }
-
   fun expandEmmetAtCursor(filePath: String): Boolean {
     val s = session ?: return false
     val cursor = s.selection.end.coerceIn(0, s.doc.length)
@@ -279,14 +255,12 @@ fun EdgeCodeEditorSurface(
   findMatches: List<IntRange>,
   activeFindMatchIndex: Int,
   controller: EdgeEditorController,
-  bubbleController: EditorBubbleController? = null,
   onDebouncedSync: (TextFieldValue) -> Unit,
   onTelemetryUpdate: (EditorCursorTelemetry) -> Unit,
   onPinchZoomChanged: (liveZoom: Int, pinching: Boolean) -> Unit,
   onPinchZoomCommitted: (finalZoom: Int) -> Unit,
   onRequestSmartRename: (String?) -> Unit,
   onToggleFindBar: () -> Unit,
-  onGoToDefinition: (String, String, Int) -> Unit = { _, _, _ -> },
   modifier: Modifier = Modifier,
 ) {
   val palette = LocalIdePalette.current
@@ -303,8 +277,6 @@ fun EdgeCodeEditorSurface(
   val latestOnZoomCommitted by rememberUpdatedState(onPinchZoomCommitted)
   val latestOnRename by rememberUpdatedState(onRequestSmartRename)
   val latestOnFind by rememberUpdatedState(onToggleFindBar)
-  val latestOnGoToDefinition by rememberUpdatedState(onGoToDefinition)
-  val latestBubbleController by rememberUpdatedState(bubbleController)
 
   // Session & rendering caches scoped per open file path
   val session = remember(filePath) { EdgeEditorSession(externalTfv.text, externalTfv.selection) }
@@ -1441,9 +1413,6 @@ fun EdgeCodeEditorSurface(
                   showCaretMenu = session.selection.collapsed
                 }
                 else -> {
-                  if (latestBubbleController?.tryPopAt(downPos.x, downPos.y) == true) {
-                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                  }
                   session.setSelection(TextRange(offset))
                   showTouchHandles = false
                   val tappedCaretOrEmptyDoc =

@@ -287,26 +287,7 @@ data class IdePalette(
   val syntaxType: Color,
   val syntaxProperty: Color,
   val syntaxOperator: Color,
-) {
-  val editorTextPrimary: Color
-    get() =
-      if (editorBg.luminance() < 0.40f) {
-        if (textPrimary.luminance() > 0.45f) textPrimary else Color(0xFFECEEE6)
-      } else {
-        if (textPrimary.luminance() < 0.45f) textPrimary else Color(0xFF181A14)
-      }
-
-  val editorTextMuted: Color
-    get() =
-      if (editorBg.luminance() < 0.40f) {
-        if (!isDark) Color(0xFF8E95A5) else textMuted
-      } else {
-        if (isDark) Color(0xFF6B7280) else textMuted
-      }
-
-  fun canvasAccent(): Color =
-    if (editorBg.luminance() < 0.40f && ctaBg.luminance() < 0.28f) activePillFg else ctaBg
-}
+)
 
 val DarkIdePalette =
   IdePalette(
