@@ -17,6 +17,39 @@ permissions:
   contents: write
 
 jobs:
+  quality:
+    # Tests + lint run in parallel and never block the release build
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.3.1
+          cache-read-only: true
+      - name: Unit tests and lint
+        run: |
+          keytool -genkeypair -keystore debug.keystore -storepass android -keypass android \
+            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+          gradle testDebugUnitTest lintDebug --continue 2>&1 | tee quality.log || true
+          SUMMARY=$(grep -E '^e: |FAILED|tests completed|Lint found|Unresolved' quality.log | head -40 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::warning title=Tests and lint summary::${SUMMARY:0:3500}"
+      - name: Upload test and lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-reports
+          path: |
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
