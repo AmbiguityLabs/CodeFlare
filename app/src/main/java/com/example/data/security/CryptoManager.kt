@@ -15,25 +15,37 @@ object CryptoManager {
   private const val TRANSFORMATION = "AES/GCM/NoPadding"
   private const val GCM_TAG_BITS = 128
 
+  @Volatile
+  private var cachedSecretKey: SecretKey? = null
+  private val keyLock = Any()
+
   private fun getOrCreateKey(): SecretKey {
-    val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-    val existing = keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry
-    if (existing != null) {
-      return existing.secretKey
+    cachedSecretKey?.let { return it }
+    return synchronized(keyLock) {
+      cachedSecretKey?.let { return@synchronized it }
+      val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+      val existing = keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry
+      val resolved =
+        if (existing != null) {
+          existing.secretKey
+        } else {
+          val keyGenerator =
+            KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
+          val spec =
+            KeyGenParameterSpec.Builder(
+                KEY_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+              )
+              .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+              .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+              .setKeySize(256)
+              .build()
+          keyGenerator.init(spec)
+          keyGenerator.generateKey()
+        }
+      cachedSecretKey = resolved
+      resolved
     }
-    val keyGenerator =
-      KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
-    val spec =
-      KeyGenParameterSpec.Builder(
-          KEY_ALIAS,
-          KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-        )
-        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-        .setKeySize(256)
-        .build()
-    keyGenerator.init(spec)
-    return keyGenerator.generateKey()
   }
 
   fun encrypt(plaintext: String): String {

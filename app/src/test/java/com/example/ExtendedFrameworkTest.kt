@@ -8,9 +8,12 @@ import com.example.data.remote.WorkerWorkspace
 import com.example.data.security.AuthPreferencesStore
 import com.example.data.security.EditorSettings
 import com.example.editor.CodeFormatter
+import com.example.idecore.completion.CompletionStatsStore
 import com.example.idecore.completion.EdgeCompletionEngine
 import com.example.idecore.completion.EdgeCompletionKind
+import com.example.idecore.completion.MemberUsageIndexer
 import com.example.idecore.snippets.CodeSnippetItem
+import java.io.File
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -83,7 +86,11 @@ class ExtendedFrameworkTest {
   @Test
   fun completionEngineIncludesCustomUserSnippets() {
     val context = ApplicationProvider.getApplicationContext<Context>()
-    val engine = EdgeCompletionEngine(context.cacheDir)
+    val engine =
+      EdgeCompletionEngine(
+        statsStore = CompletionStatsStore(File(context.cacheDir, "completion_stats.properties")),
+        memberUsageIndexer = MemberUsageIndexer(),
+      )
     val custom =
       CodeSnippetItem(
         id = "c_cfjson",
@@ -97,8 +104,14 @@ class ExtendedFrameworkTest {
     val ws =
       WorkerWorkspace(
         scriptName = "demo",
-        files = listOf(WorkerFile("src/index.ts", doc, WorkerLanguage.TYPESCRIPT, true)),
+        isEsModuleFormat = true,
         entryModulePath = "src/index.ts",
+        compatibilityDate = "2026-04-01",
+        files = listOf(WorkerFile("src/index.ts", doc, doc, "application/typescript", isEntryPoint = true)),
+        bindings = emptyList(),
+        routes = emptyList(),
+        workersDevEnabled = true,
+        accountSubdomain = "example",
       )
     val results =
       engine.complete(

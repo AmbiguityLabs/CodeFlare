@@ -195,12 +195,12 @@ class WranglerSyncParserTest {
       }
       """.trimIndent()
 
-    val base = WranglerSyncParser.parse("wrangler.jsonc", raw)
+    val base = WranglerSyncParser.parse("wrangler.jsonc", raw).getOrThrow()
     assertEquals("api-worker", base.scriptName)
     assertTrue(base.environments.containsKey("staging"))
     assertEquals("dev", base.bindings.first { it.name == "STAGE" }.text)
 
-    val staging = WranglerSyncParser.parse("wrangler.jsonc", raw, environment = "staging")
+    val staging = WranglerSyncParser.parse("wrangler.jsonc", raw, environment = "staging").getOrThrow()
     assertEquals("api-worker-staging", staging.scriptName)
     assertEquals("src/index.ts", staging.main)
     assertEquals("staging", staging.bindings.first { it.name == "STAGE" }.text)
@@ -236,7 +236,7 @@ class WranglerSyncParserTest {
       database_id = "db_prod"
       """.trimIndent()
 
-    val prod = WranglerSyncParser.parse("wrangler.toml", raw, environment = "production")
+    val prod = WranglerSyncParser.parse("wrangler.toml", raw, environment = "production").getOrThrow()
     assertEquals("toml-api-prod", prod.scriptName)
     assertEquals("production", prod.bindings.first { it.name == "ENV" }.text)
     assertEquals("edge", prod.bindings.first { it.name == "APP_NAME" }.text)

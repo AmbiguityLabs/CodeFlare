@@ -677,7 +677,7 @@ class SettingsAndPreferencesTest {
 
   @Test
   fun darkModeUsesPureBlackOledAndLightUiDecouplesDarkCodeStyleCanvas() {
-    val darkScheme = expressiveColorSchemeFromSeed(darkTheme = true, seedHex = "#6366F1")
+    val darkScheme = expressiveColorSchemeFromSeed(seed = Color(0xFF6366F1), dark = true)
     assertEquals(Color(0xFF000000), darkScheme.background)
     assertEquals(Color(0xFF000000), darkScheme.surface)
 
@@ -687,7 +687,7 @@ class SettingsAndPreferencesTest {
     assertEquals(Color(0xFF000000), darkV1.chromeBg)
     assertEquals(Color(0xFF000000), darkV1.tabBarBg)
 
-    val lightScheme = expressiveColorSchemeFromSeed(darkTheme = false, seedHex = "#6366F1")
+    val lightScheme = expressiveColorSchemeFromSeed(seed = Color(0xFF6366F1), dark = false)
     val lightWithDarkCanvas =
       applyCodeStylePreset(
         paletteFor(darkTheme = false, preset = EditorThemePreset.OLIVE_OBSIDIAN, uiStyle = UiStyleVersion.V1_DEFAULT),

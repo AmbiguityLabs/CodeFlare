@@ -2,7 +2,6 @@ package com.example
 
 import com.example.data.local.WorkspaceZipExporter
 import com.example.data.remote.WorkerFile
-import com.example.data.remote.WorkerLanguage
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.nio.file.Files
@@ -38,19 +37,24 @@ class WorkspaceZipExporterTest {
         WorkerFile(
           path = "src/index.ts",
           content = "export default { fetch() { return new Response('ok'); } };",
-          language = WorkerLanguage.TYPESCRIPT,
+          originalContent = "export default { fetch() { return new Response('ok'); } };",
+          contentType = "application/typescript",
           isEntryPoint = true,
         ),
         WorkerFile(
           path = "public/logo.png",
           content = "// virtual placeholder",
-          language = WorkerLanguage.TEXT,
+          originalContent = "// virtual placeholder",
+          contentType = "text/plain",
+          isEntryPoint = false,
           isVirtualReadOnly = true,
         ),
         WorkerFile(
           path = "wrangler.jsonc",
           content = "{\"name\":\"demo\"}",
-          language = WorkerLanguage.JSON,
+          originalContent = "{\"name\":\"demo\"}",
+          contentType = "application/json",
+          isEntryPoint = false,
         ),
       )
     val pngBytes = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
@@ -87,7 +91,9 @@ class WorkspaceZipExporterTest {
         WorkerFile(
           path = "README.virtual",
           content = "virtual",
-          language = WorkerLanguage.TEXT,
+          originalContent = "virtual",
+          contentType = "text/plain",
+          isEntryPoint = false,
           isVirtualReadOnly = true,
         ),
       )
@@ -99,7 +105,16 @@ class WorkspaceZipExporterTest {
   fun exportToCacheFilePrunesOlderExportsBeyondLimit() {
     val tempCache = Files.createTempDirectory("zip_export_cache_test").toFile()
     try {
-      val files = listOf(WorkerFile("index.js", "console.log(1);", WorkerLanguage.JAVASCRIPT))
+      val files =
+        listOf(
+          WorkerFile(
+            path = "index.js",
+            content = "console.log(1);",
+            originalContent = "console.log(1);",
+            contentType = "application/javascript",
+            isEntryPoint = true,
+          ),
+        )
       for (i in 1..11) {
         val out = WorkspaceZipExporter.exportToCacheFile(tempCache, "proj-$i", files).getOrThrow()
         assertTrue(out.isFile)

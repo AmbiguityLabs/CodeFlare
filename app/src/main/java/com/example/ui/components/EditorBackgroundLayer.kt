@@ -44,14 +44,24 @@ import kotlinx.coroutines.withContext
 
 @Composable
 fun rememberHasActiveEditorBackground(settings: EditorSettings): Boolean {
-  val preset = EditorBackgroundPreset.fromKey(settings.editorBgPreset)
-  return remember(preset, settings.editorBgImagePath) {
-    when (preset) {
-      EditorBackgroundPreset.NONE -> false
-      EditorBackgroundPreset.CUSTOM ->
-        settings.editorBgImagePath.isNotBlank() && File(settings.editorBgImagePath).exists()
-      else -> true
+  val preset = remember(settings.editorBgPreset) { EditorBackgroundPreset.fromKey(settings.editorBgPreset) }
+  val customExists by
+    produceState(
+      initialValue = false,
+      key1 = preset,
+      key2 = settings.editorBgImagePath,
+    ) {
+      value =
+        if (preset == EditorBackgroundPreset.CUSTOM && settings.editorBgImagePath.isNotBlank()) {
+          withContext(Dispatchers.IO) { File(settings.editorBgImagePath).exists() }
+        } else {
+          false
+        }
     }
+  return when (preset) {
+    EditorBackgroundPreset.NONE -> false
+    EditorBackgroundPreset.CUSTOM -> customExists
+    else -> true
   }
 }
 

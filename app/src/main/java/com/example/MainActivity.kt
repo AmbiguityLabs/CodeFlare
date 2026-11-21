@@ -12,8 +12,6 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
@@ -23,11 +21,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -41,16 +36,16 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.components.CodeflareAnimatedLogoView
 import com.example.ui.components.EdgeLoadingIndicator
-import com.example.ui.components.rememberHardwareAnimationSpeed
 import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.IdeWorkspaceScreen
 import com.example.ui.theme.BarStylePreferences
 import com.example.ui.theme.EdgeCodeTheme
+import com.example.ui.theme.EditorThemePreset
 import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.UiStyleVersion
 import com.example.ui.viewmodel.IdeViewModel
 import com.example.util.HardwareSpeedProfiler
-import kotlinx.coroutines.delay
 
 internal fun isExternalFileLaunchIntent(intent: Intent?): Boolean {
   val action = intent?.action ?: return false
@@ -68,7 +63,6 @@ internal fun isLauncherClickIntent(intent: Intent?): Boolean {
 
 class MainActivity : ComponentActivity() {
   private val incomingIntentState = mutableStateOf<Intent?>(null)
-  private val launchReplayTriggerState = mutableIntStateOf(0)
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -81,47 +75,16 @@ class MainActivity : ComponentActivity() {
       val context = LocalContext.current
       val pendingIntent = incomingIntentState.value
 
-      val hardwareSpeed = rememberHardwareAnimationSpeed()
+      val isExternalLaunch = remember { isExternalFileLaunchIntent(intent) }
       val reducedMotion =
         remember(context) {
           HardwareSpeedProfiler.inspectDevice(context).isReducedMotionPreferred
         }
-      var showLaunchShowcase by
-        rememberSaveable {
-          mutableStateOf(!isExternalFileLaunchIntent(intent) && !reducedMotion)
-        }
 
       LaunchedEffect(pendingIntent, ideViewModel) {
         if (pendingIntent != null) {
-          if (isExternalFileLaunchIntent(pendingIntent)) {
-            showLaunchShowcase = false
-          }
           ideViewModel.handleExternalIntent(pendingIntent)
           incomingIntentState.value = null
-        }
-      }
-
-      var minDurationElapsed by rememberSaveable { mutableStateOf(false) }
-
-      val replayNonce = launchReplayTriggerState.intValue
-      LaunchedEffect(replayNonce, reducedMotion) {
-        if (replayNonce > 0 && !reducedMotion) {
-          minDurationElapsed = false
-          showLaunchShowcase = true
-        }
-      }
-
-      LaunchedEffect(showLaunchShowcase, replayNonce, hardwareSpeed) {
-        if (showLaunchShowcase) {
-          minDurationElapsed = false
-          delay(HardwareSpeedProfiler.computeSequenceDurationMs(hardwareSpeed) + 320L)
-          minDurationElapsed = true
-        }
-      }
-
-      LaunchedEffect(minDurationElapsed, uiState.isBootstrapping) {
-        if (minDurationElapsed && !uiState.isBootstrapping) {
-          showLaunchShowcase = false
         }
       }
 
@@ -139,7 +102,8 @@ class MainActivity : ComponentActivity() {
       }
 
       val systemDark = isSystemInDarkTheme()
-      val effectiveDarkTheme = uiState.editorSettings.resolveDarkTheme(systemDark)
+      val editorSettings = uiState.editorSettings
+      val effectiveDarkTheme = editorSettings.resolveDarkTheme(systemDark)
       LaunchedEffect(effectiveDarkTheme) {
         val transparent = android.graphics.Color.TRANSPARENT
         enableEdgeToEdge(
@@ -151,25 +115,45 @@ class MainActivity : ComponentActivity() {
             else SystemBarStyle.light(transparent, transparent),
         )
       }
+
+      val themePreset =
+        remember(editorSettings.themePreset) {
+          EditorThemePreset.fromKey(editorSettings.themePreset)
+        }
+      val uiStyle =
+        remember(editorSettings.uiStyleVersion) {
+          UiStyleVersion.fromKey(editorSettings.uiStyleVersion)
+        }
+      val barPreferences =
+        remember(
+          editorSettings.homeBarStyle,
+          editorSettings.editorBarStyle,
+          editorSettings.homeMenuStyle,
+          editorSettings.editorMenuStyle,
+        ) {
+          BarStylePreferences(
+            homeBar = editorSettings.homeBarStyle,
+            editorBar = editorSettings.editorBarStyle,
+            homeMenu = editorSettings.homeMenuStyle,
+            editorMenu = editorSettings.editorMenuStyle,
+          )
+        }
+
       EdgeCodeTheme(
         darkTheme = effectiveDarkTheme,
-        dynamicColor = uiState.editorSettings.dynamicColor,
-        accent = uiState.editorSettings.accent,
-        accentColor = uiState.editorSettings.accentColor,
-        themePreset = com.example.ui.theme.EditorThemePreset.fromKey(uiState.editorSettings.themePreset),
-        uiStyle = com.example.ui.theme.UiStyleVersion.fromKey(uiState.editorSettings.uiStyleVersion),
-        barPreferences =
-          BarStylePreferences(
-            homeBar = uiState.editorSettings.homeBarStyle,
-            editorBar = uiState.editorSettings.editorBarStyle,
-            homeMenu = uiState.editorSettings.homeMenuStyle,
-            editorMenu = uiState.editorSettings.editorMenuStyle,
-          ),
-        selectionDragConfig = uiState.editorSettings.selectionDragConfig,
-        iconLabelBehavior = uiState.editorSettings.iconLabelBehavior,
-        editorSettings = uiState.editorSettings,
+        dynamicColor = editorSettings.dynamicColor,
+        accent = editorSettings.accent,
+        accentColor = editorSettings.accentColor,
+        themePreset = themePreset,
+        uiStyle = uiStyle,
+        barPreferences = barPreferences,
+        selectionDragConfig = editorSettings.selectionDragConfig,
+        iconLabelBehavior = editorSettings.iconLabelBehavior,
+        editorSettings = editorSettings,
       ) {
         val palette = LocalIdePalette.current
+        val showLaunchShowcase = uiState.isBootstrapping && !isExternalLaunch && !reducedMotion
+
         Box(modifier = Modifier.fillMaxSize().background(palette.chromeBg)) {
           when {
             uiState.isBootstrapping -> {
@@ -221,27 +205,18 @@ class MainActivity : ComponentActivity() {
           AnimatedVisibility(
             visible = showLaunchShowcase,
             enter = EnterTransition.None,
-            exit = fadeOut(tween(320)),
+            exit = fadeOut(tween(140)),
           ) {
             Box(
               modifier =
                 Modifier
                   .fillMaxSize()
                   .background(if (palette.isDark) Color(0xFF000000) else Color(0xFFFFFFFF))
-                  .clickable(
-                    enabled = !uiState.isBootstrapping,
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                  ) {
-                    showLaunchShowcase = false
-                  }
                   .testTag("cold_launch_showcase"),
               contentAlignment = Alignment.Center,
             ) {
               CodeflareAnimatedLogoView(
                 embedOnly = true,
-                replayTrigger = replayNonce,
-                speedMultiplier = hardwareSpeed,
                 modifier =
                   Modifier
                     .fillMaxWidth(0.78f)
@@ -260,9 +235,6 @@ class MainActivity : ComponentActivity() {
     super.onNewIntent(intent)
     setIntent(intent)
     incomingIntentState.value = intent
-    if (isLauncherClickIntent(intent)) {
-      launchReplayTriggerState.intValue += 1
-    }
   }
 
   private fun openExternalUrl(url: String) {

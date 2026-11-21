@@ -11,8 +11,10 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.example.editor.selection.SmartSelectionInitialDepth
 import com.example.idecore.snippets.CodeSnippetItem
 import com.example.idecore.snippets.CodeSnippetRegistry
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 
@@ -711,6 +713,7 @@ class AuthPreferencesStore(private val context: Context) {
         cachedCredentialsSnapshot = creds
         hasCredentialsSnapshot = true
       }
+      .flowOn(Dispatchers.Default)
 
   val gitHubCredentialsFlow: Flow<StoredGitHubCredentials?> =
     context.edgeCodeDataStore.data.map { prefs ->
@@ -727,7 +730,7 @@ class AuthPreferencesStore(private val context: Context) {
         avatarUrl = prefs[Keys.GITHUB_AVATAR].orEmpty(),
         displayName = prefs[Keys.GITHUB_NAME].orEmpty(),
       )
-    }
+    }.flowOn(Dispatchers.Default)
 
   val editorSettingsFlow: Flow<EditorSettings> =
     context.edgeCodeDataStore.data.map { prefs ->
@@ -855,7 +858,7 @@ class AuthPreferencesStore(private val context: Context) {
         formatOnSave = prefs[Keys.FORMAT_ON_SAVE] ?: false,
         customSnippets = CodeSnippetRegistry.decodeCustomSnippets(prefs[Keys.CUSTOM_SNIPPETS]),
       )
-    }
+    }.flowOn(Dispatchers.Default)
 
   suspend fun getCurrentCredentials(): StoredCredentials? = credentialsFlow.first()
 

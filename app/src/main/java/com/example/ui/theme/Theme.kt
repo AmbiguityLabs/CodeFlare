@@ -55,10 +55,12 @@ fun EdgeCodeTheme(
     else null
 
   val wallpaperScheme =
-    if (useDynamic && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-      if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-    } else {
-      null
+    remember(useDynamic, darkTheme, context) {
+      if (useDynamic && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+      } else {
+        null
+      }
     }
   val resolvedExpressiveScheme =
     when {

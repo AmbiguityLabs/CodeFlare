@@ -317,7 +317,7 @@ class EditorEngineTest {
   @Test
   fun edgeEditorSession_lineAndBlockActionsWorkAndUndoCleanly() {
     val initial = "    zeta\n    alpha\n    beta\nlast"
-    val session = EdgeEditorSession(initial, tabSize = 2)
+    val session = EdgeEditorSession(initial).apply { tabSize = 2 }
 
     // 1. selectCurrentLine & outdentSelection on lines 0..2
     session.setSelection(TextRange(initial.indexOf("zeta"), initial.indexOf("beta") + 2))
