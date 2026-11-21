@@ -21,15 +21,27 @@ function resolvePort() {
       }
     }
   }
-  const nginxPort = process.env.NGINX_PORT ? Number(process.env.NGINX_PORT) : null;
-  const cpPort = process.env.CONTROL_PLANE_PORT ? Number(process.env.CONTROL_PLANE_PORT) : null;
-  const envPort = Number(process.env.PORT);
-  if (Number.isInteger(envPort) && envPort > 0 && envPort < 65536 && envPort !== nginxPort && envPort !== cpPort) {
-    return envPort;
-  }
+  const reservedPorts = new Set([8080, 8000]);
+  if (process.env.NGINX_PORT) reservedPorts.add(Number(process.env.NGINX_PORT));
+  if (process.env.CONTROL_PLANE_PORT) reservedPorts.add(Number(process.env.CONTROL_PLANE_PORT));
+
   const defaultAppPort = Number(process.env.DEFAULT_APP_PORT);
-  if (Number.isInteger(defaultAppPort) && defaultAppPort > 0 && defaultAppPort < 65536) {
+  if (
+    Number.isInteger(defaultAppPort) &&
+    defaultAppPort > 0 &&
+    defaultAppPort < 65536 &&
+    !reservedPorts.has(defaultAppPort)
+  ) {
     return defaultAppPort;
+  }
+  const envPort = Number(process.env.PORT);
+  if (
+    Number.isInteger(envPort) &&
+    envPort > 0 &&
+    envPort < 65536 &&
+    !reservedPorts.has(envPort)
+  ) {
+    return envPort;
   }
   return 3000;
 }
@@ -508,6 +520,8 @@ for (const sig of ["SIGINT", "SIGTERM"]) {
   });
 }
 
+process.stdout?.on("error", () => {});
+process.stderr?.on("error", () => {});
 process.on("exit", removePidFile);
 
 server.listen(port, "0.0.0.0", () => {

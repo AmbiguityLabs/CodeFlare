@@ -43,7 +43,7 @@ object GitHubOAuthManager {
   private val deviceAdapter = moshi.adapter(GitHubDeviceCodeResponse::class.java)
   private val tokenAdapter = moshi.adapter(GitHubOAuthTokenResponse::class.java)
   private val httpClient =
-    OkHttpClient.Builder()
+    com.example.data.remote.SharedHttpClientProvider.newBuilder()
       .connectTimeout(20, TimeUnit.SECONDS)
       .readTimeout(25, TimeUnit.SECONDS)
       .build()

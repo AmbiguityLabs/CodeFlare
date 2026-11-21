@@ -8,9 +8,12 @@ import android.webkit.WebViewClient
 import com.example.data.remote.CfWorkerBinding
 import com.example.data.remote.WorkerFile
 import com.example.data.remote.WorkerWorkspace
+import com.example.data.remote.SharedHttpClientProvider
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
+import java.net.InetAddress
+import java.net.ServerSocket
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Collections
@@ -50,14 +53,15 @@ data class LocalScriptRunResult(
 )
 
 object LocalScriptRunner {
-  private const val LOCAL_SERVER_PORT = 8080
+  private const val DEFAULT_LOCAL_SERVER_PORT = 8080
   private const val READY_PREFIX = "__EDGECODE_READY__:"
   private const val RUNNER_ASSET_NAME = "universal_runner.ts"
   private const val WORKSPACE_CACHE_DIR = "edgecode_deno_workspace"
   private const val DENO_CACHE_DIR = "deno_cache"
+  private const val STATE_DIR_NAME = "edgecode_local_runtime_state"
 
   private val httpClient: OkHttpClient by lazy {
-    OkHttpClient.Builder()
+    SharedHttpClientProvider.newBuilder()
       .connectTimeout(5, TimeUnit.SECONDS)
       .readTimeout(15, TimeUnit.SECONDS)
       .writeTimeout(15, TimeUnit.SECONDS)
@@ -67,7 +71,20 @@ object LocalScriptRunner {
   private val processLock = Any()
   @Volatile private var activeServerProcess: Process? = null
   @Volatile private var activeServerFingerprint: String? = null
+  @Volatile private var activeServerPort: Int = DEFAULT_LOCAL_SERVER_PORT
   @Volatile private var activeLogBuffer: MutableList<LocalRunLogEntry>? = null
+
+  fun allocateFreeLocalPort(fallbackPort: Int = DEFAULT_LOCAL_SERVER_PORT): Int =
+    runCatching {
+      ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { socket ->
+        socket.localPort.takeIf { it > 0 } ?: fallbackPort
+      }
+    }.getOrDefault(fallbackPort)
+
+  fun parseReadyWorkerPort(readyPayload: String): Int? {
+    if (!readyPayload.startsWith("WORKER:")) return null
+    return readyPayload.removePrefix("WORKER:").trim().toIntOrNull()?.takeIf { it in 1..65535 }
+  }
 
   fun resolveDenoBinaryPath(nativeLibraryDir: String): String {
     val cleanDir = nativeLibraryDir.trimEnd('/', '\\')
@@ -144,25 +161,58 @@ object LocalScriptRunner {
     files: List<WorkerFile>,
     runnerSource: String?,
   ): File? {
-    if (workspaceDir.exists()) {
-      workspaceDir.deleteRecursively()
+    if (!workspaceDir.exists()) {
+      workspaceDir.mkdirs()
     }
-    workspaceDir.mkdirs()
 
     val rootCanonical = workspaceDir.canonicalFile
+    val rootBoundary = rootCanonical.path.let { if (it.endsWith(File.separator)) it else it + File.separator }
+    val desiredFiles = linkedMapOf<File, String>()
+
     files.filter { !it.isVirtualReadOnly }.forEach { wf ->
       val rel = wf.path.trimStart('/').replace('\\', '/')
       if (rel.isBlank() || rel.contains("..")) return@forEach
       val target = File(workspaceDir, rel)
-      if (!target.canonicalPath.startsWith(rootCanonical.canonicalPath)) return@forEach
+      val targetCanonical = runCatching { target.canonicalFile }.getOrNull() ?: return@forEach
+      if (!targetCanonical.path.startsWith(rootBoundary)) return@forEach
+      desiredFiles[targetCanonical] = wf.content
+    }
+
+    // Remove stale workspace files from earlier runs (keep .edgecode_runner intact for incremental sync)
+    val runnerDirCanonical = File(rootCanonical, ".edgecode_runner").canonicalFile
+    workspaceDir.walkBottomUp().forEach { existing ->
+      if (existing == workspaceDir) return@forEach
+      val existingCanonical = runCatching { existing.canonicalFile }.getOrNull() ?: return@forEach
+      if (existingCanonical == runnerDirCanonical || existingCanonical.path.startsWith(runnerDirCanonical.path + File.separator)) {
+        return@forEach
+      }
+      if (existing.isFile && existingCanonical !in desiredFiles) {
+        existing.delete()
+      } else if (existing.isDirectory && existing.listFiles().isNullOrEmpty()) {
+        existing.delete()
+      }
+    }
+
+    // Write only new or modified files to minimize disk I/O between local runs
+    desiredFiles.forEach { (target, content) ->
       target.parentFile?.mkdirs()
-      target.writeText(wf.content, Charsets.UTF_8)
+      val existingText = if (target.exists() && target.length() == content.toByteArray(Charsets.UTF_8).size.toLong()) {
+        runCatching { target.readText(Charsets.UTF_8) }.getOrNull()
+      } else {
+        null
+      }
+      if (existingText != content) {
+        target.writeText(content, Charsets.UTF_8)
+      }
     }
 
     if (runnerSource != null) {
       val runnerFile = File(workspaceDir, ".edgecode_runner/$RUNNER_ASSET_NAME")
       runnerFile.parentFile?.mkdirs()
-      runnerFile.writeText(runnerSource, Charsets.UTF_8)
+      val prevRunner = if (runnerFile.exists()) runCatching { runnerFile.readText(Charsets.UTF_8) }.getOrNull() else null
+      if (prevRunner != runnerSource) {
+        runnerFile.writeText(runnerSource, Charsets.UTF_8)
+      }
       return runnerFile
     }
     return null
@@ -173,6 +223,7 @@ object LocalScriptRunner {
       runCatching { activeServerProcess?.destroyForcibly() }
       activeServerProcess = null
       activeServerFingerprint = null
+      activeServerPort = DEFAULT_LOCAL_SERVER_PORT
       activeLogBuffer = null
     }
   }
@@ -252,10 +303,12 @@ object LocalScriptRunner {
           "--no-prompt",
           runnerFile.absolutePath,
         )
+      val stateDir = File(context.filesDir, STATE_DIR_NAME).apply { mkdirs() }
       pb.directory(workspaceDir)
       pb.environment().apply {
         put("EDGECODE_EVAL_SNIPPET", cleanSnippet)
         put("EDGECODE_BINDINGS_JSON", buildBindingsJson(bindings))
+        put("EDGECODE_STATE_DIR", stateDir.absolutePath)
         put("DENO_DIR", denoCacheDir.absolutePath)
         put("HOME", context.cacheDir.absolutePath)
         put("NO_COLOR", "1")
@@ -468,6 +521,8 @@ object LocalScriptRunner {
         )
       }
 
+      val targetPort = allocateFreeLocalPort()
+      val stateDir = File(context.filesDir, STATE_DIR_NAME).apply { mkdirs() }
       val pb =
         ProcessBuilder(
           denoBinary.absolutePath,
@@ -480,8 +535,9 @@ object LocalScriptRunner {
       pb.environment().apply {
         put("EDGECODE_ENTRY_FILE", entryFile.absolutePath)
         put("EDGECODE_BINDINGS_JSON", bindingsJson)
-        put("EDGECODE_PORT", LOCAL_SERVER_PORT.toString())
-        put("EDGECODE_HOST", "0.0.0.0")
+        put("EDGECODE_STATE_DIR", stateDir.absolutePath)
+        put("EDGECODE_PORT", targetPort.toString())
+        put("EDGECODE_HOST", "127.0.0.1")
         put("DENO_DIR", denoCacheDir.absolutePath)
         put("HOME", context.cacheDir.absolutePath)
         put("NO_COLOR", "1")
@@ -520,6 +576,7 @@ object LocalScriptRunner {
                   if (line.startsWith(READY_PREFIX)) {
                     val payload = line.removePrefix(READY_PREFIX)
                     detectedMode.set(if (payload.startsWith("WORKER")) "WORKER" else "SCRIPT")
+                    parseReadyWorkerPort(payload)?.let { activeServerPort = it }
                     readyLatch.countDown()
                   } else {
                     stdoutLines.add(line)
@@ -638,9 +695,10 @@ object LocalScriptRunner {
         body.toRequestBody(ctype.toMediaTypeOrNull())
       }
 
+    val targetPort = activeServerPort.takeIf { it in 1..65535 } ?: DEFAULT_LOCAL_SERVER_PORT
     val request =
       Request.Builder()
-        .url("http://127.0.0.1:$LOCAL_SERVER_PORT$cleanPath")
+        .url("http://127.0.0.1:$targetPort$cleanPath")
         .headers(headersBuilder.build())
         .method(upperMethod, reqBody)
         .build()

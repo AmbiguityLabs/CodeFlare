@@ -811,21 +811,6 @@ fun LocalScriptRunPane(
 
         else -> {
           // 3 = Unified Output + Console Logs + Headers Summary
-          val ctype = result.headers["content-type"]
-          val annotatedBody =
-            remember(displayOutputBody, ctype, palette, result.errorMessage) {
-              SyntaxHighlighter.highlightResponse(displayOutputBody, if (result.errorMessage != null) null else ctype, palette)
-            }
-          val bodyWithSearch =
-            remember(annotatedBody, displayOutputBody, outputSearchMatches, palette) {
-              applySearchMatchHighlight(
-                base = annotatedBody,
-                plainText = displayOutputBody,
-                matches = outputSearchMatches,
-                matchBg = palette.searchMatchBg,
-                matchFg = palette.textPrimary,
-              )
-            }
           Column(
             modifier =
               Modifier
@@ -890,24 +875,24 @@ fun LocalScriptRunPane(
               fontWeight = FontWeight.Bold,
               color = if (result.errorMessage != null) RoseError else palette.textMuted,
             )
-            Surface(
-              color = palette.chromeSurface,
-              shape = RoundedCornerShape(8.dp),
-              border = BorderStroke(0.5.dp, palette.border.copy(alpha = 0.45f)),
-              modifier = Modifier.fillMaxWidth(),
-            ) {
-              Box(modifier = Modifier.padding(10.dp)) {
-                SmartDraggableText(
-                  text = displayOutputBody,
-                  annotatedText = bodyWithSearch,
-                  surfaceId = "cli_unified_body",
-                  domain = if (result.errorMessage == null && (displayOutputBody.trimStart().startsWith("{") || displayOutputBody.trimStart().startsWith("["))) SmartTextDomain.JSON else SmartTextDomain.TERMINAL_OR_LOG,
-                  style = TextStyle(fontFamily = JetBrainsMono, fontSize = 11.5.sp, lineHeight = 17.sp),
-                  color = if (result.errorMessage != null) RoseError else palette.textPrimary,
-                  onCopied = { onNotifyStatus("Copied output snippet") },
-                )
+            val ctypeOut = result.headers["content-type"]
+            val detectedLang =
+              remember(displayOutputBody, ctypeOut) {
+                detectSharedEditorLanguage(displayOutputBody, ctypeOut)
               }
-            }
+            EdgeSharedTextEditor(
+              surfaceKey = "cli_unified_body_${result.entryPath.hashCode()}_${result.statusCode}",
+              value = displayOutputBody,
+              onValueChange = {},
+              language = if (result.errorMessage != null) WorkerLanguage.TEXT else detectedLang,
+              readOnly = true,
+              wordWrap = wrapOutput,
+              height = 220.dp,
+              findMatches = outputSearchMatches,
+              contentTypeHint = ctypeOut,
+              isErrorText = result.errorMessage != null,
+              onCopiedFallback = { onNotifyStatus("Copied output snippet") },
+            )
 
             if (result.headers.isNotEmpty()) {
               Text(

@@ -59,7 +59,7 @@ class GitHubRepository(
   moshi: Moshi,
 ) {
   private val client =
-    OkHttpClient.Builder()
+    com.example.data.remote.SharedHttpClientProvider.newBuilder()
       .connectTimeout(20, TimeUnit.SECONDS)
       .readTimeout(35, TimeUnit.SECONDS)
       .build()

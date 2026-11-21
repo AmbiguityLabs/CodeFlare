@@ -53,7 +53,7 @@ object CloudflareOAuthManager {
 
   private val moshi = Moshi.Builder().addLast(KotlinJsonAdapterFactory()).build()
   private val tokenAdapter = moshi.adapter(CfOAuthTokenResponse::class.java)
-  private val httpClient = OkHttpClient.Builder().build()
+  private val httpClient = com.example.data.remote.SharedHttpClientProvider.newBuilder().build()
 
   fun createPkceSession(): PkceSession {
     val random = SecureRandom()

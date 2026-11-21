@@ -14,6 +14,7 @@ import com.example.idecore.snippets.CodeSnippetRegistry
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 
 private val Context.edgeCodeDataStore by preferencesDataStore(name = "edgecode_secure_prefs")
 
@@ -686,22 +687,30 @@ class AuthPreferencesStore(private val context: Context) {
     val WARN_CLOUD_OVERWRITE = booleanPreferencesKey("warn_on_cloud_overwrite")
   }
 
+  @Volatile private var cachedCredentialsSnapshot: StoredCredentials? = null
+  @Volatile private var hasCredentialsSnapshot: Boolean = false
+
   val credentialsFlow: Flow<StoredCredentials?> =
-    context.edgeCodeDataStore.data.map { prefs ->
-      val methodStr = prefs[Keys.AUTH_METHOD] ?: return@map null
-      val method = runCatching { AuthMethod.valueOf(methodStr) }.getOrNull() ?: return@map null
-      val token = CryptoManager.decrypt(prefs[Keys.ENC_ACCESS_TOKEN].orEmpty())
-      if (token.isEmpty()) return@map null
-      StoredCredentials(
-        method = method,
-        accessToken = token,
-        refreshToken = CryptoManager.decrypt(prefs[Keys.ENC_REFRESH_TOKEN].orEmpty()),
-        expiresAtEpochMs = prefs[Keys.EXPIRES_AT] ?: 0L,
-        email = prefs[Keys.EMAIL].orEmpty(),
-        selectedAccountId = prefs[Keys.ACCOUNT_ID].orEmpty(),
-        selectedAccountName = prefs[Keys.ACCOUNT_NAME].orEmpty(),
-      )
-    }
+    context.edgeCodeDataStore.data
+      .map { prefs ->
+        val methodStr = prefs[Keys.AUTH_METHOD] ?: return@map null
+        val method = runCatching { AuthMethod.valueOf(methodStr) }.getOrNull() ?: return@map null
+        val token = CryptoManager.decrypt(prefs[Keys.ENC_ACCESS_TOKEN].orEmpty())
+        if (token.isEmpty()) return@map null
+        StoredCredentials(
+          method = method,
+          accessToken = token,
+          refreshToken = CryptoManager.decrypt(prefs[Keys.ENC_REFRESH_TOKEN].orEmpty()),
+          expiresAtEpochMs = prefs[Keys.EXPIRES_AT] ?: 0L,
+          email = prefs[Keys.EMAIL].orEmpty(),
+          selectedAccountId = prefs[Keys.ACCOUNT_ID].orEmpty(),
+          selectedAccountName = prefs[Keys.ACCOUNT_NAME].orEmpty(),
+        )
+      }
+      .onEach { creds ->
+        cachedCredentialsSnapshot = creds
+        hasCredentialsSnapshot = true
+      }
 
   val gitHubCredentialsFlow: Flow<StoredGitHubCredentials?> =
     context.edgeCodeDataStore.data.map { prefs ->
@@ -850,6 +859,9 @@ class AuthPreferencesStore(private val context: Context) {
 
   suspend fun getCurrentCredentials(): StoredCredentials? = credentialsFlow.first()
 
+  suspend fun getCachedOrCurrentCredentials(): StoredCredentials? =
+    if (hasCredentialsSnapshot) cachedCredentialsSnapshot else getCurrentCredentials()
+
   suspend fun getCurrentGitHubCredentials(): StoredGitHubCredentials? = gitHubCredentialsFlow.first()
 
   suspend fun saveCredentials(credentials: StoredCredentials) {
@@ -866,6 +878,13 @@ class AuthPreferencesStore(private val context: Context) {
         prefs[Keys.ACCOUNT_NAME] = credentials.selectedAccountName
       }
     }
+    val prev = cachedCredentialsSnapshot
+    cachedCredentialsSnapshot =
+      credentials.copy(
+        selectedAccountId = credentials.selectedAccountId.ifEmpty { prev?.selectedAccountId.orEmpty() },
+        selectedAccountName = credentials.selectedAccountName.ifEmpty { prev?.selectedAccountName.orEmpty() },
+      )
+    hasCredentialsSnapshot = true
   }
 
   suspend fun saveGitHubCredentials(
@@ -902,6 +921,8 @@ class AuthPreferencesStore(private val context: Context) {
       prefs[Keys.ACCOUNT_ID] = accountId
       prefs[Keys.ACCOUNT_NAME] = accountName
     }
+    cachedCredentialsSnapshot =
+      cachedCredentialsSnapshot?.copy(selectedAccountId = accountId, selectedAccountName = accountName)
   }
 
   suspend fun clearCredentials() {
@@ -914,6 +935,8 @@ class AuthPreferencesStore(private val context: Context) {
       prefs.remove(Keys.ACCOUNT_ID)
       prefs.remove(Keys.ACCOUNT_NAME)
     }
+    cachedCredentialsSnapshot = null
+    hasCredentialsSnapshot = true
   }
 
   suspend fun updateEditorSettings(transform: (EditorSettings) -> EditorSettings) {

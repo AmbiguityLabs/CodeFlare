@@ -282,4 +282,44 @@ class LocalScriptRunnerBundlerTest {
     assertEquals("text/html", mdResp!!.mimeType)
     assertTrue(mdResp.data.readBytes().decodeToString().contains("<h1>Hello EdgeCode</h1>"))
   }
+
+  @Test
+  fun allocateFreeLocalPortAndParseReadyWorkerPortWorkReliably() {
+    val port = LocalScriptRunner.allocateFreeLocalPort()
+    assertTrue(port in 1..65535)
+    assertEquals(43210, LocalScriptRunner.parseReadyWorkerPort("WORKER:43210"))
+    assertEquals(null, LocalScriptRunner.parseReadyWorkerPort("SCRIPT:0"))
+    assertEquals(null, LocalScriptRunner.parseReadyWorkerPort("WORKER:99999"))
+    assertEquals(null, LocalScriptRunner.parseReadyWorkerPort("INVALID"))
+  }
+
+  @Test
+  fun incrementalStagingUpdatesModifiedFilesAndRemovesDeletedOnes() {
+    val tmpDir = createTempDirectory("deno-incremental-stage").toFile()
+    try {
+      val fileA =
+        WorkerFile("src/index.ts", "export default { fetch: () => new Response('v1') };", "", "application/javascript+module", true)
+      val fileB =
+        WorkerFile("src/old.ts", "export const old = true;", "", "application/javascript+module", false)
+
+      val runner1 = LocalScriptRunner.stageWorkspaceFiles(tmpDir, listOf(fileA, fileB), "// runner v1")
+      assertNotNull(runner1)
+      val stagedA = File(tmpDir, "src/index.ts")
+      val stagedB = File(tmpDir, "src/old.ts")
+      assertTrue(stagedA.exists())
+      assertTrue(stagedB.exists())
+      stagedA.setLastModified(1_000_000L)
+
+      val fileACopy = fileA.copy()
+      val fileC =
+        WorkerFile("src/new.ts", "export const added = 1;", "", "application/javascript+module", false)
+      val runner2 = LocalScriptRunner.stageWorkspaceFiles(tmpDir, listOf(fileACopy, fileC), "// runner v1")
+      assertNotNull(runner2)
+      assertEquals(1_000_000L, stagedA.lastModified())
+      assertFalse(stagedB.exists())
+      assertTrue(File(tmpDir, "src/new.ts").exists())
+    } finally {
+      tmpDir.deleteRecursively()
+    }
+  }
 }

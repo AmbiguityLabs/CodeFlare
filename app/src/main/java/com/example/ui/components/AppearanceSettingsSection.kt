@@ -332,6 +332,7 @@ fun AppearanceHubContent(
             )
           }
           Spacer(Modifier.width(8.dp))
+          var tapTestRevealed by remember { mutableStateOf(false) }
           IconRevealButton(
             icon =
               when (activeBehavior) {
@@ -339,8 +340,8 @@ fun AppearanceHubContent(
                 IconLabelBehavior.ICON_ONLY -> Icons.Outlined.VisibilityOff
                 IconLabelBehavior.ALWAYS_SHOW -> Icons.Outlined.Visibility
               },
-            revealedLabel = "Tap Test",
-            onClick = {},
+            revealedLabel = if (tapTestRevealed) "Revealed" else "Tap Test",
+            onClick = { tapTestRevealed = !tapTestRevealed },
             active = true,
             height = 30.dp,
             iconSize = 15.dp,

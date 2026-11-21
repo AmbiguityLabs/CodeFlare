@@ -53,7 +53,10 @@ data class EditorCursorTelemetry(
   val lineCount: Int = 1,
   val wordBeforeCursor: String = "",
   val cursorOffset: Int = 0,
-)
+) {
+  val selectionEnd: Int
+    get() = cursorOffset
+}
 
 @Stable
 class CodeEditorController {
