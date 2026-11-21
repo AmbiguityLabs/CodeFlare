@@ -453,11 +453,7 @@ fun Modifier.liquidGlassSurface(
       },
     )
     .clip(shape)
-    .graphicsLayer {
-      if (lensRenderEffect != null) {
-        renderEffect = lensRenderEffect
-      }
-    }
+    // NOTE: self-lens renderEffect removed (it warped icons/text). Real backdrop lens: see GlassBackdrop.kt
     .drawWithContent {
       val w = size.width
       val h = size.height

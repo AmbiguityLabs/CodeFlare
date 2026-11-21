@@ -5,6 +5,9 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import com.example.ui.theme.LocalGlassBackdrop
+import com.example.ui.theme.glassLens
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
@@ -129,6 +132,8 @@ private fun LiquidGlassFloatingDock(
   val capsuleShape = RoundedCornerShape(cfg.cornerRadiusDp.dp)
   val hideOrbSize = (cfg.heightDp - 10).coerceIn(34, 44).dp
   val liquidEnabled = settings.liquidGlassEnabled
+  val glassBackdrop = LocalGlassBackdrop.current
+  val useRealGlass = liquidEnabled && glassBackdrop != null
 
   val adaptiveGlass =
     rememberLiquidGlassAdaptiveColors(
@@ -203,7 +208,16 @@ private fun LiquidGlassFloatingDock(
             .width(capsuleWidth)
             .height(cfg.heightDp.dp)
             .then(
-              if (liquidEnabled) {
+              if (useRealGlass && glassBackdrop != null) {
+                Modifier
+                  .shadow(
+                    elevation = elevationDp,
+                    shape = capsuleShape,
+                    ambientColor = Color.Black.copy(alpha = if (isDark) 0.55f else 0.18f),
+                    spotColor = Color.Black.copy(alpha = if (isDark) 0.65f else 0.22f),
+                  )
+                  .glassLens(glassBackdrop, cfg.cornerRadiusDp.dp, isDark)
+              } else if (liquidEnabled) {
                 Modifier.liquidGlassSurface(
                   shape = capsuleShape,
                   cornerRadius = cfg.cornerRadiusDp.dp,
@@ -263,6 +277,11 @@ private fun LiquidGlassFloatingDock(
             items.forEachIndexed { index, item ->
               val interactionSource = remember(item.testTag) { MutableInteractionSource() }
               val scrubHovered = dockScrubState.isItemScrubHovered(index)
+              val scrubProgress by animateFloatAsState(
+                targetValue = if (scrubHovered) 1f else 0f,
+                animationSpec = spring(dampingRatio = 0.55f, stiffness = 340f),
+                label = "v2_dock_scrub",
+              )
               val active = item.selected
               val activeBgTarget =
                 if (active) {
@@ -293,7 +312,7 @@ private fun LiquidGlassFloatingDock(
                     active -> 1.07f
                     else -> 1f
                   },
-                animationSpec = tween(durationMillis = 160, easing = FastOutSlowInEasing),
+                animationSpec = spring(dampingRatio = 0.5f, stiffness = 420f),
                 label = "v2_dock_icon_scale",
               )
 
@@ -318,6 +337,13 @@ private fun LiquidGlassFloatingDock(
                   Modifier
                     .liquidGlassScrubItem(dockScrubState, index)
                     .height(itemHeight)
+                    .then(
+                      if (useRealGlass && glassBackdrop != null) {
+                        Modifier.glassLens(glassBackdrop, innerCorner, isDark, press = { scrubProgress }, bubble = true)
+                      } else {
+                        Modifier
+                      },
+                    )
                     .clip(innerShape)
                     .background(pillBg)
                     .then(
@@ -394,12 +420,14 @@ private fun LiquidGlassFloatingDock(
           }
         }
 
-        LiquidGlassScrubLensOverlay(
-          state = dockScrubState,
-          cornerRadius = innerCorner,
-          thickness = 1.45f,
-          modifier = Modifier.fillMaxSize(),
-        )
+        if (!useRealGlass) {
+          LiquidGlassScrubLensOverlay(
+            state = dockScrubState,
+            cornerRadius = innerCorner,
+            thickness = 1.45f,
+            modifier = Modifier.fillMaxSize(),
+          )
+        }
       }
 
       if (onHideDock != null) {

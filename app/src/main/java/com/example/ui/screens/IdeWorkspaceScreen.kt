@@ -101,6 +101,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import com.example.ui.theme.glassSource
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -1018,6 +1019,7 @@ fun IdeWorkspaceScreen(
     LocalPopupMenuStyle provides uiState.editorSettings.editorMenuStyle,
     LocalLiquidGlassBackdrop provides workspaceBackdrop,
   ) {
+  val glassBackdrop = com.example.ui.theme.rememberGlassBackdrop()
   BoxWithConstraints(
     modifier = Modifier.fillMaxSize().background(palette.chromeBg),
   ) {
@@ -1234,7 +1236,7 @@ fun IdeWorkspaceScreen(
           }
           }
 
-          Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+          Row(modifier = Modifier.weight(1f).fillMaxWidth().glassSource(glassBackdrop)) {
             if (isExpanded && uiState.projectMode == ProjectMode.CODE) {
               Box(modifier = Modifier.width(300.dp).fillMaxHeight()) {
                 projectSidebarContent()
@@ -1386,6 +1388,7 @@ fun IdeWorkspaceScreen(
             enter = slideInVertically(tween(200)) { it } + fadeIn(tween(180)),
             exit = slideOutVertically(tween(160)) { it } + fadeOut(tween(140)),
           ) {
+            CompositionLocalProvider(com.example.ui.theme.LocalGlassBackdrop provides glassBackdrop) {
             EdgeBottomDock(
               barStyle = editorBarStyle,
               onHideDock = { viewModel.setBottomDockHidden(true) },
@@ -1429,6 +1432,7 @@ fun IdeWorkspaceScreen(
                   ),
                 ),
             )
+            }
           }
         }
 
