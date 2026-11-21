@@ -32,6 +32,7 @@ import com.example.data.local.RamWorkspaceDatabase
 import com.example.data.local.RamWorkspaceRecord
 import com.example.data.local.RawPickedAsset
 import com.example.data.local.WorkerTestRunRecord
+import com.example.data.local.WorkspaceZipExporter
 import com.example.data.local.ZipImportPlan
 import com.example.data.local.ZipImportTargetMode
 import com.example.data.local.ZipPreviewState
@@ -104,6 +105,7 @@ import com.example.editor.CodeAnalyzer
 import com.example.editor.CodeEditHelper
 import com.example.editor.CodeFormatter
 import com.example.editor.ConflictChoice
+import com.example.editor.DenoToolingEngine
 import com.example.editor.DiffFileOrigin
 import com.example.editor.FileDiffEntry
 import com.example.editor.LocalRunLogEntry
@@ -124,11 +126,13 @@ import com.example.idecore.completion.CompletionStatsStore
 import com.example.idecore.completion.EdgeCompletionEngine
 import com.example.idecore.completion.EdgeCompletionItem
 import com.example.idecore.completion.MemberUsageIndexer
+import com.example.idecore.search.DefinitionResolver
 import com.example.idecore.search.ProjectSearchOptions
 import com.example.idecore.search.ProjectSymbolHit
 import com.example.idecore.search.ProjectTextMatch
 import com.example.idecore.search.RenamePreview
 import com.example.idecore.search.WorkspaceSearchAndRefactor
+import com.example.idecore.snippets.CodeSnippetItem
 import com.example.ui.components.DiffReviewIntent
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -166,6 +170,12 @@ enum class ProjectMode {
   TEST,
   CONFIG,
   CONSOLE,
+}
+
+enum class SplitViewMode {
+  NONE,
+  CODE_PREVIEW,
+  DUAL_FILE,
 }
 
 enum class SidebarSection {
@@ -390,6 +400,10 @@ data class IdeUiState(
   val lastUndoableFileOpLabel: String? = null,
   val zipImportPreview: ZipPreviewState? = null,
   val pendingUnsavedWarning: PendingUnsavedWarning? = null,
+  val splitViewMode: SplitViewMode = SplitViewMode.NONE,
+  val secondaryFilePath: String? = null,
+  val isRunningDenoCheck: Boolean = false,
+  val emblemActivityNonce: Long = 0L,
   val statusMessage: String? = null,
 ) {
   val activeFile: WorkerFile?
@@ -549,6 +563,7 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   val uiState: StateFlow<IdeUiState> = _uiState.asStateFlow()
 
   private var oauthJob: Job? = null
+  private var activeOAuthSession: CloudflareOAuthManager.PkceSession? = null
   private var gitHubOAuthJob: Job? = null
   private var draftSaveJob: Job? = null
   private var periodicAutoSaveJob: Job? = null
@@ -852,6 +867,7 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   fun startOAuthSignIn(onLaunchBrowser: (String) -> Unit) {
     oauthJob?.cancel()
     val session = CloudflareOAuthManager.createPkceSession()
+    activeOAuthSession = session
     _uiState.update {
       it.copy(
         isAuthenticating = true,
@@ -867,6 +883,7 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
         repository
           .completeOAuthSession(session)
           .onSuccess { accounts ->
+            activeOAuthSession = null
             val creds = prefsStore.getCurrentCredentials()
             val chosen = accounts.firstOrNull()
             _uiState.update {
@@ -896,9 +913,52 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
       }
   }
 
+  fun submitOAuthCallbackUrl(callbackUrl: String) {
+    val session = activeOAuthSession ?: run {
+      _uiState.update { it.copy(authError = "Start OAuth sign-in first before pasting callback URL.") }
+      return
+    }
+    oauthJob?.cancel()
+    oauthJob =
+      viewModelScope.launch {
+        _uiState.update { it.copy(isAuthenticating = true, authError = null) }
+        repository
+          .completeOAuthWithRedirect(session, callbackUrl)
+          .onSuccess { accounts ->
+            activeOAuthSession = null
+            val creds = prefsStore.getCurrentCredentials()
+            val chosen = accounts.firstOrNull()
+            _uiState.update {
+              it.copy(
+                credentials = creds,
+                isLocalScratchpad = false,
+                accounts = accounts,
+                selectedAccount = chosen,
+                isAuthenticating = false,
+                isWaitingOAuthCallback = false,
+                authError = null,
+                statusMessage = "Cloudflare OAuth authorized",
+              )
+            }
+            appendLog("INFO", "Cloudflare OAuth2 authorized via pasted callback (${accounts.size} account(s))")
+            chosen?.let { refreshWorkersInternal(it.id) }
+          }
+          .onFailure { err ->
+            _uiState.update {
+              it.copy(
+                isAuthenticating = false,
+                isWaitingOAuthCallback = false,
+                authError = err.localizedMessage ?: "Invalid OAuth callback URL",
+              )
+            }
+          }
+      }
+  }
+
   fun cancelOAuthSignIn() {
     oauthJob?.cancel()
     oauthJob = null
+    activeOAuthSession = null
     _uiState.update {
       it.copy(isAuthenticating = false, isWaitingOAuthCallback = false)
     }
@@ -2379,6 +2439,70 @@ export default {
     }
   }
 
+  fun exportActiveWorkspaceZipToUri(uri: Uri) {
+    flushActiveEditorBuffer()
+    syncActiveStateToRamDb()
+    val ws = _uiState.value.workspace
+    if (ws == null) {
+      _uiState.update { it.copy(statusMessage = "Open a workspace first") }
+      return
+    }
+    val binaries = _uiState.value.externalBinaryAssets
+    viewModelScope.launch {
+      val result =
+        withContext(Dispatchers.IO) {
+          val stream =
+            getApplication<Application>().contentResolver.openOutputStream(uri)
+              ?: return@withContext Result.failure(IllegalStateException("Unable to open ZIP output destination"))
+          stream.use { out ->
+            WorkspaceZipExporter.exportToStream(ws.files, out, binaries)
+          }
+        }
+      result
+        .onSuccess { summary ->
+          _uiState.update {
+            it.copy(
+              emblemActivityNonce = it.emblemActivityNonce + 1L,
+              statusMessage = "Exported ${summary.entryCount} files (${summary.byteCount / 1024} KB ZIP)",
+            )
+          }
+          appendLog("INFO", "Exported project ZIP '${ws.scriptName}' (${summary.entryCount} entries)")
+        }
+        .onFailure { err ->
+          _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "ZIP export failed") }
+        }
+    }
+  }
+
+  fun prepareShareWorkspaceZip(onReady: (File, String) -> Unit) {
+    flushActiveEditorBuffer()
+    syncActiveStateToRamDb()
+    val ws = _uiState.value.workspace
+    if (ws == null) {
+      _uiState.update { it.copy(statusMessage = "Open a workspace first") }
+      return
+    }
+    val binaries = _uiState.value.externalBinaryAssets
+    viewModelScope.launch {
+      val result =
+        withContext(Dispatchers.IO) {
+          WorkspaceZipExporter.exportToCacheFile(
+            cacheDir = getApplication<Application>().cacheDir,
+            projectName = ws.scriptName,
+            files = ws.files,
+            binaryAssets = binaries,
+          )
+        }
+      result
+        .onSuccess { zipFile ->
+          onReady(zipFile, ws.scriptName)
+        }
+        .onFailure { err ->
+          _uiState.update { it.copy(statusMessage = err.localizedMessage ?: "Could not build share ZIP") }
+        }
+    }
+  }
+
   fun exportWorkspaceBundleToUri(uri: Uri) {
     val key = activeWorkspaceKey()
     if (key == null) {
@@ -3256,6 +3380,194 @@ export default {
       val cursor = formatted.length.coerceAtMost(_uiState.value.activeTextFieldValue.selection.start)
       updateEditorValue(TextFieldValue(formatted, TextRange(cursor)), bumpRevision = true)
       _uiState.update { it.copy(statusMessage = "Formatted ${file.fileName}") }
+    }
+  }
+
+  fun saveActiveFileWithOptionalFormat() {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val active = state.activeFile ?: return
+    if (active.isVirtualReadOnly) {
+      _uiState.update { it.copy(statusMessage = "Read-only file cannot be saved") }
+      return
+    }
+    viewModelScope.launch {
+      val currentText = state.editorFieldValues[active.path]?.text ?: active.content
+      val shouldFormat = state.editorSettings.formatOnSave
+      val finalText =
+        if (shouldFormat) {
+          val res =
+            DenoToolingEngine.formatFileWithDenoOrFallback(
+              context = getApplication(),
+              filePath = active.path,
+              content = currentText,
+              language = active.language,
+              tabSize = state.editorSettings.tabSize,
+            )
+          res.formatted
+        } else {
+          currentText
+        }
+
+      if (finalText != currentText) {
+        val wsKey = activeWorkspaceKey() ?: "default"
+        localHistoryStore.recordSnapshot(wsKey, active.path, currentText, finalText, label = "Format & Save")
+        val nextCursor = finalText.length.coerceAtMost(_uiState.value.activeTextFieldValue.selection.start)
+        updateEditorValue(TextFieldValue(finalText, TextRange(nextCursor)), bumpRevision = true)
+      }
+
+      if (active.path in state.externalFileUris) {
+        saveActiveExternalFileNow()
+      } else {
+        activeWorkspaceKey()?.let { key ->
+          persistWorkspaceToProjectDirAsync(key)
+          _uiState.value.workspace?.let { wsNow -> seedSavedFileBaselines(key, wsNow) }
+        }
+        buildActiveAutoSaveSnapshot(_uiState.value)?.let { snapshot ->
+          persistSnapshotIfChanged(snapshot.first, snapshot.second, forceSessionPointer = false)
+        }
+        _uiState.update {
+          it.copy(
+            emblemActivityNonce = it.emblemActivityNonce + 1L,
+            lastAutoSavedEpochMs = System.currentTimeMillis(),
+            statusMessage =
+              if (shouldFormat) "Formatted & saved ${active.fileName} locally"
+              else "Saved ${active.fileName} locally",
+          )
+        }
+      }
+    }
+  }
+
+  fun runDenoCheckAndLint() {
+    flushActiveEditorBuffer()
+    val ws = _uiState.value.workspace ?: return
+    if (_uiState.value.isRunningDenoCheck) return
+    _uiState.update { it.copy(isRunningDenoCheck = true, statusMessage = "Running check & lint...") }
+    viewModelScope.launch {
+      val summary = DenoToolingEngine.runWorkspaceCheckAndLint(getApplication(), ws.files)
+      _uiState.update { state ->
+        state.copy(
+          isRunningDenoCheck = false,
+          diagnostics = summary.diagnostics,
+          emblemActivityNonce = state.emblemActivityNonce + 1L,
+          statusMessage = summary.summaryMessage,
+        )
+      }
+      appendLog(if (summary.diagnostics.isEmpty()) "INFO" else "WARN", summary.summaryMessage)
+    }
+  }
+
+  fun goToDefinitionAtCursor(
+    filePath: String? = null,
+    textOverride: String? = null,
+    cursorOffsetOverride: Int? = null,
+  ) {
+    flushActiveEditorBuffer()
+    val state = _uiState.value
+    val active =
+      if (filePath != null) state.workspace?.files?.firstOrNull { it.path == filePath } ?: state.activeFile
+      else state.activeFile
+    if (active == null) {
+      _uiState.update { it.copy(statusMessage = "Open a file to jump to definition") }
+      return
+    }
+    val docText = textOverride ?: state.editorFieldValues[active.path]?.text ?: active.content
+    val cursor =
+      (cursorOffsetOverride ?: state.editorFieldValues[active.path]?.selection?.end ?: 0)
+        .coerceIn(0, docText.length)
+    val target =
+      DefinitionResolver.resolveAt(
+        workspace = state.workspace,
+        editorFieldValues = state.editorFieldValues,
+        activeFilePath = active.path,
+        documentText = docText,
+        offset = cursor,
+      )
+    if (target == null) {
+      _uiState.update { it.copy(statusMessage = "No definition found at cursor") }
+      return
+    }
+    jumpToLine(target.filePath, target.line, target.column)
+    _uiState.update {
+      it.copy(
+        emblemActivityNonce = it.emblemActivityNonce + 1L,
+        statusMessage = "${target.kindLabel}: ${target.symbolName} (${target.filePath.substringAfterLast('/')}:${target.line})",
+      )
+    }
+  }
+
+  fun setSplitViewMode(mode: SplitViewMode) {
+    _uiState.update { state ->
+      if (mode != SplitViewMode.DUAL_FILE) {
+        state.copy(splitViewMode = mode)
+      } else {
+        val currentPath = state.activeFilePath
+        val editablePaths = state.workspace?.files?.filterNot { it.isVirtualReadOnly }?.map { it.path }.orEmpty()
+        val chosenSecondary =
+          state.secondaryFilePath?.takeIf { it in editablePaths && it != currentPath }
+            ?: state.openTabPaths.firstOrNull { it in editablePaths && it != currentPath }
+            ?: editablePaths.firstOrNull { it != currentPath }
+            ?: currentPath
+        state.copy(
+          splitViewMode = mode,
+          secondaryFilePath = chosenSecondary,
+        )
+      }
+    }
+  }
+
+  fun setSecondarySplitFile(path: String?) {
+    _uiState.update { state ->
+      state.copy(secondaryFilePath = path)
+    }
+  }
+
+  fun swapSplitFiles() {
+    val state = _uiState.value
+    val primary = state.activeFilePath ?: return
+    val secondary = state.secondaryFilePath ?: return
+    if (primary == secondary) return
+    openFileTab(secondary)
+    _uiState.update { cur ->
+      cur.copy(secondaryFilePath = primary)
+    }
+  }
+
+  fun addCustomSnippet(
+    abbrev: String,
+    title: String,
+    tag: String,
+    code: String,
+    description: String,
+  ) {
+    val cleanAbbrev = abbrev.trim()
+    val cleanCode = code.trimEnd()
+    if (cleanAbbrev.isBlank() || cleanCode.isBlank()) return
+    val newItem =
+      CodeSnippetItem(
+        id = "custom_${UUID.randomUUID()}",
+        abbrev = cleanAbbrev,
+        title = title.ifBlank { cleanAbbrev },
+        tag = tag.ifBlank { "CUSTOM" },
+        code = cleanCode,
+        description = description.ifBlank { "Custom user snippet" },
+        isCustom = true,
+      )
+    viewModelScope.launch {
+      prefsStore.updateEditorSettings { cur ->
+        cur.copy(customSnippets = cur.customSnippets + newItem)
+      }
+      _uiState.update { it.copy(statusMessage = "Saved snippet '${newItem.abbrev}'") }
+    }
+  }
+
+  fun deleteCustomSnippet(id: String) {
+    viewModelScope.launch {
+      prefsStore.updateEditorSettings { cur ->
+        cur.copy(customSnippets = cur.customSnippets.filterNot { it.id == id })
+      }
+      _uiState.update { it.copy(statusMessage = "Removed custom snippet") }
     }
   }
 
@@ -5770,6 +6082,10 @@ export default {
           }
         }
     }
+  }
+
+  fun clearTailLogs() {
+    _uiState.update { it.copy(tailLogs = emptyList()) }
   }
 
   private fun stopTailIfRunning() {
@@ -8976,7 +9292,6 @@ jobs:
                 ?: error("Unable to read selected image")
 
             val bgDir = File(getApplication<Application>().filesDir, "editor_backgrounds").apply { mkdirs() }
-            bgDir.listFiles()?.forEach { runCatching { it.delete() } }
             val outFile = File(bgDir, "editor_bg_${System.currentTimeMillis()}.jpg")
             FileOutputStream(outFile).use { fos ->
               decoded.compress(Bitmap.CompressFormat.JPEG, 90, fos)
@@ -8987,10 +9302,12 @@ jobs:
         }
       savedResult
         .onSuccess { path ->
-          prefsStore.updateEditorSettings {
-            it.copy(
+          prefsStore.updateEditorSettings { cur ->
+            val updatedSaved = (listOf(path) + cur.editorBgSavedPaths.filterNot { it == path }).take(8)
+            cur.copy(
               editorBgPreset = "CUSTOM",
               editorBgImagePath = path,
+              editorBgSavedPaths = updatedSaved,
               editorBgOffsetX = 0f,
               editorBgOffsetY = 0f,
             )
@@ -9003,12 +9320,43 @@ jobs:
     }
   }
 
-  fun clearCustomEditorBackground() {
+  fun selectSavedEditorBackground(path: String) {
+    if (path.isBlank()) return
+    viewModelScope.launch {
+      prefsStore.updateEditorSettings { cur ->
+        val updatedSaved = (listOf(path) + cur.editorBgSavedPaths.filterNot { it == path }).take(8)
+        cur.copy(
+          editorBgPreset = "CUSTOM",
+          editorBgImagePath = path,
+          editorBgSavedPaths = updatedSaved,
+          editorBgOffsetX = 0f,
+          editorBgOffsetY = 0f,
+        )
+      }
+      _uiState.update { it.copy(statusMessage = "Applied saved editor background") }
+    }
+  }
+
+  fun removeSavedEditorBackground(path: String) {
     viewModelScope.launch {
       withContext(Dispatchers.IO) {
-        val bgDir = File(getApplication<Application>().filesDir, "editor_backgrounds")
-        bgDir.listFiles()?.forEach { runCatching { it.delete() } }
+        runCatching { File(path).delete() }
       }
+      prefsStore.updateEditorSettings { cur ->
+        val remaining = cur.editorBgSavedPaths.filterNot { it == path }
+        val clearingActive = cur.editorBgImagePath == path
+        cur.copy(
+          editorBgSavedPaths = remaining,
+          editorBgPreset = if (clearingActive && remaining.isEmpty()) "NONE" else cur.editorBgPreset,
+          editorBgImagePath = if (clearingActive) remaining.firstOrNull().orEmpty() else cur.editorBgImagePath,
+        )
+      }
+      _uiState.update { it.copy(statusMessage = "Removed saved editor background") }
+    }
+  }
+
+  fun clearCustomEditorBackground() {
+    viewModelScope.launch {
       prefsStore.updateEditorSettings {
         it.copy(
           editorBgPreset = "NONE",

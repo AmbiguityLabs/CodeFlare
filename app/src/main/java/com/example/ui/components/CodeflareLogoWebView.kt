@@ -11,12 +11,21 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -26,7 +35,12 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import com.example.R
+import com.example.ui.theme.LocalIdePalette
+import com.example.ui.theme.liquidGlassSurface
 import com.example.util.HardwareSpeedProfiler
 import java.util.Locale
 
@@ -184,3 +198,58 @@ fun CodeflareAutoEmblem(
     )
   }
 }
+
+@Composable
+fun CodeflareEmblemDialog(
+  onDismiss: () -> Unit,
+) {
+  val palette = LocalIdePalette.current
+  var replayCount by remember { mutableIntStateOf(0) }
+  Dialog(onDismissRequest = onDismiss) {
+    val shape = RoundedCornerShape(26.dp)
+    Box(
+      modifier =
+        Modifier
+          .liquidGlassSurface(
+            shape = shape,
+            cornerRadius = 26.dp,
+            thickness = 1.65f,
+            drawShadow = true,
+          )
+          .padding(horizontal = 24.dp, vertical = 20.dp),
+    ) {
+      Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+      ) {
+        CodeflareAnimatedLogoView(
+          modifier =
+            Modifier
+              .size(164.dp)
+              .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+              ) { replayCount++ },
+          embedOnly = true,
+          replayTrigger = replayCount,
+          tapToReplay = true,
+        )
+        Text(
+          text = "CodeFlare",
+          style = MaterialTheme.typography.titleMedium,
+          fontWeight = FontWeight.Bold,
+          color = palette.textPrimary,
+        )
+        Text(
+          text = "Mobile Workers & Full-Stack Edge IDE",
+          style = MaterialTheme.typography.bodySmall,
+          color = palette.textSecondary,
+        )
+        TextButton(onClick = onDismiss) {
+          Text("Close", color = palette.activePillFg, fontWeight = FontWeight.SemiBold)
+        }
+      }
+    }
+  }
+}
+
