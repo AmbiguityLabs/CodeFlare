@@ -232,8 +232,17 @@ jobs:
             printf '\nAPP_ENV=production\n' >> .env
           fi
           for attempt in 1 2 3; do
-            if gradle assembleRelease --stacktrace; then
-              exit 0
+            if gradle assembleRelease --stacktrace 2>&1 | tee build.log; then
+              if [ "${PIPESTATUS[0]}" -eq 0 ]; then
+                exit 0
+              fi
+            fi
+            # Surface compiler errors as annotations (visible without opening raw logs)
+            ERRS=$(grep -E '^e: |error:|What went wrong|Execution failed' -A2 build.log | head -80 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=Build errors (attempt $attempt)::${ERRS:0:3500}"
+            # Compilation errors are deterministic: do not waste time retrying
+            if grep -qE '^e: ' build.log; then
+              exit 1
             fi
             echo "Build attempt $attempt failed; retrying in 60s..."
             sleep 60
