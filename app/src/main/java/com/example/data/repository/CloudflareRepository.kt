@@ -16,6 +16,7 @@ import com.example.data.remote.CfKvBulkItem
 import com.example.data.remote.CfKvKey
 import com.example.data.remote.CfKvNamespace
 import com.example.data.remote.CfKvNamespaceRequest
+import com.example.data.remote.CfOAuthTokenResponse
 import com.example.data.remote.CfPagesAssetMetadata
 import com.example.data.remote.CfPagesBuildLogsResult
 import com.example.data.remote.CfPagesCheckMissingRequest
@@ -437,46 +438,62 @@ class CloudflareRepository(
 
   suspend fun completeOAuthSession(
     session: com.example.data.auth.CloudflareOAuthManager.PkceSession,
+    preboundSocket: java.net.ServerSocket? = null,
   ): Result<List<CfAccount>> =
     withContext(Dispatchers.IO) {
-      val tokenResult = com.example.data.auth.CloudflareOAuthManager.awaitCallbackAndExchange(session)
+      val tokenResult =
+        com.example.data.auth.CloudflareOAuthManager.awaitCallbackAndExchange(session, preboundSocket)
       val tokenResp = tokenResult.getOrElse { return@withContext Result.failure(it) }
-
-      val creds =
-        StoredCredentials(
-          method = AuthMethod.OAUTH_PKCE,
-          accessToken = tokenResp.accessToken,
-          refreshToken = tokenResp.refreshToken.orEmpty(),
-          expiresAtEpochMs = System.currentTimeMillis() + (tokenResp.expiresIn * 1000L),
-        )
-      prefsStore.saveCredentials(creds)
-
-      val accountsResp =
-        runCatching { api.listAccounts() }
-          .getOrElse {
-            prefsStore.clearCredentials()
-            return@withContext Result.failure(it)
-          }
-
-      if (!accountsResp.isSuccessful || accountsResp.body()?.success != true) {
-        prefsStore.clearCredentials()
-        return@withContext Result.failure(
-          IllegalStateException(extractCfError(accountsResp) ?: "Failed to load Cloudflare accounts after OAuth")
-        )
-      }
-
-      val accounts = accountsResp.body()?.result.orEmpty()
-      val userEmail = runCatching { api.getCurrentUser().body()?.result?.email.orEmpty() }.getOrDefault("")
-      val firstAcc = accounts.firstOrNull()
-      prefsStore.saveCredentials(
-        creds.copy(
-          email = userEmail,
-          selectedAccountId = firstAcc?.id.orEmpty(),
-          selectedAccountName = firstAcc?.name.orEmpty(),
-        )
-      )
-      Result.success(accounts)
+      finalizeOAuthToken(tokenResp)
     }
+
+  suspend fun completeOAuthWithRedirect(
+    session: com.example.data.auth.CloudflareOAuthManager.PkceSession,
+    rawRedirectOrCode: String,
+  ): Result<List<CfAccount>> =
+    withContext(Dispatchers.IO) {
+      val tokenResult =
+        com.example.data.auth.CloudflareOAuthManager.completeFromManualRedirect(session, rawRedirectOrCode)
+      val tokenResp = tokenResult.getOrElse { return@withContext Result.failure(it) }
+      finalizeOAuthToken(tokenResp)
+    }
+
+  private suspend fun finalizeOAuthToken(tokenResp: CfOAuthTokenResponse): Result<List<CfAccount>> {
+    val creds =
+      StoredCredentials(
+        method = AuthMethod.OAUTH_PKCE,
+        accessToken = tokenResp.accessToken,
+        refreshToken = tokenResp.refreshToken.orEmpty(),
+        expiresAtEpochMs = System.currentTimeMillis() + (tokenResp.expiresIn * 1000L),
+      )
+    prefsStore.saveCredentials(creds)
+
+    val accountsResp =
+      runCatching { api.listAccounts() }
+        .getOrElse {
+          prefsStore.clearCredentials()
+          return Result.failure(it)
+        }
+
+    if (!accountsResp.isSuccessful || accountsResp.body()?.success != true) {
+      prefsStore.clearCredentials()
+      return Result.failure(
+        IllegalStateException(extractCfError(accountsResp) ?: "Failed to load Cloudflare accounts after OAuth"),
+      )
+    }
+
+    val accounts = accountsResp.body()?.result.orEmpty()
+    val userEmail = runCatching { api.getCurrentUser().body()?.result?.email.orEmpty() }.getOrDefault("")
+    val firstAcc = accounts.firstOrNull()
+    prefsStore.saveCredentials(
+      creds.copy(
+        email = userEmail,
+        selectedAccountId = firstAcc?.id.orEmpty(),
+        selectedAccountName = firstAcc?.name.orEmpty(),
+      ),
+    )
+    return Result.success(accounts)
+  }
 
   suspend fun loadAccounts(): Result<List<CfAccount>> =
     withContext(Dispatchers.IO) {

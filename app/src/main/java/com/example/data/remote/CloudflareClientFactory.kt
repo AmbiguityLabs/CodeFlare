@@ -56,7 +56,7 @@ class CloudflareClientFactory(
     ) {
       val retryCreds: StoredCredentials? =
         synchronized(refreshLock) {
-          val latestCreds = runBlocking { prefsStore.getCurrentCredentials() }
+          val latestCreds = runBlocking { prefsStore.getCachedOrCurrentCredentials() }
           if (
             latestCreds != null &&
               latestCreds.method == AuthMethod.OAUTH_PKCE &&

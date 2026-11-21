@@ -7,12 +7,14 @@ import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import java.io.BufferedReader
 import java.io.InputStreamReader
-import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.ServerSocket
+import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.URLDecoder
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
@@ -21,10 +23,6 @@ import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-/**
- * Implements RFC 8252 Native App OAuth 2.0 PKCE Authorization against Cloudflare's
- * official Wrangler-compatible OAuth2 endpoints with a local loopback callback listener.
- */
 object CloudflareOAuthManager {
   const val CLIENT_ID = "54d11594-84e4-41aa-b438-e81b8fa78ee8"
   const val REDIRECT_PORT = 8976
@@ -54,6 +52,7 @@ object CloudflareOAuthManager {
   private val moshi = Moshi.Builder().addLast(KotlinJsonAdapterFactory()).build()
   private val tokenAdapter = moshi.adapter(CfOAuthTokenResponse::class.java)
   private val httpClient = com.example.data.remote.SharedHttpClientProvider.newBuilder().build()
+  private val activeServerSocket = AtomicReference<ServerSocket?>(null)
 
   fun createPkceSession(): PkceSession {
     val random = SecureRandom()
@@ -97,37 +96,101 @@ object CloudflareOAuthManager {
       .toString()
   }
 
-  /**
-   * Listens on localhost:8976 for Cloudflare's OAuth callback redirect, validates state,
-   * returns the authorization code, and writes a crisp HTML confirmation page to the browser.
-   */
-  suspend fun awaitCallbackAndExchange(session: PkceSession): Result<CfOAuthTokenResponse> =
+  fun openLoopbackListener(): ServerSocket {
+    closeActiveListener()
+    val server =
+      ServerSocket().apply {
+        reuseAddress = true
+        bind(InetSocketAddress(REDIRECT_PORT), 16)
+        soTimeout = 1500
+      }
+    activeServerSocket.set(server)
+    return server
+  }
+
+  fun closeActiveListener() {
+    val existing = activeServerSocket.getAndSet(null) ?: return
+    runCatching { existing.close() }
+  }
+
+  fun extractCallbackCode(rawInput: String, expectedState: String): Result<String> {
+    val trimmed = rawInput.trim()
+    if (trimmed.isEmpty()) {
+      return Result.failure(IllegalArgumentException("Paste the OAuth callback URL or code."))
+    }
+    if (!trimmed.contains("://") && !trimmed.contains("?") && !trimmed.contains("=")) {
+      return Result.success(trimmed)
+    }
+    val query =
+      when {
+        trimmed.contains("?") -> trimmed.substringAfter("?").substringBefore("#")
+        else -> trimmed.substringBefore("#")
+      }
+    val params = parseQueryParams(query)
+    val err = params["error"]
+    if (!err.isNullOrBlank()) {
+      return Result.failure(IllegalStateException(params["error_description"] ?: err))
+    }
+    val returnedState = params["state"]
+    if (!returnedState.isNullOrBlank() && returnedState != expectedState) {
+      return Result.failure(IllegalStateException("OAuth state mismatch. Please retry sign-in."))
+    }
+    val code = params["code"]?.trim()
+    if (code.isNullOrBlank()) {
+      return Result.failure(IllegalArgumentException("Callback URL is missing the 'code' parameter."))
+    }
+    return Result.success(code)
+  }
+
+  suspend fun completeFromManualRedirect(
+    session: PkceSession,
+    rawRedirectOrCode: String,
+  ): Result<CfOAuthTokenResponse> =
     withContext(Dispatchers.IO) {
-      var serverSocket: ServerSocket? = null
+      closeActiveListener()
+      val code = extractCallbackCode(rawRedirectOrCode, session.state).getOrElse {
+        return@withContext Result.failure(it)
+      }
+      exchangeCodeForToken(code = code, codeVerifier = session.codeVerifier)
+    }
+
+  suspend fun awaitCallbackAndExchange(
+    session: PkceSession,
+    preboundSocket: ServerSocket? = null,
+  ): Result<CfOAuthTokenResponse> =
+    withContext(Dispatchers.IO) {
+      var serverSocket: ServerSocket? = preboundSocket
       try {
-        serverSocket = ServerSocket(REDIRECT_PORT, 4, InetAddress.getByName("127.0.0.1"))
-        serverSocket.soTimeout = 1500
+        if (serverSocket == null || serverSocket.isClosed) {
+          serverSocket = openLoopbackListener()
+        } else {
+          activeServerSocket.set(serverSocket)
+          serverSocket.soTimeout = 1500
+        }
 
         val deadline = System.currentTimeMillis() + 180_000L
         var authCode: String? = null
         var authError: String? = null
 
-        while (currentCoroutineContext().isActive && System.currentTimeMillis() < deadline) {
+        while (currentCoroutineContext().isActive && System.currentTimeMillis() < deadline && !serverSocket.isClosed) {
           val socket =
             try {
               serverSocket.accept()
             } catch (_: SocketTimeoutException) {
               continue
+            } catch (_: SocketException) {
+              break
             }
 
+          var handledCallback = false
           socket.use { client ->
             val reader = BufferedReader(InputStreamReader(client.getInputStream()))
             val requestLine = reader.readLine().orEmpty()
-            // Consume headers
             while (true) {
               val line = reader.readLine() ?: break
               if (line.isEmpty()) break
             }
+            if (requestLine.isBlank()) return@use
 
             val pathAndQuery = requestLine.split(" ").getOrNull(1).orEmpty()
             if (pathAndQuery.startsWith("/oauth/callback")) {
@@ -152,7 +215,7 @@ object CloudflareOAuthManager {
                 html =
                   callbackHtml(
                     success = true,
-                    message = "Cloudflare account authorized! You can return to EdgeCode now.",
+                    message = "Cloudflare account authorized! Returning to EdgeCode…",
                   )
               }
 
@@ -160,6 +223,7 @@ object CloudflareOAuthManager {
               val headers =
                 "HTTP/1.1 200 OK\r\n" +
                   "Content-Type: text/html; charset=utf-8\r\n" +
+                  "Cache-Control: no-store\r\n" +
                   "Content-Length: ${responseBytes.size}\r\n" +
                   "Connection: close\r\n\r\n"
               client.getOutputStream().apply {
@@ -167,12 +231,24 @@ object CloudflareOAuthManager {
                 write(responseBytes)
                 flush()
               }
-              break
+              runCatching { client.shutdownOutput() }
+              runCatching { Thread.sleep(150L) }
+              handledCallback = true
+            } else if (pathAndQuery.startsWith("/favicon")) {
+              val noContent = "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n"
+              client.getOutputStream().apply {
+                write(noContent.toByteArray(Charsets.UTF_8))
+                flush()
+              }
             } else {
               val notFound = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-              client.getOutputStream().write(notFound.toByteArray(Charsets.UTF_8))
+              client.getOutputStream().apply {
+                write(notFound.toByteArray(Charsets.UTF_8))
+                flush()
+              }
             }
           }
+          if (handledCallback) break
         }
 
         if (authError != null) {
@@ -181,13 +257,14 @@ object CloudflareOAuthManager {
         val code =
           authCode
             ?: return@withContext Result.failure(
-              IllegalStateException("Timed out waiting for Cloudflare OAuth callback.")
+              IllegalStateException("Timed out waiting for Cloudflare OAuth callback."),
             )
 
         exchangeCodeForToken(code = code, codeVerifier = session.codeVerifier)
       } catch (e: Exception) {
         Result.failure(e)
       } finally {
+        activeServerSocket.compareAndSet(serverSocket, null)
         runCatching { serverSocket?.close() }
       }
     }
@@ -264,6 +341,18 @@ object CloudflareOAuthManager {
   private fun callbackHtml(success: Boolean, message: String): String {
     val accent = if (success) "#F6821F" else "#F43F5E"
     val badge = if (success) "AUTHORIZED" else "FAILED"
+    val returnButton =
+      if (success) {
+        """<a class="btn" href="edgecode://oauth/return">Return to EdgeCode</a>"""
+      } else {
+        ""
+      }
+    val autoScript =
+      if (success) {
+        """<script>setTimeout(function(){ window.location.href = "edgecode://oauth/return"; }, 250);</script>"""
+      } else {
+        ""
+      }
     return """
       <!DOCTYPE html>
       <html>
@@ -277,6 +366,7 @@ object CloudflareOAuthManager {
           .pill { display:inline-block; padding:4px 12px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:1px; background:${accent}22; color:$accent; border:1px solid ${accent}55; }
           h1 { font-size:20px; margin:16px 0 8px; }
           p { font-size:14px; color:#A0A8B8; line-height:1.5; }
+          .btn { display:inline-block; margin-top:16px; padding:10px 18px; border-radius:10px; background:#F6821F; color:#121318; font-weight:700; font-size:13px; text-decoration:none; }
         </style>
       </head>
       <body>
@@ -284,7 +374,9 @@ object CloudflareOAuthManager {
           <div class="pill">$badge</div>
           <h1>EdgeCode Workers IDE</h1>
           <p>$message</p>
+          $returnButton
         </div>
+        $autoScript
       </body>
       </html>
     """.trimIndent()

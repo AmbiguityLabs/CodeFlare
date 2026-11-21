@@ -171,6 +171,7 @@ class MainActivity : ComponentActivity() {
                   ideViewModel.startOAuthSignIn { authUrl -> openExternalUrl(authUrl) }
                 },
                 onCancelOAuth = ideViewModel::cancelOAuthSignIn,
+                onSubmitOAuthCallback = ideViewModel::submitOAuthCallbackUrl,
                 onAuthorizeToken = ideViewModel::authorizeWithToken,
                 onAuthorizeGlobalKey = ideViewModel::authorizeWithGlobalKey,
                 onStartGitHubOAuth = { clientIdOverride ->

@@ -101,6 +101,7 @@ fun AuthScreen(
   onDisconnectGitHub: () -> Unit,
   onEnterGitHubIde: () -> Unit,
   onOpenLocalScratchpad: () -> Unit,
+  onSubmitOAuthCallback: (String) -> Unit = {},
 ) {
   var selectedTab by rememberSaveable { mutableIntStateOf(0) }
   var apiTokenInput by rememberSaveable { mutableStateOf("") }
@@ -289,6 +290,8 @@ fun AuthScreen(
                 }
 
                 if (uiState.isWaitingOAuthCallback) {
+                  var showManualRedirect by rememberSaveable { mutableStateOf(false) }
+                  var manualCallbackInput by rememberSaveable { mutableStateOf("") }
                   Surface(
                     color = MaterialTheme.colorScheme.secondaryContainer,
                     shape = RoundedCornerShape(14.dp),
@@ -309,11 +312,44 @@ fun AuthScreen(
                           color = MaterialTheme.colorScheme.onSecondaryContainer,
                         )
                       }
-                      TextButton(
-                        onClick = onCancelOAuth,
-                        modifier = Modifier.align(Alignment.End).testTag("cancel_oauth_button"),
+                      AnimatedVisibility(visible = showManualRedirect) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                          OutlinedTextField(
+                            value = manualCallbackInput,
+                            onValueChange = { manualCallbackInput = it },
+                            label = { Text("Paste browser callback URL") },
+                            placeholder = { Text("http://localhost:8976/oauth/callback?code=…") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().testTag("oauth_manual_callback_input"),
+                          )
+                          Button(
+                            onClick = { onSubmitOAuthCallback(manualCallbackInput) },
+                            enabled = manualCallbackInput.isNotBlank(),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().testTag("oauth_manual_callback_submit"),
+                          ) {
+                            Text("Complete OAuth")
+                          }
+                        }
+                      }
+                      Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
                       ) {
-                        Text(stringResource(R.string.auth_cancel))
+                        TextButton(
+                          onClick = { showManualRedirect = !showManualRedirect },
+                          modifier = Modifier.testTag("toggle_manual_oauth_button"),
+                        ) {
+                          Text(if (showManualRedirect) "Hide paste URL" else "Page not available?")
+                        }
+                        TextButton(
+                          onClick = onCancelOAuth,
+                          modifier = Modifier.testTag("cancel_oauth_button"),
+                        ) {
+                          Text(stringResource(R.string.auth_cancel))
+                        }
                       }
                     }
                   }

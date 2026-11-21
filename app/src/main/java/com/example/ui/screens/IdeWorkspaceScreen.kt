@@ -662,6 +662,7 @@ fun IdeWorkspaceScreen(
           }
         },
         onCancelOAuth = viewModel::cancelOAuthSignIn,
+        onSubmitOAuthCallback = viewModel::submitOAuthCallbackUrl,
         onClearCredentialFeedback = viewModel::clearCloudflareCredentialTestMessage,
         onDisconnectCloudflare = {
           showProjectSettingsModal = false

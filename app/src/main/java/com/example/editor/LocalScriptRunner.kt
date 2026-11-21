@@ -195,7 +195,7 @@ object LocalScriptRunner {
       }
     }
     if (importsObj.length() == 0) return null
-    return JSONObject().put("imports", importsObj).toString(2)
+    return JSONObject().put("imports", importsObj).toString(2).replace("\\/", "/")
   }
 
   fun stageWorkspaceFiles(

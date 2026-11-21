@@ -423,6 +423,7 @@ fun HomeScreen(
           }
         },
         onCancelOAuth = viewModel::cancelOAuthSignIn,
+        onSubmitOAuthCallback = viewModel::submitOAuthCallbackUrl,
         onClearCredentialFeedback = viewModel::clearCloudflareCredentialTestMessage,
         onDisconnectCloudflare = {
           viewModel.setShowHomeSettings(false)

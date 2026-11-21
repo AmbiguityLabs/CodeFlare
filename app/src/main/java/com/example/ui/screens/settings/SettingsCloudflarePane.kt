@@ -39,6 +39,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -81,6 +82,7 @@ fun SettingsCloudflarePane(
   onCancelOAuth: () -> Unit,
   onClearCredentialFeedback: () -> Unit,
   onNotify: (String) -> Unit,
+  onSubmitOAuthCallback: (String) -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val scheme = MaterialTheme.colorScheme
@@ -488,14 +490,45 @@ fun SettingsCloudflarePane(
 
           else -> {
             if (uiState.isWaitingOAuthCallback) {
-              OutlinedButton(
-                onClick = onCancelOAuth,
-                shape = RoundedCornerShape(Ca.radius.control),
-                modifier = Modifier.fillMaxWidth().height(44.dp),
-              ) {
-                EdgeLoadingIndicator(size = 16.dp)
-                Spacer(Modifier.width(8.dp))
-                Text("Cancel OAuth")
+              var manualUrl by rememberSaveable { mutableStateOf("") }
+              var showManual by rememberSaveable { mutableStateOf(false) }
+              Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                  onClick = onCancelOAuth,
+                  shape = RoundedCornerShape(Ca.radius.control),
+                  modifier = Modifier.fillMaxWidth().height(44.dp),
+                ) {
+                  EdgeLoadingIndicator(size = 16.dp)
+                  Spacer(Modifier.width(8.dp))
+                  Text("Cancel OAuth")
+                }
+                TextButton(
+                  onClick = { showManual = !showManual },
+                  modifier = Modifier.align(Alignment.End),
+                ) {
+                  Text(if (showManual) "Hide callback paste" else "Page not available? Paste URL")
+                }
+                AnimatedVisibility(visible = showManual) {
+                  Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                      value = manualUrl,
+                      onValueChange = { manualUrl = it },
+                      label = { Text("Callback URL") },
+                      placeholder = { Text("http://localhost:8976/oauth/callback?code=…") },
+                      singleLine = true,
+                      shape = RoundedCornerShape(Ca.radius.control),
+                      modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(
+                      onClick = { onSubmitOAuthCallback(manualUrl) },
+                      enabled = manualUrl.isNotBlank(),
+                      shape = RoundedCornerShape(Ca.radius.control),
+                      modifier = Modifier.fillMaxWidth().height(42.dp),
+                    ) {
+                      Text("Complete OAuth")
+                    }
+                  }
+                }
               }
             } else {
               Button(

@@ -513,6 +513,8 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   val uiState: StateFlow<IdeUiState> = _uiState.asStateFlow()
 
   private var oauthJob: Job? = null
+  private var activeOAuthSession: CloudflareOAuthManager.PkceSession? = null
+  @Volatile private var oauthFlowGeneration: Long = 0L
   private var gitHubOAuthJob: Job? = null
   private var draftSaveJob: Job? = null
   private var periodicAutoSaveJob: Job? = null
@@ -852,8 +854,11 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun startOAuthSignIn(onLaunchBrowser: (String) -> Unit) {
+    val flowGen = ++oauthFlowGeneration
     oauthJob?.cancel()
+    CloudflareOAuthManager.closeActiveListener()
     val session = CloudflareOAuthManager.createPkceSession()
+    activeOAuthSession = session
     _uiState.update {
       it.copy(
         isAuthenticating = true,
@@ -862,14 +867,28 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
       )
     }
     appendLog("INFO", "Starting Cloudflare OAuth2 PKCE flow on localhost:${CloudflareOAuthManager.REDIRECT_PORT}")
-    onLaunchBrowser(session.authorizationUrl)
 
     oauthJob =
       viewModelScope.launch {
+        val preboundSocket =
+          runCatching {
+            withContext(Dispatchers.IO) { CloudflareOAuthManager.openLoopbackListener() }
+          }.getOrNull()
+        if (oauthFlowGeneration != flowGen) {
+          runCatching { preboundSocket?.close() }
+          return@launch
+        }
+        withContext(Dispatchers.Main) {
+          onLaunchBrowser(session.authorizationUrl)
+        }
         repository
-          .completeOAuthSession(session)
+          .completeOAuthSession(session, preboundSocket)
           .onSuccess { accounts ->
-            val creds = prefsStore.getCurrentCredentials()
+            if (oauthFlowGeneration != flowGen) return@onSuccess
+            if (activeOAuthSession === session) {
+              activeOAuthSession = null
+            }
+            val creds = prefsStore.getCachedOrCurrentCredentials()
             val chosen = accounts.firstOrNull()
             _uiState.update {
               it.copy(
@@ -886,6 +905,10 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
             chosen?.let { refreshWorkersInternal(it.id) }
           }
           .onFailure { err ->
+            if (oauthFlowGeneration != flowGen) return@onFailure
+            if (activeOAuthSession === session) {
+              activeOAuthSession = null
+            }
             _uiState.update {
               it.copy(
                 isAuthenticating = false,
@@ -898,7 +921,61 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
       }
   }
 
+  fun submitOAuthCallbackUrl(rawUrlOrCode: String) {
+    val session = activeOAuthSession ?: return
+    val clean = rawUrlOrCode.trim()
+    if (clean.isEmpty()) return
+    val flowGen = ++oauthFlowGeneration
+    oauthJob?.cancel()
+    oauthJob = null
+    _uiState.update {
+      it.copy(
+        isAuthenticating = true,
+        isWaitingOAuthCallback = true,
+        authError = null,
+      )
+    }
+    oauthJob =
+      viewModelScope.launch {
+        repository
+          .completeOAuthWithRedirect(session, clean)
+          .onSuccess { accounts ->
+            if (oauthFlowGeneration != flowGen) return@onSuccess
+            activeOAuthSession = null
+            val creds = prefsStore.getCachedOrCurrentCredentials()
+            val chosen = accounts.firstOrNull()
+            _uiState.update {
+              it.copy(
+                credentials = creds,
+                isLocalScratchpad = false,
+                accounts = accounts,
+                selectedAccount = chosen,
+                isAuthenticating = false,
+                isWaitingOAuthCallback = false,
+                authError = null,
+              )
+            }
+            appendLog("INFO", "Cloudflare OAuth2 authorized via redirect (${accounts.size} account(s))")
+            chosen?.let { refreshWorkersInternal(it.id) }
+          }
+          .onFailure { err ->
+            if (oauthFlowGeneration != flowGen) return@onFailure
+            _uiState.update {
+              it.copy(
+                isAuthenticating = false,
+                isWaitingOAuthCallback = activeOAuthSession != null,
+                authError = err.localizedMessage ?: "OAuth callback verification failed",
+              )
+            }
+            appendLog("ERROR", err.localizedMessage ?: "OAuth callback verification failed")
+          }
+      }
+  }
+
   fun cancelOAuthSignIn() {
+    oauthFlowGeneration += 1L
+    activeOAuthSession = null
+    CloudflareOAuthManager.closeActiveListener()
     oauthJob?.cancel()
     oauthJob = null
     _uiState.update {
@@ -986,6 +1063,9 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   private fun signOutInternal() {
+    oauthFlowGeneration += 1L
+    activeOAuthSession = null
+    CloudflareOAuthManager.closeActiveListener()
     oauthJob?.cancel()
     stopTailIfRunning()
     viewModelScope.launch {
@@ -4086,6 +4166,7 @@ export default {
           buildString {
             appendLine("EdgeCode CLI Commands:")
             appendLine("  run            Execute active JS/TS file or Worker")
+            appendLine("  stop           Stop local runtime server")
             appendLine("  files / ls     List workspace files")
             appendLine("  env            Show Worker bindings & runtime mode")
             appendLine("  clear          Clear terminal output")
@@ -4102,6 +4183,26 @@ export default {
                 durationMs = 1L,
                 body = helpText,
                 logs = listOf(LocalRunLogEntry("INFO", "> $cmd", ts)),
+                ranAt = ts,
+              ),
+          )
+        }
+        return
+      }
+      "stop" -> {
+        LocalScriptRunner.stopActiveServer()
+        _uiState.update {
+          it.copy(
+            isRunningLocalScript = false,
+            localScriptResult =
+              LocalScriptRunResult(
+                mode = "CLI",
+                entryPath = "stop",
+                statusCode = 200,
+                statusText = "STOPPED",
+                durationMs = 1L,
+                body = "Stopped local script server.",
+                logs = listOf(LocalRunLogEntry("INFO", "Stopped local script server", ts)),
                 ranAt = ts,
               ),
           )
@@ -4304,6 +4405,21 @@ export default {
   }
 
   fun handleExternalIntent(intent: Intent?) {
+    val dataUri = intent?.data
+    if (dataUri != null) {
+      if (dataUri.scheme == "edgecode" && dataUri.host == "oauth") {
+        if (dataUri.getQueryParameter("code") != null || dataUri.getQueryParameter("error") != null) {
+          submitOAuthCallbackUrl(dataUri.toString())
+        }
+        return
+      }
+      val host = dataUri.host.orEmpty()
+      val path = dataUri.path.orEmpty()
+      if ((host == "localhost" || host == "127.0.0.1") && path.startsWith("/oauth/callback")) {
+        submitOAuthCallbackUrl(dataUri.toString())
+        return
+      }
+    }
     val extracted = ExternalIntentExtractor.extractFromIntent(intent) ?: return
     hasAttemptedAutoReopen = true
     val context = getApplication<Application>()

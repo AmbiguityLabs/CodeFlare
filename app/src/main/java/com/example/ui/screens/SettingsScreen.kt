@@ -141,6 +141,7 @@ fun SettingsScreen(
   initialCategory: SettingsCategory? = null,
   initialAppearanceSubPage: AppearanceSubPage? = null,
   initialExpandEditorBg: Boolean = false,
+  onSubmitOAuthCallback: (String) -> Unit = {},
   onNotify: (String) -> Unit,
 ) {
   val scheme = MaterialTheme.colorScheme
@@ -320,6 +321,7 @@ fun SettingsScreen(
                     onStartOAuth = onStartOAuth,
                     onCancelOAuth = onCancelOAuth,
                     onClearCredentialFeedback = onClearCredentialFeedback,
+                    onSubmitOAuthCallback = onSubmitOAuthCallback,
                     onNotify = onNotify,
                   )
                 }
